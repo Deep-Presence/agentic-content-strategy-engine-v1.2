@@ -386,14 +386,20 @@ def log_generation(
         parent_span: If provided AND parent is None, used as the parent.
         model_parameters: Merged into metadata dict.
 
-    Note: When using LiteLLM with LangSmith callbacks, generation logging
-    happens automatically. This function is for manual logging when needed
-    (e.g., for Perplexity calls that bypass LiteLLM).
+    LangSmith expects two top-level keys in ``extra`` for cost tracking:
+        ``ls_provider`` — lowercase provider name (e.g. ``"anthropic"``)
+        ``ls_model_name`` — bare model ID without provider prefix
+                            (e.g. ``"claude-sonnet-4-6"``, not
+                            ``"anthropic/claude-sonnet-4-6"``)
+
+    The ``model`` parameter may arrive in OpenRouter format
+    (``"anthropic/claude-sonnet-4-6"``).  This function strips the prefix
+    automatically so callers don't need to worry about it.
 
     Args:
         parent: Parent RunTree.
         name: Generation name (e.g., "plan_content", "build_brief").
-        model: Model identifier used.
+        model: Model identifier (bare or provider-prefixed).
         input_text: Input prompt text.
         output_text: Generated output text.
         metadata: Additional metadata.
@@ -404,10 +410,31 @@ def log_generation(
     if effective_parent is None or not _is_enabled():
         return
 
-    # Merge model_parameters into metadata if provided
-    merged_metadata = {**(metadata or {}), "model": model, "usage": usage or {}}
+    # Derive LangSmith-friendly provider + model name from OpenRouter format
+    ls_provider = extract_provider(model)  # "anthropic", "openai", etc.
+    ls_model_name = model.split("/", 1)[1] if "/" in model else model  # bare name
+
+    # Merge model_parameters into metadata — include ls_ fields for cost tracking
+    # LangSmith reads ls_provider + ls_model_name from extra["metadata"]
+    merged_metadata = {
+        **(metadata or {}),
+        "ls_provider": ls_provider,
+        "ls_model_name": ls_model_name,
+    }
     if model_parameters:
-        merged_metadata["model_parameters"] = model_parameters
+        merged_metadata["ls_temperature"] = model_parameters.get("temperature")
+        merged_metadata["ls_max_tokens"] = model_parameters.get("max_tokens")
+
+    # Build usage_metadata in the format LangSmith reads for Tokens/Cost columns
+    u = usage or {}
+    prompt_tok = u.get("prompt_tokens", 0) or u.get("input_tokens", 0) or 0
+    completion_tok = u.get("completion_tokens", 0) or u.get("output_tokens", 0) or 0
+    total_tok = u.get("total_tokens", 0) or (prompt_tok + completion_tok)
+    usage_metadata = {
+        "input_tokens": prompt_tok,
+        "output_tokens": completion_tok,
+        "total_tokens": total_tok,
+    }
 
     try:
         input_str = str(input_text)[:5000] if input_text else ""
@@ -416,10 +443,23 @@ def log_generation(
         child = effective_parent.create_child(
             name=name,
             run_type="llm",
-            inputs={"input": input_str},
-            extra={"metadata": merged_metadata},
+            inputs={"messages": [{"role": "user", "content": input_str}]},
+            extra={
+                "metadata": merged_metadata,
+                "usage_metadata": usage_metadata,
+            },
         )
-        child.end(outputs={"output": output_str})
+        child.end(outputs={
+            "output": output_str,
+            "llm_output": {
+                "token_usage": {
+                    "prompt_tokens": prompt_tok,
+                    "completion_tokens": completion_tok,
+                    "total_tokens": total_tok,
+                },
+                "model_name": ls_model_name,
+            },
+        })
         child.post()
         child.patch()
     except Exception as exc:

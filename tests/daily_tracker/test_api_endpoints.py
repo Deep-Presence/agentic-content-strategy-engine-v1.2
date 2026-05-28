@@ -256,11 +256,12 @@ class TestCreatePrompt:
     def test_create_prompt_success(self, client: TestClient) -> None:
         resp = client.post(
             "/api/v1/daily-tracker/prompts",
-            json={"text": "What is the best expense tool?"},
+            json={"text": "What is the best expense tool?", "generate_fanout": False},
         )
         assert resp.status_code == 201
         data = resp.json()
-        assert data["text"] == "What is the best expense tool?"
+        assert data["prompt"]["text"] == "What is the best expense tool?"
+        assert data["fanout_task_id"] is None
 
     def test_create_prompt_with_category_and_tags(self, client: TestClient) -> None:
         resp = client.post(
@@ -269,9 +270,12 @@ class TestCreatePrompt:
                 "text": "Test prompt",
                 "category": "product_comparison",
                 "tags": ["expense", "comparison"],
+                "generate_fanout": False,
             },
         )
         assert resp.status_code == 201
+        data = resp.json()
+        assert "prompt" in data
 
     def test_create_prompt_duplicate_returns_409(
         self, client: TestClient, mock_prompt_service: AsyncMock

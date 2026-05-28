@@ -8,7 +8,7 @@ Plus schema validation and task runner integration.
 from __future__ import annotations
 
 import uuid
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -313,11 +313,19 @@ class TestStartFromTopics:
 class TestGetTopicContentStatus:
     """Tests for GET /api/v1/content/v13/{effective_slug}/topic-content-status."""
 
+    @staticmethod
+    def _ensure_session_factory(app):
+        """Set a mock db_session_factory on app state if absent."""
+        if getattr(app.state, "db_session_factory", None) is None:
+            app.state.db_session_factory = MagicMock()
+
     def test_returns_empty_when_no_matrix(self, client: TestClient):
+        self._ensure_session_factory(client.app)
         with patch(
-            "core.topic_discovery.storage.TopicDiscoveryStorage",
-        ) as mock_cls:
-            mock_cls.return_value.get_latest_matrix.return_value = None
+            "core.topic_discovery.db_ops.db_read_latest_matrix",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
             resp = client.get(
                 "/api/v1/content/v13/test-co/topic-content-status",
             )
@@ -362,10 +370,12 @@ class TestGetTopicContentStatus:
             total_assignments=2,
         )
 
+        self._ensure_session_factory(client.app)
         with patch(
-            "core.topic_discovery.storage.TopicDiscoveryStorage",
-        ) as mock_cls:
-            mock_cls.return_value.get_latest_matrix.return_value = matrix
+            "core.topic_discovery.db_ops.db_read_latest_matrix",
+            new_callable=AsyncMock,
+            return_value=matrix,
+        ):
             resp = client.get(
                 "/api/v1/content/v13/test-co/topic-content-status",
             )
@@ -389,33 +399,31 @@ class TestGetTopicContentStatus:
         )
         assert resp.status_code == 403
 
-    def test_json_decode_error_returns_empty(self, client: TestClient):
-        """M1 fix: corrupt JSON should not 500."""
-        import json as _json
-
+    def test_db_error_returns_empty(self, client: TestClient):
+        """DB errors should not 500 — return empty response."""
+        self._ensure_session_factory(client.app)
         with patch(
-            "core.topic_discovery.storage.TopicDiscoveryStorage",
-        ) as mock_cls:
-            mock_cls.return_value.get_latest_matrix.side_effect = _json.JSONDecodeError(
-                "Expecting value", "doc", 0,
-            )
+            "core.topic_discovery.db_ops.db_read_latest_matrix",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("DB connection failed"),
+        ):
             resp = client.get(
                 "/api/v1/content/v13/test-co/topic-content-status",
             )
         assert resp.status_code == 200
         assert resp.json()["items"] == []
 
-    def test_os_error_returns_empty(self, client: TestClient):
-        """M1 fix: permission denied / OS errors should not 500."""
-        with patch(
-            "core.topic_discovery.storage.TopicDiscoveryStorage",
-        ) as mock_cls:
-            mock_cls.return_value.get_latest_matrix.side_effect = OSError(
-                "Permission denied"
-            )
+    def test_no_session_factory_returns_empty(self, client: TestClient):
+        """When db_session_factory is None, return empty response."""
+        app = client.app
+        original = getattr(app.state, "db_session_factory", None)
+        app.state.db_session_factory = None
+        try:
             resp = client.get(
                 "/api/v1/content/v13/test-co/topic-content-status",
             )
+        finally:
+            app.state.db_session_factory = original
         assert resp.status_code == 200
         assert resp.json()["items"] == []
 
@@ -424,6 +432,98 @@ class TestGetTopicContentStatus:
             "/api/v1/content/v13/test-co/topic-content-status",
         )
         assert resp.status_code == 401
+
+
+class TestGetTopicRuns:
+    """Tests for GET /api/v1/content/v13/{effective_slug}/topic-runs."""
+
+    def test_prefix_slug_tenant_bypass_is_rejected(self, client: TestClient):
+        resp = client.get("/api/v1/content/v13/test-co-pro/topic-runs")
+        assert resp.status_code == 403
+
+
+class TestGetTopicRunEvents:
+    """Tests for GET /api/v1/content/v13/{effective_slug}/topic-runs/{topic_run_id}/events."""
+
+    @staticmethod
+    def _ensure_session_factory(app):
+        if getattr(app.state, "db_session_factory", None) is None:
+            app.state.db_session_factory = MagicMock()
+
+    def test_returns_durable_topic_events(self, client: TestClient):
+        self._ensure_session_factory(client.app)
+        topic_run_id = str(uuid.uuid4())
+        with patch(
+            "core.services.content_engine_topic_runs.ContentEngineTopicRunService.list_topic_run_events",
+            new_callable=AsyncMock,
+            return_value=(
+                MagicMock(
+                    topic_run_id=topic_run_id,
+                    batch_run_id="batch-1",
+                    topic_assignment_id=_TA_1,
+                    display_id="WE-003",
+                    topic_text="Equity dilution guide",
+                    brief_id="WE-003",
+                    ga_run_id="ga-1",
+                    pipeline_task_id="task-1",
+                    status="drafting",
+                    stage="drafting",
+                    seq=4,
+                    content_piece_id=None,
+                    created_at="2026-04-10T00:00:00+00:00",
+                    updated_at="2026-04-10T00:00:01+00:00",
+                ),
+                [
+                    MagicMock(
+                        topic_event_id="evt-1",
+                        topic_run_id=topic_run_id,
+                        topic_assignment_id=_TA_1,
+                        display_id="WE-003",
+                        brief_id="WE-003",
+                        event_type="topic_run_created",
+                        stage="gap_analysis_pending",
+                        status="gap_analysis_pending",
+                        seq=1,
+                        content_piece_id=None,
+                        pipeline_task_id="task-1",
+                        payload_json={"brief_id": "WE-003"},
+                        created_at="2026-04-10T00:00:00+00:00",
+                    ),
+                    MagicMock(
+                        topic_event_id="evt-2",
+                        topic_run_id=topic_run_id,
+                        topic_assignment_id=_TA_1,
+                        display_id="WE-003",
+                        brief_id="WE-003",
+                        event_type="topic_run_changed",
+                        stage="drafting",
+                        status="drafting",
+                        seq=4,
+                        content_piece_id=None,
+                        pipeline_task_id="task-1",
+                        payload_json={"note": "Worker drafting started"},
+                        created_at="2026-04-10T00:00:01+00:00",
+                    ),
+                ],
+            ),
+        ):
+            resp = client.get(f"/api/v1/content/v13/test-co/topic-runs/{topic_run_id}/events")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["effective_slug"] == "test-co"
+        assert data["topic_run_id"] == topic_run_id
+        assert data["display_id"] == "WE-003"
+        assert data["brief_id"] == "WE-003"
+        assert data["total"] == 2
+        assert data["items"][0]["event_type"] == "topic_run_created"
+        assert data["items"][1]["payload_json"] == {"note": "Worker drafting started"}
+
+    def test_prefix_slug_tenant_bypass_is_rejected(self, client: TestClient):
+        resp = client.get(
+            f"/api/v1/content/v13/test-co-pro/topic-runs/{uuid.uuid4()}/events",
+        )
+        assert resp.status_code == 403
 
 
 # ---------------------------------------------------------------------------

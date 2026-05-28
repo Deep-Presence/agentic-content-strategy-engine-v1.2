@@ -1,8 +1,7 @@
 """Tests for core.gap_analysis.topic_cluster_map — cluster mapping module.
 
 Covers:
-  - All 6 valid buyer_stage × intent_type cells
-  - All 6 excluded combinations
+  - All 12 buyer_stage × intent_type cells (no exclusions)
   - Case/whitespace normalization
   - Cluster metadata helpers
   - Backward compat: models deserialize without new fields
@@ -94,9 +93,52 @@ class TestValidCells:
         assert len(m.secondary) == 0
         assert m.queries_range == (3, 5)
 
+    def test_tofu_transactional(self):
+        m = get_cluster_mapping("tofu", "transactional")
+        assert m is not None
+        assert "C5" in m.primary
+        assert "C6" in m.primary
+        assert "C9" in m.secondary
+        assert m.queries_range == (3, 5)
+
+    def test_tofu_navigational(self):
+        m = get_cluster_mapping("tofu", "navigational")
+        assert m is not None
+        assert "C5" in m.primary
+        assert "C8" in m.primary
+        assert "brand" in m.brand_rule
+
+    def test_mofu_navigational(self):
+        m = get_cluster_mapping("mofu", "navigational")
+        assert m is not None
+        assert "C8" in m.primary
+        assert "C3" in m.primary
+        assert "brand" in m.brand_rule
+
+    def test_mofu_transactional(self):
+        m = get_cluster_mapping("mofu", "transactional")
+        assert m is not None
+        assert "C9" in m.primary
+        assert "C4" in m.primary
+        assert "C7" in m.secondary
+
+    def test_bofu_informational(self):
+        m = get_cluster_mapping("bofu", "informational")
+        assert m is not None
+        assert "C1" in m.primary
+        assert "C2" in m.primary
+        assert "C4" in m.secondary
+
+    def test_bofu_navigational(self):
+        m = get_cluster_mapping("bofu", "navigational")
+        assert m is not None
+        assert "C8" in m.primary
+        assert "C9" in m.primary
+        assert "brand" in m.brand_rule
+
     def test_all_valid_cells_count(self):
         cells = get_all_valid_cells()
-        assert len(cells) == 6
+        assert len(cells) == 12
 
     def test_all_valid_cells_return_mappings(self):
         for stage, intent in get_all_valid_cells():
@@ -106,64 +148,31 @@ class TestValidCells:
 
 
 # ---------------------------------------------------------------------------
-# Excluded Cells (6)
+# No Excluded Cells — All combos are valid
 # ---------------------------------------------------------------------------
 
 
-class TestExcludedCells:
-    """Test all 6 excluded buyer_stage × intent_type combinations."""
+class TestNoExcludedCells:
+    """Verify no combos are excluded — all 12 cells have mappings."""
 
-    @pytest.mark.parametrize(
-        "stage,intent",
-        [
-            ("tofu", "transactional"),
-            ("tofu", "navigational"),
-            ("mofu", "navigational"),
-            ("mofu", "transactional"),
-            ("bofu", "informational"),
-            ("bofu", "navigational"),
-        ],
-    )
-    def test_excluded_returns_none(self, stage, intent):
-        assert get_cluster_mapping(stage, intent) is None
-
-    @pytest.mark.parametrize(
-        "stage,intent",
-        [
-            ("tofu", "transactional"),
-            ("tofu", "navigational"),
-            ("mofu", "navigational"),
-            ("mofu", "transactional"),
-            ("bofu", "informational"),
-            ("bofu", "navigational"),
-        ],
-    )
-    def test_is_excluded_combo(self, stage, intent):
-        assert is_excluded_combo(stage, intent) is True
-
-    @pytest.mark.parametrize(
-        "stage,intent",
-        [
-            ("tofu", "transactional"),
-            ("tofu", "navigational"),
-            ("mofu", "navigational"),
-            ("mofu", "transactional"),
-            ("bofu", "informational"),
-            ("bofu", "navigational"),
-        ],
-    )
-    def test_exclusion_reason_not_empty(self, stage, intent):
-        reason = get_exclusion_reason(stage, intent)
-        assert reason is not None
-        assert len(reason) > 10
-
-    def test_all_excluded_cells_count(self):
+    def test_no_excluded_cells(self):
         cells = get_all_excluded_cells()
-        assert len(cells) == 6
+        assert len(cells) == 0
 
-    def test_valid_combos_not_excluded(self):
+    def test_all_combos_have_mappings(self):
         for stage, intent in get_all_valid_cells():
             assert is_excluded_combo(stage, intent) is False
+            assert get_cluster_mapping(stage, intent) is not None
+
+    def test_is_excluded_always_false(self):
+        for stage in ("tofu", "mofu", "bofu"):
+            for intent in ("informational", "commercial", "transactional", "navigational"):
+                assert is_excluded_combo(stage, intent) is False
+
+    def test_exclusion_reason_always_none(self):
+        for stage in ("tofu", "mofu", "bofu"):
+            for intent in ("informational", "commercial", "transactional", "navigational"):
+                assert get_exclusion_reason(stage, intent) is None
 
 
 # ---------------------------------------------------------------------------
@@ -187,8 +196,9 @@ class TestNormalization:
         m = get_cluster_mapping("  bofu  ", "  transactional  ")
         assert m is not None
 
-    def test_excluded_uppercase(self):
-        assert is_excluded_combo("TOFU", "TRANSACTIONAL") is True
+    def test_uppercase_combo_has_mapping(self):
+        m = get_cluster_mapping("TOFU", "TRANSACTIONAL")
+        assert m is not None
 
     def test_unknown_combo_returns_none(self):
         assert get_cluster_mapping("unknown", "stage") is None

@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.config.settings import settings
 from core.models.onboarding import (
     OnboardingInput,
     OnboardingOutput,
@@ -402,6 +403,7 @@ async def _run_kb_stage(
     session_factory: Optional[Any],
     parent_run_id: Optional[Any],
     company_id: Optional[Any],
+    langsmith_project: Optional[str] = None,
 ) -> Tuple[OnboardingSubResult, Any]:
     """Run KB pipeline. Returns (result, raw_output)."""
     from core.research.knowledge_base.pipeline import run_knowledge_base_pipeline
@@ -422,6 +424,7 @@ async def _run_kb_stage(
             session_factory=session_factory,
             run_id=child_run_id or parent_run_id,
             company_id=company_id,
+            langsmith_project=langsmith_project,
         )
         elapsed = time.time() - start
         await _complete_child_pipeline_run(session_factory, child_run_id, summary={
@@ -454,6 +457,7 @@ async def _run_ap_stage(
     session_factory: Optional[Any],
     parent_run_id: Optional[Any],
     company_id: Optional[Any],
+    langsmith_project: Optional[str] = None,
 ) -> Tuple[OnboardingSubResult, Any]:
     """Run AP pipeline with seed_personas. Returns (result, raw_output)."""
     from core.research.audience_persona.pipeline import run_audience_persona_pipeline
@@ -474,6 +478,7 @@ async def _run_ap_stage(
             session_factory=session_factory,
             run_id=child_run_id or parent_run_id,
             company_id=company_id,
+            langsmith_project=langsmith_project,
         )
         elapsed = time.time() - start
         await _complete_child_pipeline_run(session_factory, child_run_id, summary={
@@ -508,6 +513,7 @@ async def _run_vsg_stage(
     session_factory: Optional[Any],
     parent_run_id: Optional[Any],
     company_id: Optional[Any],
+    langsmith_project: Optional[str] = None,
 ) -> OnboardingSubResult:
     """Run VSG pipeline. Returns result."""
     from core.research.voice_style_guide.pipeline import run_voice_style_guide_pipeline
@@ -528,6 +534,7 @@ async def _run_vsg_stage(
             session_factory=session_factory,
             run_id=child_run_id or parent_run_id,
             company_id=company_id,
+            langsmith_project=langsmith_project,
         )
         elapsed = time.time() - start
         await _complete_child_pipeline_run(session_factory, child_run_id, summary={
@@ -556,6 +563,7 @@ async def _run_ga_stage(
     session_factory: Optional[Any],
     parent_run_id: Optional[Any],
     company_id: Optional[Any],
+    langsmith_project: Optional[str] = None,
 ) -> OnboardingSubResult:
     """Run Gap Analysis pipeline. Returns result."""
     from core.gap_analysis.pipeline import run_gap_analysis
@@ -572,6 +580,7 @@ async def _run_ga_stage(
             session_factory=session_factory,
             run_id=child_run_id or parent_run_id,
             company_id=company_id,
+            langsmith_project=langsmith_project,
         )
         elapsed = time.time() - start
         await _complete_child_pipeline_run(session_factory, child_run_id, summary={
@@ -603,6 +612,7 @@ async def _run_td_stage(
     session_factory: Optional[Any],
     parent_run_id: Optional[Any],
     company_id: Optional[Any],
+    langsmith_project: Optional[str] = None,
 ) -> OnboardingSubResult:
     """Run Topic Discovery pipeline. Returns result."""
     from core.topic_discovery.pipeline import run_topic_discovery_pipeline
@@ -623,6 +633,7 @@ async def _run_td_stage(
             session_factory=session_factory,
             run_id=child_run_id or parent_run_id,
             company_id=company_id,
+            langsmith_project=langsmith_project,
         )
         elapsed = time.time() - start
         await _complete_child_pipeline_run(session_factory, child_run_id, summary={
@@ -671,6 +682,7 @@ async def run_onboarding_pipeline(
     root = artifacts_root or Path("artifacts")
     slug = _resolve_slugs(input_data)
     constraints = _build_constraints(input_data)
+    _ls_project = settings.onboarding_langsmith_project
 
     # Proxy rewrites sub-pipeline terminal events so they don't close SSE stream
     proxy_bus = _SubPipelineEventProxy(event_bus) if event_bus else None
@@ -740,6 +752,7 @@ async def run_onboarding_pipeline(
                 input_data, slug, constraints,
                 task_id, task_store, proxy_bus,
                 root, session_factory, run_id, company_id,
+                langsmith_project=_ls_project,
             )
             sub_results["kb"] = kb_result
             kb_succeeded = True
@@ -819,6 +832,7 @@ async def run_onboarding_pipeline(
                     input_data, slug, constraints,
                     task_id, task_store, proxy_bus,
                     root, session_factory, run_id, company_id,
+                    langsmith_project=_ls_project,
                 )
                 sub_results["ap"] = ap_result
                 ap_succeeded = True
@@ -884,6 +898,7 @@ async def run_onboarding_pipeline(
                 task_id=task_id, task_store=task_store, event_bus=proxy_bus,
                 root=root, session_factory=session_factory,
                 parent_run_id=run_id, company_id=company_id,
+                langsmith_project=_ls_project,
             )
 
             tasks: List[asyncio.Task] = []
@@ -905,6 +920,7 @@ async def run_onboarding_pipeline(
                     input_data=input_data, slug=slug, constraints=constraints,
                     root=root, session_factory=session_factory,
                     parent_run_id=run_id, company_id=company_id,
+                    langsmith_project=_ls_project,
                 )
             ))
             task_names.append("ga")

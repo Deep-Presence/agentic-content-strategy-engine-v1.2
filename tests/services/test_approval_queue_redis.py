@@ -206,6 +206,21 @@ class TestSubmitApprovalRedis:
         assert call_kwargs.get("ex") == 86400
 
     @patch("core.services.db_task_store.asyncio.create_task", new=MagicMock())
+    def test_submit_record_only_skips_queue_delivery(
+        self, store_with_redis: DbTaskStore, mock_sync_redis: MagicMock
+    ) -> None:
+        _seed_task(store_with_redis, "task-001")
+
+        store_with_redis.submit_approval(
+            "task-001",
+            decision="approve",
+            delivery_mode="record_only",
+        )
+
+        mock_sync_redis.lpush.assert_not_called()
+        mock_sync_redis.expire.assert_not_called()
+
+    @patch("core.services.db_task_store.asyncio.create_task", new=MagicMock())
     def test_submit_raises_on_duplicate(
         self, store_with_redis: DbTaskStore, mock_sync_redis: MagicMock
     ) -> None:
@@ -256,7 +271,7 @@ class TestUpdateTaskNonceRedis:
     def test_writes_nonce_on_payload_set(
         self, store_with_redis: DbTaskStore, mock_sync_redis: MagicMock
     ) -> None:
-        """Setting approval_payload with nonce → SET approval:nonce:{tid}."""
+        """Setting approval_payload with nonce writes nonce via Redis pipeline."""
         _seed_task(store_with_redis, "task-001")
 
         store_with_redis.update_task(
@@ -267,14 +282,15 @@ class TestUpdateTaskNonceRedis:
             },
         )
 
-        # Find the SET call for the nonce key
-        nonce_calls = [
-            c for c in mock_sync_redis.set.call_args_list
-            if len(c[0]) >= 1 and c[0][0] == "approval:nonce:task-001"
-        ]
-        assert len(nonce_calls) == 1
-        assert nonce_calls[0][0][1] == "nonce-abc"
-        assert nonce_calls[0][1].get("ex") == 86400
+        mock_sync_redis.pipeline.assert_called_once_with(transaction=False)
+        pipe = mock_sync_redis.pipeline.return_value
+        pipe.delete.assert_called_once_with("approval:flag:task-001")
+        pipe.set.assert_called_once_with(
+            "approval:nonce:task-001",
+            "nonce-abc",
+            ex=86400,
+        )
+        pipe.execute.assert_called_once_with()
 
     @patch("core.services.db_task_store.asyncio.create_task", new=MagicMock())
     def test_clears_nonce_and_flag_on_payload_clear(

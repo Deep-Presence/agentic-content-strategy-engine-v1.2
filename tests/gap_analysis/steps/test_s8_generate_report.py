@@ -26,24 +26,26 @@ class TestAsyncCallOpenAI:
 
     @pytest.mark.asyncio
     async def test_returns_text_response(self):
-        """Should return the output_text from the async OpenAI response."""
+        """Should return the content from the async OpenRouter response."""
+        msg = MagicMock()
+        msg.content = "test report output"
+        choice = MagicMock()
+        choice.message = msg
         mock_response = MagicMock()
-        mock_response.output_text = "test report output"
+        mock_response.choices = [choice]
 
         mock_client_instance = AsyncMock()
-        mock_client_instance.responses.create = AsyncMock(return_value=mock_response)
+        mock_client_instance.chat.completions.create = AsyncMock(return_value=mock_response)
 
         with patch(
-            "core.gap_analysis.steps.s8_generate_report.AsyncOpenAI",
+            "core.shared_tools.openrouter_client.get_async_client",
             return_value=mock_client_instance,
-        ), patch(
-            "core.gap_analysis.steps.s8_generate_report.settings"
-        ) as mock_settings:
-            mock_settings.openai_api_key = "test-key"
+        ):
             from core.gap_analysis.steps.s8_generate_report import _call_openai
-            result = await _call_openai("test prompt", "gpt-4o")
+            result, usage = await _call_openai("test prompt", "gpt-4o")
 
         assert result == "test report output"
+        assert isinstance(usage, dict)
 
 
 class TestAsyncGenerateGapReport:
@@ -113,10 +115,11 @@ class TestAsyncGenerateGapReport:
             ],
         })
 
+        _usage_stub = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         with patch(
             "core.gap_analysis.steps.s8_generate_report._call_openai",
             new_callable=AsyncMock,
-            return_value=llm_json,
+            return_value=(llm_json, _usage_stub),
         ), patch(
             "core.gap_analysis.steps.s8_generate_report.settings"
         ) as mock_settings:
@@ -369,3 +372,35 @@ class TestSaveReportPhase3:
         assert (tmp_path / "out" / "gap_report.md").read_text() == "# Gap Report"
         gap_json = json.loads((tmp_path / "out" / "gap_report.json").read_text())
         assert gap_json["executive_summary"] == "Test"
+
+
+class TestCallOpenAICostTracking:
+    """Verify track_llm_cost() is called inside _call_openai()."""
+
+    @pytest.mark.asyncio
+    async def test_cost_tracked(self):
+        msg = MagicMock()
+        msg.content = "report output"
+        choice = MagicMock()
+        choice.message = msg
+        mock_response = MagicMock()
+        mock_response.choices = [choice]
+        mock_response.usage = MagicMock(prompt_tokens=200, completion_tokens=500)
+
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+        with patch(
+            "core.shared_tools.openrouter_client.get_async_client",
+            return_value=mock_client,
+        ), patch("core.shared_tools.cost_tracker.track_llm_cost") as mock_track:
+            from core.gap_analysis.steps.s8_generate_report import _call_openai
+            await _call_openai("prompt", "gpt-5.2")
+
+        mock_track.assert_called_once()
+        kw = mock_track.call_args[1]
+        assert kw["pipeline"] == "gap_analysis"
+        assert kw["pipeline_step"] == "s8_report"
+        assert kw["prompt_tokens"] == 200
+        assert kw["completion_tokens"] == 500
+        assert kw["source"] == "openrouter"

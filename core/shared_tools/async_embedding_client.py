@@ -1,7 +1,8 @@
-"""Async OpenAI embedding client.
+"""Async OpenAI embedding client via OpenRouter.
 
 Async counterpart of embedding_client.py for the async-first pipeline.
-Uses AsyncOpenAI with semaphore-controlled batching and retry with jittered backoff.
+Uses AsyncOpenAI (via OpenRouter singleton) with semaphore-controlled
+batching and retry with jittered backoff.
 """
 from __future__ import annotations
 
@@ -11,9 +12,10 @@ import math
 import random
 from typing import Callable, List, TypeVar
 
-from openai import AsyncOpenAI, APIError, RateLimitError
+from openai import APIError, RateLimitError
 
 from core.config.settings import settings
+from core.shared_tools.openrouter_client import get_async_client, _ensure_model_prefix
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +98,7 @@ async def async_embed_texts(
     batch_size: int | None = None,
     max_concurrent_batches: int | None = None,
 ) -> List[List[float]]:
-    """Embed texts using AsyncOpenAI with concurrent batching and retry.
+    """Embed texts using AsyncOpenAI (via OpenRouter) with concurrent batching and retry.
 
     Long texts that exceed the model's 8191-token limit are automatically
     split into chunks, embedded separately, and mean-pooled back into a
@@ -113,14 +115,10 @@ async def async_embed_texts(
     if not texts:
         return []
 
-    api_key = settings.openai_api_key
-    if not api_key:
-        raise RuntimeError(
-            "OPENAI_API_KEY is not set. Add it to .env.local to enable embeddings."
-        )
     model = settings.embedding_model
     if not model:
         raise RuntimeError("EMBEDDING_MODEL is not set. Add it to .env.local.")
+    model = _ensure_model_prefix(model)
 
     effective_batch_size = batch_size if batch_size is not None else settings.gap_analysis_s5_embed_batch_size
     effective_concurrency = (
@@ -142,31 +140,47 @@ async def async_embed_texts(
     all_chunk_texts = [c[1] for c in flat_chunks]
 
     # --- Embed all chunks ---------------------------------------------------
-    async with AsyncOpenAI(api_key=api_key) as client:
-        batches = [
-            all_chunk_texts[i : i + effective_batch_size]
-            for i in range(0, len(all_chunk_texts), effective_batch_size)
-        ]
-        sem = asyncio.Semaphore(effective_concurrency)
+    client = get_async_client()
+    batches = [
+        all_chunk_texts[i : i + effective_batch_size]
+        for i in range(0, len(all_chunk_texts), effective_batch_size)
+    ]
+    sem = asyncio.Semaphore(effective_concurrency)
 
-        async def _embed_batch(
-            batch: List[str], batch_idx: int
-        ) -> tuple[int, List[List[float]]]:
-            async def _call():
-                return await client.embeddings.create(model=model, input=batch)
+    async def _embed_batch(
+        batch: List[str], batch_idx: int
+    ) -> tuple[int, List[List[float]]]:
+        async def _call():
+            return await client.embeddings.create(model=model, input=batch)
 
-            async with sem:
-                response = await _retry_async(_call, max_retries=3, base_delay=1.0)
-                sorted_data = sorted(response.data, key=lambda d: d.index)
-                return batch_idx, [item.embedding for item in sorted_data]
+        async with sem:
+            response = await _retry_async(_call, max_retries=3, base_delay=1.0)
 
-        results = await asyncio.gather(
-            *[_embed_batch(b, i) for i, b in enumerate(batches)]
-        )
+            # Cost tracking per batch (never raises)
+            from core.shared_tools.cost_tracker import track_llm_cost
 
-        # Flatten batch results in original order
-        results_sorted = sorted(results, key=lambda x: x[0])
-        all_chunk_embeddings = [emb for _, batch_embs in results_sorted for emb in batch_embs]
+            _usage = getattr(response, "usage", None)
+            track_llm_cost(
+                model=model,
+                provider="openrouter",
+                pipeline="embeddings",
+                pipeline_step="async_embed_texts",
+                prompt_tokens=getattr(_usage, "prompt_tokens", 0) or 0,
+                completion_tokens=0,  # Embeddings have no completion tokens
+                call_site="core.shared_tools.async_embedding_client",
+                source="openrouter",
+            )
+
+            sorted_data = sorted(response.data, key=lambda d: d.index)
+            return batch_idx, [item.embedding for item in sorted_data]
+
+    results = await asyncio.gather(
+        *[_embed_batch(b, i) for i, b in enumerate(batches)]
+    )
+
+    # Flatten batch results in original order
+    results_sorted = sorted(results, key=lambda x: x[0])
+    all_chunk_embeddings = [emb for _, batch_embs in results_sorted for emb in batch_embs]
 
     # --- Post-process: mean-pool chunk embeddings per original text ---------
     final_embeddings: List[List[float]] = []

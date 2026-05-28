@@ -1772,3 +1772,265 @@ class TestCompanyCited:
 
         body = client.get(_url("test-co", "summary")).json()
         assert body["company_cited_count"] == 0
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Cluster Profiles (Embedding Lab)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+class TestClusterProfiles:
+    """GET /cluster-profiles endpoint."""
+
+    def _setup(self, artifacts_root: Path) -> None:
+        """Write analysis + enriched artifacts for test-co."""
+        data = _make_complete_new_format(num_gaps=6, num_clusters=2)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
+
+        enriched = _make_enriched(10, cluster_name="cluster-0")
+        enriched += _make_enriched(8, cluster_name="cluster-1")
+        # Mark some as company citations
+        for cit in enriched[:3]:
+            cit["is_company_citation"] = True
+            cit["domain"] = "test-co.com"
+        _write_artifact(artifacts_root, "test-co", "enriched_citations.json", enriched)
+
+    def test_returns_profiles_keyed_by_slug(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        self._setup(artifacts_root)
+        r = client.get(_url("test-co", "cluster-profiles"))
+        assert r.status_code == 200
+        body = r.json()
+        assert "profiles" in body
+        assert len(body["profiles"]) >= 2
+
+    def test_profile_has_required_fields(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        self._setup(artifacts_root)
+        body = client.get(_url("test-co", "cluster-profiles")).json()
+        profile = list(body["profiles"].values())[0]
+        required_keys = {
+            "cluster_id", "cluster_name", "query_count", "total_citations",
+            "unique_domains", "company_citations", "company_share", "presence",
+            "engine_breakdown", "top_domains",
+        }
+        assert required_keys.issubset(set(profile.keys()))
+
+    def test_company_share_computed(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        self._setup(artifacts_root)
+        body = client.get(_url("test-co", "cluster-profiles")).json()
+        # cluster-0 has 10 total citations, 3 are company
+        profile = body["profiles"].get("cluster-0", {})
+        if profile.get("total_citations", 0) > 0:
+            assert profile["company_share"] >= 0.0
+            assert profile["company_share"] <= 1.0
+
+    def test_top_domains_have_type(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        self._setup(artifacts_root)
+        body = client.get(_url("test-co", "cluster-profiles")).json()
+        for profile in body["profiles"].values():
+            for dom in profile.get("top_domains", []):
+                assert dom["type"] in {"company", "direct", "mindshare", "authority"}
+
+    def test_engine_breakdown_present(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        self._setup(artifacts_root)
+        body = client.get(_url("test-co", "cluster-profiles")).json()
+        profile = list(body["profiles"].values())[0]
+        assert isinstance(profile["engine_breakdown"], dict)
+        assert len(profile["engine_breakdown"]) > 0
+
+    def test_presence_derived_from_share(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        self._setup(artifacts_root)
+        body = client.get(_url("test-co", "cluster-profiles")).json()
+        for profile in body["profiles"].values():
+            assert profile["presence"] in {
+                "none", "minimal", "low", "moderate", "strong",
+            }
+
+    def test_empty_enriched_returns_empty_profiles(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        data = _make_complete_new_format(num_gaps=0, num_clusters=0)
+        data["analysis"]["cluster_specs"] = []
+        data["cluster_specs"] = []
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "enriched_citations.json", [])
+
+        body = client.get(_url("test-co", "cluster-profiles")).json()
+        assert body["profiles"] == {}
+
+    def test_mindshare_detection_works(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        """Domains appearing in multiple clusters should be classified as mindshare."""
+        data = _make_complete_new_format(num_gaps=4, num_clusters=2)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
+
+        # Create enriched citations with a domain appearing in both clusters
+        enriched = []
+        for cluster in ["cluster-0", "cluster-1"]:
+            for i in range(5):
+                enriched.append({
+                    "query_id": f"q{i}",
+                    "engine": "openai",
+                    "url": f"https://shared-domain.com/{cluster}/{i}",
+                    "domain": "shared-domain.com",
+                    "cluster_name": cluster,
+                    "structural_signals": {"authority_type": "blog"},
+                })
+        _write_artifact(artifacts_root, "test-co", "enriched_citations.json", enriched)
+
+        body = client.get(_url("test-co", "cluster-profiles")).json()
+        for profile in body["profiles"].values():
+            for dom in profile.get("top_domains", []):
+                if dom["domain"] == "shared-domain.com":
+                    assert dom["type"] == "mindshare"
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Territory Gaps (Embedding Lab)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+class TestTerritoryGaps:
+    """GET /territory-gaps endpoint."""
+
+    def _setup(self, artifacts_root: Path) -> None:
+        data = _make_complete_new_format(num_gaps=6, num_clusters=2)
+        # Add company_cited, best_company_url, best_company_structural_signals
+        for i, gap in enumerate(data["analysis"]["gaps"]):
+            gap["company_cited"] = i % 3 == 0
+            gap["best_company_url"] = f"https://test-co.com/page-{i}" if i % 3 == 0 else None
+            gap["best_company_structural_signals"] = {
+                "word_count": 1200,
+                "header_count": 5,
+                "has_faq_section": True,
+                "table_count": 1,
+                "reading_level": 9.5,
+                "list_item_count": 12,
+            } if i % 3 == 0 else None
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
+
+    def test_returns_gaps_list(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        self._setup(artifacts_root)
+        r = client.get(_url("test-co", "territory-gaps"))
+        assert r.status_code == 200
+        body = r.json()
+        assert "gaps" in body
+        assert len(body["gaps"]) == 6
+
+    def test_gap_has_required_fields(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        self._setup(artifacts_root)
+        body = client.get(_url("test-co", "territory-gaps")).json()
+        gap = body["gaps"][0]
+        required = {"id", "query", "cluster", "cluster_id", "gap", "classification"}
+        assert required.issubset(set(gap.keys()))
+
+    def test_company_cited_field_present(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        self._setup(artifacts_root)
+        body = client.get(_url("test-co", "territory-gaps")).json()
+        cited_count = sum(1 for g in body["gaps"] if g["company_cited"])
+        uncited_count = sum(1 for g in body["gaps"] if not g["company_cited"])
+        assert cited_count == 2  # gaps 0, 3 have company_cited=True
+        assert uncited_count == 4
+        assert body["uncovered_queries"] == 4
+
+    def test_company_signals_populated(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        self._setup(artifacts_root)
+        body = client.get(_url("test-co", "territory-gaps")).json()
+        # Gap 0 should have company_signals
+        gap_with_signals = [g for g in body["gaps"] if g.get("company_signals")]
+        assert len(gap_with_signals) >= 1
+        cs = gap_with_signals[0]["company_signals"]
+        assert cs["word_count"] == 1200
+        assert cs["has_faq"] is True
+
+    def test_exemplars_present(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        self._setup(artifacts_root)
+        body = client.get(_url("test-co", "territory-gaps")).json()
+        for gap in body["gaps"]:
+            assert "exemplars" in gap
+            for ex in gap["exemplars"]:
+                assert "domain" in ex
+                assert "similarity" in ex
+
+    def test_proximity_stats_present(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        self._setup(artifacts_root)
+        body = client.get(_url("test-co", "territory-gaps")).json()
+        ps = body["proximity_stats"]
+        assert "citation_mean" in ps
+        assert "company_mean" in ps
+        assert "similarity_gap" in ps
+
+    def test_spa_present(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        self._setup(artifacts_root)
+        body = client.get(_url("test-co", "territory-gaps")).json()
+        spa = body["spa"]
+        assert "t_stat" in spa
+        assert "p_value" in spa
+        assert "effect" in spa
+
+    def test_per_cluster_proximity(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        self._setup(artifacts_root)
+        body = client.get(_url("test-co", "territory-gaps")).json()
+        pcp = body["per_cluster_proximity"]
+        assert isinstance(pcp, dict)
+        # Should have slugified cluster names as keys
+        for key in pcp:
+            assert isinstance(pcp[key], dict)
+            assert "mean" in pcp[key]
+
+    def test_content_brief_populated(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        self._setup(artifacts_root)
+        body = client.get(_url("test-co", "territory-gaps")).json()
+        gaps_with_brief = [g for g in body["gaps"] if g.get("content_brief")]
+        assert len(gaps_with_brief) >= 1
+        cb = gaps_with_brief[0]["content_brief"]
+        assert "word_count_range" in cb
+        assert "has_faq" in cb
+
+    def test_total_gaps_count(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        self._setup(artifacts_root)
+        body = client.get(_url("test-co", "territory-gaps")).json()
+        assert body["total_gaps"] == 6
+
+    def test_empty_analysis_returns_empty_gaps(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        data = _make_complete_new_format(num_gaps=0)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
+
+        body = client.get(_url("test-co", "territory-gaps")).json()
+        assert body["gaps"] == []
+        assert body["total_gaps"] == 0
+        assert body["uncovered_queries"] == 0

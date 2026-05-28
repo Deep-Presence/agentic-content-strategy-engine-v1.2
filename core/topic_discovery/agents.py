@@ -1,6 +1,6 @@
 """Topic Discovery agents — S1 source generators, S2 merge, S3 expansion.
 
-All agent functions are async, use litellm.acompletion() for LLM calls,
+All agent functions are async, use OpenRouter (via openai SDK) for LLM calls,
 and return result objects (errors are captured, never fatal).
 
 Statistical functions (capture-recapture, Chao1, sample coverage) are
@@ -16,11 +16,6 @@ import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
-
-try:
-    import litellm
-except ImportError:
-    litellm = None  # type: ignore[assignment]
 
 from core.config.settings import settings
 from core.shared_tools.tracing import (
@@ -77,7 +72,8 @@ from core.topic_discovery.prompts.topic_generation import (
 logger = logging.getLogger(__name__)
 
 _CODE_FENCE_RE = re.compile(r"^```(?:json)?\s*\n(.*?)\n```\s*$", re.DOTALL)
-_MAX_PAUSE_TURNS = 5
+
+
 _EMBEDDING_BATCH_SIZE = 64
 
 
@@ -146,16 +142,6 @@ def _extract_text_content(content: Any) -> str:
     return str(content)
 
 
-def _extract_assistant_continuation_content(response: Any, fallback_text: str) -> Any:
-    """Extract Anthropic-native assistant content blocks from LiteLLM response."""
-    hidden = getattr(response, "_hidden_params", None)
-    if isinstance(hidden, dict):
-        original = hidden.get("original_response")
-        if isinstance(original, list) and original:
-            return original
-    return fallback_text
-
-
 async def _run_completion(
     *,
     model: str,
@@ -166,46 +152,58 @@ async def _run_completion(
     response_format: Optional[Dict[str, Any]] = None,
     metadata: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Any, str]:
-    """Run LiteLLM completion with pause_turn handling."""
-    convo = list(messages)
-    response: Any = None
-    raw_text = ""
+    """Run OpenRouter completion via the async OpenAI client.
+
+    Args:
+        response_format: Optional dict (e.g. {"type": "json_object"}) passed
+            through as-is. None → no structured output constraint.
+
+    Returns (response, raw_text) tuple.
+    """
+    from core.shared_tools.openrouter_client import get_async_client
+
+    client = get_async_client()
 
     # Build kwargs — only include response_format when explicitly set
     completion_kwargs: Dict[str, Any] = {
         "model": model,
-        "messages": convo,
+        "messages": list(messages),
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
     if response_format is not None:
         completion_kwargs["response_format"] = response_format
+
+    extra_body: Dict[str, Any] = {}
     if metadata is not None:
-        completion_kwargs["metadata"] = metadata
+        extra_body["metadata"] = metadata
+    if extra_body:
+        completion_kwargs["extra_body"] = extra_body
 
-    for turn in range(_MAX_PAUSE_TURNS + 1):
-        # Update messages in kwargs for pause_turn continuations
-        completion_kwargs["messages"] = convo
-        response = await asyncio.wait_for(
-            litellm.acompletion(**completion_kwargs),
-            timeout=timeout_s,
-        )
-        choice = response.choices[0]
-        raw_text = _extract_text_content(choice.message.content)
-        finish_reason = getattr(choice, "finish_reason", None)
-        if finish_reason != "pause_turn":
-            return response, raw_text
+    response = await asyncio.wait_for(
+        client.chat.completions.create(**completion_kwargs),
+        timeout=timeout_s,
+    )
 
-        if turn >= _MAX_PAUSE_TURNS:
-            logger.warning(
-                "TD agent hit pause_turn limit (%d); returning partial.",
-                _MAX_PAUSE_TURNS,
-            )
-            return response, raw_text
+    # Cost tracking (never raises)
+    from core.shared_tools.cost_tracker import track_llm_cost
 
-        assistant_content = _extract_assistant_continuation_content(response, raw_text)
-        convo.append({"role": "assistant", "content": assistant_content})
+    _meta = metadata or {}
+    _usage = getattr(response, "usage", None)
+    track_llm_cost(
+        model=model,
+        provider="openrouter",
+        pipeline=_meta.get("pipeline", ""),
+        pipeline_step=_meta.get("pipeline_step", ""),
+        prompt_tokens=getattr(_usage, "prompt_tokens", 0) or 0,
+        completion_tokens=getattr(_usage, "completion_tokens", 0) or 0,
+        company_slug=_meta.get("company_slug", ""),
+        call_site="core.topic_discovery.agents",
+        source="openrouter",
+    )
 
+    choice = response.choices[0]
+    raw_text = _extract_text_content(choice.message.content)
     return response, raw_text
 
 
@@ -348,6 +346,7 @@ async def run_source_a_company_brainstorm(
             }
             response, raw_text = await _run_completion(
                 model=model, messages=messages, timeout_s=timeout_s,
+                response_format={"type": "json_object"},
                 metadata=_meta_a,
             )
             log_generation(
@@ -486,6 +485,7 @@ async def run_source_b_persona_brainstorm(
             }
             response, raw_text = await _run_completion(
                 model=model, messages=messages, timeout_s=timeout_s,
+                response_format={"type": "json_object"},
                 metadata=_meta_b,
             )
             log_generation(
@@ -595,7 +595,7 @@ async def run_source_c_deep_research(
         )
         full_prompt = f"{system_prompt}\n\n{user_prompt}"
 
-        raw_text: str = await asyncio.wait_for(
+        raw_text, _pplx_usage = await asyncio.wait_for(
             asyncio.to_thread(
                 perplexity_client.research,
                 query=full_prompt,
@@ -613,7 +613,7 @@ async def run_source_c_deep_research(
             "company_slug": company_slug,
         }
         log_generation(span, "deep-research", model, full_prompt[:2000], raw_text[:2000],
-                       metadata=_meta_c)
+                       metadata=_meta_c, usage=_pplx_usage)
 
         # Strip Perplexity citations section before JSON parsing
         if "\n\nSources:\n" in raw_text:
@@ -741,6 +741,7 @@ async def run_source_d_adversarial(
             }
             response, raw_text = await _run_completion(
                 model=model, messages=messages, timeout_s=timeout_s,
+                response_format={"type": "json_object"},
                 metadata=_meta_d,
             )
             log_generation(
@@ -914,7 +915,6 @@ async def run_hierarchy_construction(
 ) -> TaxonomyTree:
     """Organize flat subdomains into a hierarchical taxonomy tree via LLM.
 
-    Uses response_format=json_object to enforce valid JSON output.
     Retries once on parse failure with a repair prompt before raising.
     """
     model = model or settings.topic_discovery_brainstorm_model
@@ -1048,7 +1048,7 @@ async def run_unified_hierarchy_and_scoring(
         "company_slug": company_slug,
     }
 
-    # Attempt 1 — larger max_tokens for scoring + persona affinity output
+    # Attempt 1
     response, raw_text = await _run_completion(
         model=model,
         messages=messages,
@@ -1343,6 +1343,7 @@ async def run_relevance_filtering(
     }
     response, raw_text = await _run_completion(
         model=model, messages=messages, temperature=0.3, timeout_s=timeout_s,
+        response_format={"type": "json_object"},
         metadata=_meta_rf,
     )
     log_generation(
@@ -1400,6 +1401,7 @@ async def run_topic_generation(
     }
     response, raw_text = await _run_completion(
         model=model, messages=messages, timeout_s=timeout_s,
+        response_format={"type": "json_object"},
         metadata=_meta_tg,
     )
     log_generation(
@@ -1505,6 +1507,7 @@ async def run_subdomain_expansion(
     }
     response, raw_text = await _run_completion(
         model=model, messages=messages, timeout_s=timeout_s,
+        response_format={"type": "json_object"},
         metadata=_meta_exp,
     )
     log_generation(

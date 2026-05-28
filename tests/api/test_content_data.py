@@ -136,7 +136,6 @@ def _setup_content_dir(
     run_metadata: Optional[Dict[str, Any]] = None,
     brief_stages: Optional[Dict[str, Dict[str, str]]] = None,
     eval_histories: Optional[Dict[str, Dict[str, Any]]] = None,
-    pipeline_state: Optional[Dict[str, str]] = None,
 ) -> Path:
     """Create content/{slug}/ directory structure with optional files.
 
@@ -144,7 +143,9 @@ def _setup_content_dir(
         brief_stages: {brief_id: {stage_filename: content}} e.g.
             {"brief-0": {"draft.md": "# Draft content", "outline.json": '{"sections": []}'}}
         eval_histories: {brief_id: eval_data_dict}
-        pipeline_state: {brief_id: phase_string} for pipeline_state.json
+
+    Note: pipeline_state is now Redis-only. Use monkeypatch on
+    ``api.services.content_data_service._load_pipeline_state`` to inject state.
     """
     content_dir = artifacts_root / "content" / slug
     content_dir.mkdir(parents=True, exist_ok=True)
@@ -156,9 +157,6 @@ def _setup_content_dir(
 
     if run_metadata is not None:
         (content_dir / "run_metadata_v13.json").write_text(json.dumps(run_metadata))
-
-    if pipeline_state is not None:
-        (content_dir / "pipeline_state.json").write_text(json.dumps(pipeline_state))
 
     if brief_stages:
         for brief_id, stages in brief_stages.items():
@@ -373,16 +371,21 @@ class TestBriefList:
         assert resp.json()["total"] == 0
 
     # ── Pipeline State (Phase 0) Tests ──────────────────────────────
+    # Pipeline state is now Redis-only (no file fallback). Tests patch
+    # _load_pipeline_state to inject state via the same code path.
 
     def test_list_briefs_status_from_pipeline_state(
-        self, client: TestClient, artifacts_root: Path,
+        self, client: TestClient, artifacts_root: Path, monkeypatch,
     ):
-        """pipeline_state.json overrides file-based inference (Phase 0 > Phase 2)."""
+        """Redis pipeline state overrides file-based inference (Phase 0 > Phase 2)."""
         _setup_content_dir(
             artifacts_root,
             briefs_data=_make_briefs_json(2),
-            pipeline_state={"brief-0": "approved", "brief-1": "in_progress"},
             brief_stages={"brief-0": {"draft.md": "# Draft"}},  # would be "drafting" without pipeline_state
+        )
+        monkeypatch.setattr(
+            "api.services.content_data_service._load_pipeline_state",
+            lambda *a, **kw: {"brief-0": "approved", "brief-1": "in_progress"},
         )
         resp = client.get("/api/v1/companies/test-co/content/briefs")
         briefs = {b["id"]: b["status"] for b in resp.json()["briefs"]}
@@ -390,29 +393,34 @@ class TestBriefList:
         assert briefs["brief-1"] == "in_progress"
 
     def test_list_briefs_pipeline_state_overrides_pieces(
-        self, client: TestClient, artifacts_root: Path,
+        self, client: TestClient, artifacts_root: Path, monkeypatch,
     ):
-        """pipeline_state.json (Phase 0) has higher priority than pieces (Phase 1)."""
+        """Redis pipeline state (Phase 0) has higher priority than pieces (Phase 1)."""
         _setup_content_dir(
             artifacts_root,
             briefs_data=_make_briefs_json(1),
             run_metadata=_make_run_metadata(pieces=[
                 {"brief_id": "brief-0", "status": "approved"},
             ]),
-            pipeline_state={"brief-0": "review"},
+        )
+        monkeypatch.setattr(
+            "api.services.content_data_service._load_pipeline_state",
+            lambda *a, **kw: {"brief-0": "review"},
         )
         resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.json()["briefs"][0]["status"] == "review"
 
     def test_list_briefs_pipeline_state_partial(
-        self, client: TestClient, artifacts_root: Path,
+        self, client: TestClient, artifacts_root: Path, monkeypatch,
     ):
         """Briefs not in pipeline_state fall through to Phase 1/2."""
         _setup_content_dir(
             artifacts_root,
             briefs_data=_make_briefs_json(2),
-            pipeline_state={"brief-0": "in_progress"},
-            # brief-1 not in pipeline_state → falls through to "suggested"
+        )
+        monkeypatch.setattr(
+            "api.services.content_data_service._load_pipeline_state",
+            lambda *a, **kw: {"brief-0": "in_progress"},
         )
         resp = client.get("/api/v1/companies/test-co/content/briefs")
         briefs = {b["id"]: b["status"] for b in resp.json()["briefs"]}
@@ -420,21 +428,24 @@ class TestBriefList:
         assert briefs["brief-1"] == "suggested"
 
     def test_list_briefs_pipeline_state_completed(
-        self, client: TestClient, artifacts_root: Path,
+        self, client: TestClient, artifacts_root: Path, monkeypatch,
     ):
-        """pipeline_state 'completed' status is returned correctly."""
+        """Pipeline state 'completed' status is returned correctly."""
         _setup_content_dir(
             artifacts_root,
             briefs_data=_make_briefs_json(1),
-            pipeline_state={"brief-0": "completed"},
+        )
+        monkeypatch.setattr(
+            "api.services.content_data_service._load_pipeline_state",
+            lambda *a, **kw: {"brief-0": "completed"},
         )
         resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.json()["briefs"][0]["status"] == "completed"
 
-    def test_list_briefs_no_pipeline_state_file(
+    def test_list_briefs_no_pipeline_state(
         self, client: TestClient, artifacts_root: Path,
     ):
-        """Without pipeline_state.json, status inference works via Phase 1/2."""
+        """Without pipeline state (Redis empty), status inference works via Phase 1/2."""
         _setup_content_dir(
             artifacts_root,
             briefs_data=_make_briefs_json(1),
@@ -1370,21 +1381,31 @@ class TestContentCaching:
         titles = [b["title"] for b in body["briefs"]]
         assert "New Brief" in titles
 
-    def test_pipeline_state_not_cached(self, client: TestClient, artifacts_root: Path):
-        """pipeline_state.json should be read fresh each time (not through cache)."""
+    def test_pipeline_state_read_fresh_each_call(
+        self, client: TestClient, artifacts_root: Path, monkeypatch,
+    ):
+        """Pipeline state (Redis) should be read fresh each time (not stale)."""
         _setup_content_dir(
             artifacts_root,
             briefs_data=_make_briefs_json(1),
         )
-        # Write pipeline_state showing "drafting" for brief-0
-        state_path = artifacts_root / "content" / "test-co" / "pipeline_state.json"
-        state_path.write_text(json.dumps({"brief-0": "drafting"}))
+        # First call: pipeline state shows "drafting"
+        call_count = {"n": 0}
+        states = [{"brief-0": "drafting"}, {"brief-0": "review"}]
+
+        def _rotating_state(*a, **kw):
+            result = states[call_count["n"] % len(states)]
+            call_count["n"] += 1
+            return result
+
+        monkeypatch.setattr(
+            "api.services.content_data_service._load_pipeline_state",
+            _rotating_state,
+        )
 
         body1 = client.get("/api/v1/companies/test-co/content/briefs").json()
         assert body1["briefs"][0]["status"] == "drafting"
 
-        # Update pipeline state to "review" — should be reflected immediately
-        state_path.write_text(json.dumps({"brief-0": "review"}))
-
+        # Second call: pipeline state rotates to "review"
         body2 = client.get("/api/v1/companies/test-co/content/briefs").json()
         assert body2["briefs"][0]["status"] == "review"

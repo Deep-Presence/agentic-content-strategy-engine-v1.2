@@ -550,3 +550,77 @@ def compute_topic_priority(
         "subdomain_score": round(subdomain_composite_score, 4),
         "base_weight": round(base, 4),
     }
+
+
+# ---------------------------------------------------------------------------
+# Per-assignment persona affinity (computed during expansion)
+# ---------------------------------------------------------------------------
+
+# Role-based buyer stage affinity boosts: executives care more about bofu,
+# practitioners care more about tofu/informational content.
+_ROLE_BUYER_BOOSTS: Dict[str, Dict[str, float]] = {
+    "executive": {"bofu": 0.1, "mofu": 0.05},
+    "manager": {"mofu": 0.1, "bofu": 0.05},
+    "practitioner": {"tofu": 0.1, "mofu": 0.05},
+}
+
+_DIRECT_MATCH_BOOST = 0.2
+
+
+def compute_assignment_persona_affinity(
+    buyer_stage: str,
+    assignment_persona_id: str,
+    subdomain_affinity: Dict[str, float],
+    persona_entries: List[Tuple[str, str, str]],
+) -> Dict[str, float]:
+    """Compute per-assignment persona affinity scores.
+
+    Starts from subdomain-level affinity (from PersonaAffinityIndex), then
+    adjusts based on:
+    - Direct match boost: +0.2 if assignment.persona_id == persona_id
+    - Buyer stage relevance: role-based boosts from _ROLE_BUYER_BOOSTS
+
+    Args:
+        buyer_stage: The assignment's buyer stage (tofu/mofu/bofu).
+        assignment_persona_id: The persona_id on this assignment.
+        subdomain_affinity: {persona_id: base_affinity} from PersonaAffinityIndex.
+        persona_entries: List of (persona_id, persona_name, career_role) tuples.
+
+    Returns:
+        {persona_id: affinity_score} clamped to [0.0, 1.0].
+    """
+    result: Dict[str, float] = {}
+
+    for pid, _pname, career_role in persona_entries:
+        # Start from subdomain-level affinity
+        base = subdomain_affinity.get(pid, 0.0)
+
+        # Direct match boost — the LLM generated this topic FOR this persona
+        if pid == assignment_persona_id:
+            base += _DIRECT_MATCH_BOOST
+
+        # Role-based buyer stage boost
+        role_key = _classify_role(career_role)
+        stage_boosts = _ROLE_BUYER_BOOSTS.get(role_key, {})
+        base += stage_boosts.get(buyer_stage, 0.0)
+
+        result[pid] = round(min(1.0, max(0.0, base)), 4)
+
+    return result
+
+
+def _classify_role(career_role: str) -> str:
+    """Classify a career role into executive/manager/practitioner."""
+    if not career_role:
+        return "practitioner"
+    lower = career_role.lower()
+    executive_keywords = {"ceo", "cto", "cfo", "coo", "cmo", "vp", "vice president",
+                          "chief", "director", "head of", "svp", "evp", "president"}
+    manager_keywords = {"manager", "lead", "supervisor", "team lead", "coordinator"}
+    for kw in executive_keywords:
+        if kw in lower:
+            return "executive"
+    for kw in manager_keywords:
+        if kw in lower:
+            return "manager"
+    return "practitioner"

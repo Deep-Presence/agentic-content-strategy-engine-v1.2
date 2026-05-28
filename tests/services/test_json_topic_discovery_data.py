@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
+
 from core.services.json_topic_discovery_data import JsonTopicDiscoveryDataService
 from core.services.topic_discovery_data import TopicDiscoveryDataServiceProtocol
 

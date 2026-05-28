@@ -152,3 +152,24 @@ async def test_get_fresh_url_enrichment_respects_ttl(db_session):
     # Outside TTL
     stale = await repo.get_fresh_url_enrichment("url_expired", max_age_days=7)
     assert stale is None
+
+
+async def test_upsert_url_enrichment_persists_freshness_dates(db_session):
+    """upsert_url_enrichment() stores published/modified timestamps."""
+    repo = CacheRepository(db_session)
+    now = datetime.now(timezone.utc)
+    published_at = now - timedelta(days=90)
+    modified_at = now - timedelta(days=15)
+
+    result = await repo.upsert_url_enrichment(
+        url_hash="url_hash_dates",
+        url="https://example.com/freshness",
+        domain="example.com",
+        title="Freshness Example",
+        published_at=published_at,
+        modified_at=modified_at,
+        scraped_at=now,
+    )
+
+    assert result.published_at == published_at
+    assert result.modified_at == modified_at

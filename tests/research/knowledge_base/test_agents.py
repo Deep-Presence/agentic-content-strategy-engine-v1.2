@@ -59,7 +59,7 @@ class TestRunCompanyOverviewAgent:
         from core.research.knowledge_base.agents import run_company_overview_agent
 
         mock_client = MagicMock()
-        mock_client.research = MagicMock(return_value="# Company Overview\n\nGreat content.")
+        mock_client.research = MagicMock(return_value=("# Company Overview\n\nGreat content.", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
         monkeypatch.setattr(_PERPLEXITY_PATCH, mock_client)
 
         result = await run_company_overview_agent(kb_input, timeout_s=10)
@@ -104,7 +104,7 @@ class TestRunCompanyOverviewAgent:
         from core.research.knowledge_base.agents import run_company_overview_agent
 
         mock_client = MagicMock()
-        mock_client.research = MagicMock(return_value="")
+        mock_client.research = MagicMock(return_value=("", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
         monkeypatch.setattr(_PERPLEXITY_PATCH, mock_client)
 
         result = await run_company_overview_agent(kb_input, timeout_s=10)
@@ -125,7 +125,7 @@ class TestRunCustomerReviewsAgent:
         from core.research.knowledge_base.agents import run_customer_reviews_agent
 
         mock_client = MagicMock()
-        mock_client.research = MagicMock(return_value="# Reviews\n\nPositive feedback.")
+        mock_client.research = MagicMock(return_value=("# Reviews\n\nPositive feedback.", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
         monkeypatch.setattr(_PERPLEXITY_PATCH, mock_client)
 
         result = await run_customer_reviews_agent(kb_input, timeout_s=10)
@@ -158,7 +158,7 @@ class TestRunCompetitorScannerAgent:
         from core.research.knowledge_base.agents import run_competitor_scanner_agent
 
         mock_client = MagicMock()
-        mock_client.research = MagicMock(return_value="# Competitors\n\n- Rival Inc")
+        mock_client.research = MagicMock(return_value=("# Competitors\n\n- Rival Inc", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
         monkeypatch.setattr(_PERPLEXITY_PATCH, mock_client)
 
         result = await run_competitor_scanner_agent(
@@ -173,9 +173,9 @@ class TestRunCompetitorScannerAgent:
 
         captured_query = {}
 
-        def _capture(query: str, **kw: Any) -> str:
+        def _capture(query: str, **kw: Any):
             captured_query["q"] = query
-            return "# Result"
+            return ("# Result", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
 
         mock_client = MagicMock()
         mock_client.research = MagicMock(side_effect=_capture)
@@ -211,7 +211,7 @@ class TestRunWeaknessAnalystAgent:
         from core.research.knowledge_base.agents import run_weakness_analyst_agent
 
         mock_client = MagicMock()
-        mock_client.research = MagicMock(return_value="# Weaknesses\n\nRival has gaps.")
+        mock_client.research = MagicMock(return_value=("# Weaknesses\n\nRival has gaps.", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
         monkeypatch.setattr(_PERPLEXITY_PATCH, mock_client)
 
         result = await run_weakness_analyst_agent(
@@ -226,9 +226,9 @@ class TestRunWeaknessAnalystAgent:
 
         captured_query = {}
 
-        def _capture(query: str, **kw: Any) -> str:
+        def _capture(query: str, **kw: Any):
             captured_query["q"] = query
-            return "# Result"
+            return ("# Result", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
 
         mock_client = MagicMock()
         mock_client.research = MagicMock(side_effect=_capture)
@@ -511,7 +511,7 @@ class TestRunSynthesisAgent:
 
         with (
             patch("core.research.knowledge_base.agents.create_react_agent", return_value=mock_agent),
-            patch("core.research.knowledge_base.agents._build_model", return_value=MagicMock()),
+            patch("core.research.knowledge_base.agents.build_chat_openai_via_openrouter", return_value=MagicMock()),
         ):
             result = await run_synthesis_agent(
                 input_data=kb_input,
@@ -542,7 +542,7 @@ class TestRunSynthesisAgent:
 
         with (
             patch("core.research.knowledge_base.agents.create_react_agent", return_value=mock_agent),
-            patch("core.research.knowledge_base.agents._build_model", return_value=MagicMock()),
+            patch("core.research.knowledge_base.agents.build_chat_openai_via_openrouter", return_value=MagicMock()),
         ):
             result = await run_synthesis_agent(
                 input_data=kb_input,
@@ -566,7 +566,7 @@ class TestRunSynthesisAgent:
 
         with (
             patch("core.research.knowledge_base.agents.create_react_agent", return_value=mock_agent),
-            patch("core.research.knowledge_base.agents._build_model", return_value=MagicMock()),
+            patch("core.research.knowledge_base.agents.build_chat_openai_via_openrouter", return_value=MagicMock()),
             patch(f"{_TRACING_PATCH_BASE}.asyncio.wait_for", side_effect=asyncio.TimeoutError),
         ):
                 result = await run_synthesis_agent(
@@ -645,9 +645,9 @@ class TestRevisionNotePassThrough:
 
         captured_query = {}
 
-        def _capture(query: str, **kw: Any) -> str:
+        def _capture(query: str, **kw: Any):
             captured_query["q"] = query
-            return "# Result"
+            return ("# Result", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
 
         mock_client = MagicMock()
         mock_client.research = MagicMock(side_effect=_capture)
@@ -691,36 +691,80 @@ class TestRevisionNotePassThrough:
         assert "Add analyst opinions" in user_content
 
 
-class TestBuildModel:
-    """Tests for _build_model helper."""
+class TestSynthesisCostTracking:
+    """Verify cost tracking extracts real token counts after OpenRouter migration."""
 
-    def test_colon_format(self) -> None:
-        from core.research.knowledge_base.agents import _build_model
+    @pytest.mark.asyncio
+    async def test_extracts_real_tokens_from_response_metadata(
+        self, kb_input: KnowledgeBaseInput, tmp_path: Path,
+    ) -> None:
+        from core.research.knowledge_base.agents import run_synthesis_agent
 
-        with patch("core.research.knowledge_base.agents.init_chat_model") as mock_init, \
-             patch("core.research.knowledge_base.agents.settings") as mock_settings:
-            mock_settings.anthropic_api_key = "test-key"
-            mock_init.return_value = MagicMock()
-            _build_model("anthropic:claude-opus-4-6")
-            mock_init.assert_called_once_with("claude-opus-4-6", model_provider="anthropic", api_key="test-key")
+        mock_msg = MagicMock()
+        mock_msg.type = "ai"
+        mock_msg.content = "# Synthesized Company Profile\n\nComprehensive analysis."
+        mock_msg.response_metadata = {
+            "token_usage": {"prompt_tokens": 1200, "completion_tokens": 800},
+        }
 
-    def test_slash_format(self) -> None:
-        from core.research.knowledge_base.agents import _build_model
+        mock_agent = MagicMock()
+        mock_agent.ainvoke = AsyncMock(return_value={"messages": [mock_msg]})
 
-        with patch("core.research.knowledge_base.agents.init_chat_model") as mock_init, \
-             patch("core.research.knowledge_base.agents.settings") as mock_settings:
-            mock_settings.anthropic_api_key = "test-key"
-            mock_init.return_value = MagicMock()
-            _build_model("anthropic/claude-opus-4-6")
-            mock_init.assert_called_once_with("claude-opus-4-6", model_provider="anthropic", api_key="test-key")
+        with (
+            patch("core.research.knowledge_base.agents.create_react_agent", return_value=mock_agent),
+            patch("core.research.knowledge_base.agents.build_chat_openai_via_openrouter", return_value=MagicMock()),
+            patch("core.shared_tools.cost_tracker.track_llm_cost") as mock_track,
+        ):
+            await run_synthesis_agent(
+                input_data=kb_input,
+                kb_base_dir=tmp_path,
+                available_docs={
+                    "company_overview": "p1", "customer_reviews": "p2", "competitor_registry": "p3",
+                },
+                missing_docs=[],
+                timeout_s=10,
+            )
 
-    def test_bare_model(self) -> None:
-        from core.research.knowledge_base.agents import _build_model
+            mock_track.assert_called_once()
+            call_kwargs = mock_track.call_args.kwargs
+            assert call_kwargs["prompt_tokens"] == 1200
+            assert call_kwargs["completion_tokens"] == 800
+            assert call_kwargs["source"] == "openrouter"
+            assert call_kwargs["extra"]["estimation_method"] == "sdk"
 
-        with patch("core.research.knowledge_base.agents.init_chat_model") as mock_init:
-            mock_init.return_value = MagicMock()
-            _build_model("gpt-4o")
-            mock_init.assert_called_once_with("gpt-4o")
+    @pytest.mark.asyncio
+    async def test_falls_back_to_char_count(
+        self, kb_input: KnowledgeBaseInput, tmp_path: Path,
+    ) -> None:
+        from core.research.knowledge_base.agents import run_synthesis_agent
+
+        mock_msg = MagicMock()
+        mock_msg.type = "ai"
+        mock_msg.content = "# Synthesized Company Profile\n\nComprehensive analysis."
+        mock_msg.response_metadata = {}  # No token_usage
+
+        mock_agent = MagicMock()
+        mock_agent.ainvoke = AsyncMock(return_value={"messages": [mock_msg]})
+
+        with (
+            patch("core.research.knowledge_base.agents.create_react_agent", return_value=mock_agent),
+            patch("core.research.knowledge_base.agents.build_chat_openai_via_openrouter", return_value=MagicMock()),
+            patch("core.shared_tools.cost_tracker.track_llm_cost") as mock_track,
+        ):
+            await run_synthesis_agent(
+                input_data=kb_input,
+                kb_base_dir=tmp_path,
+                available_docs={
+                    "company_overview": "p1", "customer_reviews": "p2", "competitor_registry": "p3",
+                },
+                missing_docs=[],
+                timeout_s=10,
+            )
+
+            mock_track.assert_called_once()
+            call_kwargs = mock_track.call_args.kwargs
+            assert call_kwargs["prompt_tokens"] > 0  # char estimate
+            assert call_kwargs["extra"]["estimation_method"] == "char_count"
 
 
 # ---------------------------------------------------------------------------
@@ -746,7 +790,7 @@ class TestSynthesisDocType:
 
         with (
             patch("core.research.knowledge_base.agents.create_react_agent", return_value=mock_agent),
-            patch("core.research.knowledge_base.agents._build_model", return_value=MagicMock()),
+            patch("core.research.knowledge_base.agents.build_chat_openai_via_openrouter", return_value=MagicMock()),
         ):
             result = await run_synthesis_agent(
                 input_data=kb_input,
@@ -836,9 +880,9 @@ class TestPerplexityTimeoutForwarded:
 
         captured_kwargs: Dict[str, Any] = {}
 
-        def _capture(**kw: Any) -> str:
+        def _capture(**kw: Any):
             captured_kwargs.update(kw)
-            return "# Result"
+            return ("# Result", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
 
         mock_client = MagicMock()
         mock_client.research = MagicMock(side_effect=_capture)
@@ -876,7 +920,7 @@ class TestSynthesisAgentDeltaMode:
 
         with (
             patch(f"{_AGENTS_MOD}.create_react_agent", return_value=_mock_synthesis_agent()),
-            patch(f"{_AGENTS_MOD}._build_model", return_value=MagicMock()),
+            patch(f"{_AGENTS_MOD}.build_chat_openai_via_openrouter", return_value=MagicMock()),
             patch(f"{_AGENTS_MOD}.get_delta_synthesis_system_prompt", return_value="delta sys") as mock_delta_sys,
             patch(f"{_AGENTS_MOD}.build_delta_synthesis_user_prompt", return_value="delta user") as mock_delta_user,
             patch(f"{_AGENTS_MOD}.get_synthesis_system_prompt", return_value="full sys") as mock_full_sys,
@@ -906,7 +950,7 @@ class TestSynthesisAgentDeltaMode:
 
         with (
             patch(f"{_AGENTS_MOD}.create_react_agent", return_value=_mock_synthesis_agent()),
-            patch(f"{_AGENTS_MOD}._build_model", return_value=MagicMock()),
+            patch(f"{_AGENTS_MOD}.build_chat_openai_via_openrouter", return_value=MagicMock()),
             patch(f"{_AGENTS_MOD}.get_delta_synthesis_system_prompt", return_value="delta sys") as mock_delta_sys,
             patch(f"{_AGENTS_MOD}.build_delta_synthesis_user_prompt", return_value="delta user") as mock_delta_user,
             patch(f"{_AGENTS_MOD}.get_synthesis_system_prompt", return_value="full sys") as mock_full_sys,
@@ -976,7 +1020,7 @@ class TestSynthesisAgentDeltaMode:
 
         with (
             patch(f"{_AGENTS_MOD}.create_react_agent", return_value=_mock_synthesis_agent()),
-            patch(f"{_AGENTS_MOD}._build_model", return_value=MagicMock()),
+            patch(f"{_AGENTS_MOD}.build_chat_openai_via_openrouter", return_value=MagicMock()),
             patch(f"{_AGENTS_MOD}.get_delta_synthesis_system_prompt", return_value="sys"),
             patch(f"{_AGENTS_MOD}.build_delta_synthesis_user_prompt", side_effect=_capture_delta_prompt),
         ):

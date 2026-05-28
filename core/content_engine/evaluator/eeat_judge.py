@@ -77,6 +77,7 @@ async def evaluate_eeat(
             user=user_prompt,
             max_tokens=2048,
             temperature=0.0,
+            response_format={"type": "json_object"},
             metadata={
                 "agent": "eeat_judge",
                 "brief_id": content.brief_id,
@@ -89,13 +90,11 @@ async def evaluate_eeat(
         )
 
         # Parse JSON response
-        raw = response.content.strip()
-        # Handle markdown code fences
-        if raw.startswith("```"):
-            lines = raw.split("\n")
-            raw = "\n".join(lines[1:-1]) if len(lines) > 2 else raw
+        import json_repair
+        from core.content_engine.utils import _extract_json_block
 
-        parsed = json.loads(raw)
+        raw = _extract_json_block(response.content)
+        parsed = json_repair.loads(raw)
 
         score = float(parsed.get("score", 0.0))
         passed = bool(parsed.get("passed", score >= 0.6))

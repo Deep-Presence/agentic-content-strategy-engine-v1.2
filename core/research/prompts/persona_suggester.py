@@ -53,6 +53,7 @@ The final set of 3–5 personas should:
 Return ONLY a valid JSON array. Each element must have:
 - "persona_name": A realistic first name (e.g., "Sarah", "Marcus")
 - "tagline": Role + context in <12 words (e.g., "VP of Finance at mid-market SaaS companies")
+- "career_role": Their specific job title (e.g., "VP of Marketing", "DevOps Lead", "Agency Founder")
 - "description": One sentence describing who this person is and what they care about
 - "rationale": Array of 2-3 bullet points explaining why this persona is a good fit \
    for the company's product. What specific problem this persona faces that the company is positioned to solve. \

@@ -77,13 +77,14 @@ async def select_topics(
         max_topics,
     )
 
-    # Call LLM via LiteLLM
+    # Call LLM via OpenRouter
     response = await llm_call(
         model=model,
         system=STRATEGIC_PLANNER_SYSTEM_PROMPT,
         user=user_prompt,
         max_tokens=4096,
         temperature=0.0,
+        response_format={"type": "json_object"},
         metadata={
             "agent": "strategic_planner",
             "total_queries": scorecard.total_queries,

@@ -246,3 +246,11 @@ class CMSSyncedPostModel(UUIDPKMixin, TimestampMixin, Base):
         default=_utcnow,
         server_default=func.now(),
     )
+
+    # ── Content Inventory link ────────────────────────────────────
+    content_inventory_id: Mapped[_uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("content_inventory.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="Link to the canonical content inventory record for this CMS post.",
+    )

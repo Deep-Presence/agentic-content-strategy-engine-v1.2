@@ -1,11 +1,16 @@
 """ORM model registry — import all modules to register metadata with Base."""
 from core.db.models import (  # noqa: F401
+    analytics,
     api_tasks,
     audit_log,
     audience_persona,
     cache,
     cms,
     content,
+    content_engine_runs,
+    content_inventory,
+    content_inventory_prompt,
+    cost,
     daily_tracker,
     embeddings,
     gap_analysis,

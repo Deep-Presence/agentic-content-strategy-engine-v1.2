@@ -114,22 +114,51 @@ async def _run_discovery_completion(
     if metadata is not None:
         _kwargs["metadata"] = metadata
 
+    from core.shared_tools.cost_tracker import extract_usage_litellm, track_llm_cost
+    from core.shared_tools.tracing import extract_provider
+
+    _total_pt, _total_ct = 0, 0
     for turn in range(_MAX_PAUSE_TURNS + 1):
         _kwargs["messages"] = convo
         response = await asyncio.wait_for(
             litellm.acompletion(**_kwargs),
             timeout=timeout_s,
         )
+        _pt, _ct = extract_usage_litellm(response)
+        _total_pt += _pt
+        _total_ct += _ct
+        track_llm_cost(
+            model=model, provider=extract_provider(model),
+            pipeline="voice_style_guide",
+            pipeline_step=f"author_discovery/turn-{turn}",
+            prompt_tokens=_pt, completion_tokens=_ct,
+            call_site="core.research.voice_style_guide.agents",
+        )
         choice = response.choices[0]
         raw_text = _extract_text_content(choice.message.content)
         finish_reason = getattr(choice, "finish_reason", None)
         if finish_reason != "pause_turn":
+            if turn > 0:
+                track_llm_cost(
+                    model=model, provider=extract_provider(model),
+                    pipeline="voice_style_guide",
+                    pipeline_step="author_discovery/total",
+                    prompt_tokens=_total_pt, completion_tokens=_total_ct,
+                    call_site="core.research.voice_style_guide.agents",
+                )
             return response, raw_text
 
         if turn >= _MAX_PAUSE_TURNS:
             logger.warning(
                 "Author discovery hit pause_turn limit (%d); returning partial response.",
                 _MAX_PAUSE_TURNS,
+            )
+            track_llm_cost(
+                model=model, provider=extract_provider(model),
+                pipeline="voice_style_guide",
+                pipeline_step="author_discovery/total",
+                prompt_tokens=_total_pt, completion_tokens=_total_ct,
+                call_site="core.research.voice_style_guide.agents",
             )
             return response, raw_text
 
@@ -542,7 +571,7 @@ async def run_author_research(
         )
         full_prompt = f"{system_prompt}\n\n{user_prompt}"
 
-        result_md = await asyncio.wait_for(
+        result_md, _pplx_usage = await asyncio.wait_for(
             asyncio.to_thread(
                 perplexity_client.research,
                 query=full_prompt,
@@ -562,6 +591,7 @@ async def run_author_research(
                 "model": settings.perplexity_deep_research_model,
                 "company_slug": input_data.company_slug or "",
             },
+            usage=_pplx_usage,
         )
         end_span(span, output={"word_count": len(result_md.split()) if result_md else 0})
 
@@ -630,17 +660,18 @@ async def run_voice_synthesis(
             "model": model,
             "company_slug": input_data.company_slug or "",
         }
+        from core.shared_tools.openrouter_client import get_async_client
+        or_client = get_async_client()
         response = await asyncio.wait_for(
-            litellm.acompletion(
+            or_client.chat.completions.create(
                 model=model,
-                api_key=api_key,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.3,
                 max_tokens=8192,
-                metadata=_synth_meta,
+                extra_body={"metadata": _synth_meta},
             ),
             timeout=timeout_s,
         )

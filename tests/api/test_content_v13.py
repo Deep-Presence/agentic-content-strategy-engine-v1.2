@@ -5,7 +5,7 @@ POST /approve/briefs, POST /approve/content.
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -28,6 +28,30 @@ def _make_pending_task(task_store, stage: str, brief_id: str | None = None):
         task.task_id,
         status=TaskStatus.PENDING_APPROVAL,
         approval_payload=payload,
+    )
+    return task
+
+
+def _make_pending_td_task(task_store, stage: str, brief_id: str):
+    task = task_store.create_task(
+        pipeline="td_content",
+        company_slug="test-co",
+    )
+    task.effective_slug = "test-co"
+    task_store.update_task(
+        task.task_id,
+        status=TaskStatus.PENDING_APPROVAL,
+        approval_payload={
+            "stage": stage,
+            "brief_id": brief_id,
+            "checkpoint_nonce": "test-nonce-123",
+            "continuation": {
+                "resume_stage": stage,
+                "topic_assignment_id": "ta-123",
+                "brief_id": brief_id,
+                "thread_id": f"thread-{brief_id}",
+            },
+        },
     )
     return task
 
@@ -292,6 +316,88 @@ class TestApproveBriefs:
         )
         assert resp.status_code == 422
 
+    def test_td_continuation_routes_to_durable_resume_queue(
+        self,
+        client: TestClient,
+        task_store,
+    ):
+        task = _make_pending_td_task(task_store, "brief_approval", brief_id="WE-177")
+        client.app.state.db_session_factory = MagicMock()
+        client.app.state.event_bus = MagicMock()
+
+        with patch(
+            "core.services.content_engine_topic_runs.ContentEngineTopicRunService",
+        ) as service_cls, patch(
+            "api.routers.content_v13.dispatch_queued_td_content_runs",
+            new_callable=AsyncMock,
+            return_value=[],
+        ) as dispatch_mock:
+            service = MagicMock()
+            service.queue_topic_run_resume = AsyncMock(return_value=MagicMock())
+            service_cls.return_value = service
+
+            resp = client.post(
+                f"/api/v1/content/v13/{task.task_id}/approve/briefs",
+                json={
+                    "brief_id": "WE-177",
+                    "decision": "approve",
+                },
+            )
+
+        assert resp.status_code == 200
+        service.queue_topic_run_resume.assert_awaited_once_with(
+            effective_slug="test-co",
+            pipeline_task_id=task.task_id,
+            approval_data={
+                "brief_decision": "approve",
+                "brief_feedback": "",
+                "brief_id": "WE-177",
+            },
+        )
+        dispatch_mock.assert_awaited_once()
+
+    def test_td_brief_approval_retry_still_allowed_after_resume_queue_failure(
+        self,
+        client: TestClient,
+        task_store,
+    ):
+        task = _make_pending_td_task(task_store, "brief_approval", brief_id="WE-177")
+        client.app.state.db_session_factory = MagicMock()
+        client.app.state.event_bus = MagicMock()
+
+        with patch(
+            "core.services.content_engine_topic_runs.ContentEngineTopicRunService",
+        ) as service_cls, patch(
+            "api.routers.content_v13.dispatch_queued_td_content_runs",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            service = MagicMock()
+            service.queue_topic_run_resume = AsyncMock(
+                side_effect=[RuntimeError("db down"), MagicMock()]
+            )
+            service_cls.return_value = service
+
+            first = client.post(
+                f"/api/v1/content/v13/{task.task_id}/approve/briefs",
+                json={
+                    "brief_id": "WE-177",
+                    "decision": "approve",
+                },
+            )
+            second = client.post(
+                f"/api/v1/content/v13/{task.task_id}/approve/briefs",
+                json={
+                    "brief_id": "WE-177",
+                    "decision": "approve",
+                },
+            )
+
+        assert first.status_code == 503
+        assert second.status_code == 200
+        assert len(task.approval_history) == 1
+        assert task.approval_history[0].decision == "approve"
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # POST /approve/content
@@ -361,6 +467,169 @@ class TestApproveContent:
             json={"brief_id": "b-1", "decision": "invalid"},
         )
         assert resp.status_code == 422
+
+    def test_td_content_review_routes_to_durable_resume_queue(
+        self,
+        client: TestClient,
+        task_store,
+    ):
+        task = _make_pending_td_task(task_store, "content_review", brief_id="WE-177")
+        client.app.state.db_session_factory = MagicMock()
+        client.app.state.event_bus = MagicMock()
+
+        with patch(
+            "core.services.content_engine_topic_runs.ContentEngineTopicRunService",
+        ) as service_cls, patch(
+            "api.routers.content_v13.dispatch_queued_td_content_runs",
+            new_callable=AsyncMock,
+            return_value=[],
+        ) as dispatch_mock:
+            service = MagicMock()
+            service.queue_topic_run_resume = AsyncMock(return_value=MagicMock())
+            service_cls.return_value = service
+
+            resp = client.post(
+                f"/api/v1/content/v13/{task.task_id}/approve/content",
+                json={
+                    "brief_id": "WE-177",
+                    "decision": "edit",
+                    "editor_notes": "Tighten the intro",
+                    "content_markdown": "# Edited\n\nLatest approved draft",
+                },
+            )
+
+        assert resp.status_code == 200
+        service.queue_topic_run_resume.assert_awaited_once_with(
+            effective_slug="test-co",
+            pipeline_task_id=task.task_id,
+            approval_data={
+                "content_decision": "edit",
+                "editor_notes": "Tighten the intro",
+                "rethink": False,
+                "brief_id": "WE-177",
+                "content_markdown": "# Edited\n\nLatest approved draft",
+            },
+        )
+        dispatch_mock.assert_awaited_once()
+
+    def test_td_content_approval_retry_still_allowed_after_resume_queue_failure(
+        self,
+        client: TestClient,
+        task_store,
+    ):
+        task = _make_pending_td_task(task_store, "content_review", brief_id="WE-177")
+        client.app.state.db_session_factory = MagicMock()
+        client.app.state.event_bus = MagicMock()
+
+        with patch(
+            "core.services.content_engine_topic_runs.ContentEngineTopicRunService",
+        ) as service_cls, patch(
+            "api.routers.content_v13.dispatch_queued_td_content_runs",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            service = MagicMock()
+            service.queue_topic_run_resume = AsyncMock(
+                side_effect=[RuntimeError("db down"), MagicMock()]
+            )
+            service_cls.return_value = service
+
+            first = client.post(
+                f"/api/v1/content/v13/{task.task_id}/approve/content",
+                json={
+                    "brief_id": "WE-177",
+                    "decision": "edit",
+                    "editor_notes": "Tighten the intro",
+                },
+            )
+            second = client.post(
+                f"/api/v1/content/v13/{task.task_id}/approve/content",
+                json={
+                    "brief_id": "WE-177",
+                    "decision": "edit",
+                    "editor_notes": "Tighten the intro",
+                },
+            )
+
+        assert first.status_code == 503
+        assert second.status_code == 200
+        assert len(task.approval_history) == 1
+        assert task.approval_history[0].decision == "edit"
+
+
+class TestReviewDraftContent:
+    """Tests for GET/PUT /api/v1/content/v13/{run_id}/draft/content."""
+
+    def test_get_review_draft_content(self, client: TestClient, task_store):
+        task = task_store.create_task(pipeline="td_content", company_slug="test-co")
+        task.effective_slug = "test-co"
+
+        with patch(
+            "api.routers.content_v13._load_review_draft_content",
+            new_callable=AsyncMock,
+            return_value="# Draft\n\nHello world",
+        ) as load_mock:
+            resp = client.get(
+                f"/api/v1/content/v13/{task.task_id}/draft/content",
+                params={"brief_id": "WE-001"},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "brief_id": "WE-001",
+            "content_markdown": "# Draft\n\nHello world",
+        }
+        load_mock.assert_awaited_once_with(
+            app=client.app,
+            effective_slug="test-co",
+            brief_id="WE-001",
+        )
+
+    def test_get_review_draft_content_404_when_missing(self, client: TestClient, task_store):
+        task = task_store.create_task(pipeline="td_content", company_slug="test-co")
+        task.effective_slug = "test-co"
+
+        with patch(
+            "api.routers.content_v13._load_review_draft_content",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            resp = client.get(
+                f"/api/v1/content/v13/{task.task_id}/draft/content",
+                params={"brief_id": "WE-001"},
+            )
+
+        assert resp.status_code == 404
+
+    def test_put_review_draft_content(self, client: TestClient, task_store):
+        task = task_store.create_task(pipeline="td_content", company_slug="test-co")
+        task.effective_slug = "test-co"
+
+        with patch(
+            "api.routers.content_v13._save_review_draft_content",
+            new_callable=AsyncMock,
+            return_value="content/test-co/content/WE-001/review_draft.md",
+        ) as save_mock:
+            resp = client.put(
+                f"/api/v1/content/v13/{task.task_id}/draft/content",
+                json={
+                    "brief_id": "WE-001",
+                    "content_markdown": "# Draft\n\nAutosaved",
+                },
+            )
+
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "status": "saved",
+            "brief_id": "WE-001",
+            "storage_key": "content/test-co/content/WE-001/review_draft.md",
+        }
+        save_mock.assert_awaited_once_with(
+            app=client.app,
+            effective_slug="test-co",
+            brief_id="WE-001",
+            content_markdown="# Draft\n\nAutosaved",
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════

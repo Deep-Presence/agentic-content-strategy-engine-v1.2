@@ -344,6 +344,7 @@ class TestVSGDataProtocol:
 # ── TopicDiscoveryDataServiceProtocol ───────────────────────────────
 
 
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
 class TestTopicDiscoveryDataProtocol:
     """Verify both implementations satisfy TopicDiscoveryDataServiceProtocol."""
 
@@ -360,7 +361,6 @@ class TestTopicDiscoveryDataProtocol:
             td_repo=MagicMock(),
             taxonomy_repo=MagicMock(),
             assignment_repo=MagicMock(),
-            artifacts_root=Path("/tmp"),
         )
         assert isinstance(instance, TopicDiscoveryDataServiceProtocol)
 

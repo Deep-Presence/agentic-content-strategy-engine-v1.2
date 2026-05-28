@@ -14,6 +14,14 @@ from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus
 from api.schemas.common import PipelineRunResponse, TaskResponse
 from api.schemas.topic_discovery import (
     ApprovalResponseTD,
+    AssignmentListResponse,
+    AssignmentStatusUpdateRequest,
+    AssignmentStatusUpdateResponse,
+    CreateCustomAssignmentRequest,
+    CreateNodeRequest,
+    NodeResponse,
+    UpdateNodeRequest,
+    DiscoverySummaryResponse,
     ExpansionStatusResponse,
     MatrixApprovalRequest,
     MatrixReadResponse,
@@ -34,7 +42,6 @@ from core.auth.utils.domain import derive_slug
 from core.models.organization import UserProfile
 from core.audit import log_hitl_decision, log_pipeline_launch
 from core.services.task_store import ApprovalWindowError, TaskStoreProtocol
-from core.topic_discovery.storage import TopicDiscoveryStorage
 
 logger = logging.getLogger(__name__)
 
@@ -68,20 +75,14 @@ def _validate_approval_window(
         )
 
 
-def _td_should_guard(
-    artifacts_root: Path,
+async def _td_should_guard_db(
+    session_factory: Any,
     effective_slug: str,
-    *,
-    backend: Optional[Any] = None,
 ) -> tuple[bool, Optional[str]]:
-    """Check whether the TD guard should block a new run.
+    """Check whether the TD guard should block a new run via DB."""
+    from core.topic_discovery.db_ops import db_read_manifest
 
-    Guard blocks when an approved taxonomy + matrix already exist.
-    """
-    kw = {"backend": backend} if backend else {}
-    storage = TopicDiscoveryStorage(artifacts_root, effective_slug, **kw)
-    manifest = storage.read_manifest()
-
+    manifest = await db_read_manifest(session_factory, effective_slug)
     if manifest.taxonomy_version > 0:
         from core.models.topic_discovery import TopicDiscoveryStatus
 
@@ -120,11 +121,13 @@ async def start_topic_discovery(
             detail="Cannot start pipeline for another company",
         )
     effective_slug = f"{slug}__{body.product_slug}" if body.product_slug else slug
-    _sb = getattr(http_request.app.state, "storage_backend", None)
 
     # Guard: check if discovery already exists
     if not body.force_rerun:
-        should_guard, message = _td_should_guard(artifacts_root, effective_slug, backend=_sb)
+        sf = getattr(http_request.app.state, "db_session_factory", None)
+        if sf is None:
+            raise HTTPException(status_code=503, detail="Database not available")
+        should_guard, message = await _td_should_guard_db(sf, effective_slug)
         if should_guard:
             response.status_code = 200
             await log_pipeline_launch(
@@ -533,6 +536,7 @@ async def get_persona_affinity(
     return PersonaAffinityResponse(
         slug=slug,
         persona_entries=affinity.get("persona_entries", {}),
+        persona_metadata=affinity.get("persona_metadata", {}),
         total_personas=affinity.get("total_personas", 0),
         total_subdomains=affinity.get("total_subdomains", 0),
     )
@@ -565,17 +569,24 @@ async def start_topic_expansion(
     effective_slug = f"{slug}__{body.product_slug}" if body.product_slug else slug
 
     # Pre-check: discovery must have completed
-    _sb = getattr(http_request.app.state, "storage_backend", None)
-    kw = {"backend": _sb} if _sb else {}
-    storage = TopicDiscoveryStorage(artifacts_root, effective_slug, **kw)
-    manifest = storage.read_manifest()
+    sf = getattr(http_request.app.state, "db_session_factory", None)
+    if sf is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+    from core.topic_discovery.db_ops import db_read_manifest
+    manifest = await db_read_manifest(sf, effective_slug)
     if manifest.taxonomy_version == 0:
         raise HTTPException(
             status_code=409,
             detail="Topic discovery has not been completed yet. Run Pipeline A first.",
         )
 
-    task = await create_task_durable(task_store, "topic_expansion", slug, product_slug=body.product_slug)
+    # allow_parallel=True: multiple subdomains can expand concurrently.
+    # Per-subdomain safety is handled by db_claim_subdomain_for_expansion()
+    # (optimistic DB lock), not by the Redis slug lock.
+    task = await create_task_durable(
+        task_store, "topic_expansion", slug,
+        product_slug=body.product_slug, allow_parallel=True,
+    )
 
     handle = asyncio.create_task(
         run_topic_expansion_pipeline_task(
@@ -631,7 +642,6 @@ async def get_expansion_status(
     slug: str,
     http_request: Request,
     _user: UserProfile = Depends(require_auth),
-    artifacts_root: Path = Depends(get_artifacts_root),
 ) -> ExpansionStatusResponse:
     user_company_slug = getattr(http_request.state, "company_slug", None)
     if not user_company_slug or (
@@ -640,10 +650,11 @@ async def get_expansion_status(
     ):
         raise HTTPException(status_code=403, detail="Access denied")
 
-    _sb = getattr(http_request.app.state, "storage_backend", None)
-    kw = {"backend": _sb} if _sb else {}
-    storage = TopicDiscoveryStorage(artifacts_root, slug, **kw)
-    taxonomy = storage.get_latest_taxonomy()
+    sf = getattr(http_request.app.state, "db_session_factory", None)
+    if sf is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+    from core.topic_discovery.db_ops import db_read_taxonomy
+    taxonomy = await db_read_taxonomy(sf, slug)
     if taxonomy is None:
         raise HTTPException(status_code=404, detail="No taxonomy found")
 
@@ -674,4 +685,257 @@ async def get_expansion_status(
         not_expanded=len(available),
         expanded_ids=expanded_ids,
         available_for_expansion=available,
+    )
+
+
+# ── Endpoint 11: GET /{slug}/summary ──────────────────────────────────
+
+
+@router.get("/{slug}/summary")
+async def get_discovery_summary(
+    slug: str,
+    http_request: Request,
+    _user: UserProfile = Depends(require_auth),
+    td_svc=Depends(get_td_data_service),
+) -> DiscoverySummaryResponse:
+    user_company_slug = getattr(http_request.state, "company_slug", None)
+    if not user_company_slug or (
+        slug != user_company_slug
+        and not slug.startswith(f"{user_company_slug}__")
+    ):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    summary = await td_svc.get_discovery_summary(slug)
+    if summary is None:
+        raise HTTPException(status_code=404, detail="No discovery found")
+
+    return DiscoverySummaryResponse(**summary)
+
+
+# ── Endpoint 12: GET /{slug}/assignments ──────────────────────────────
+
+
+@router.get("/{slug}/assignments")
+async def list_assignments(
+    slug: str,
+    http_request: Request,
+    buyer_stage: Optional[str] = None,
+    intent_type: Optional[str] = None,
+    persona_id: Optional[str] = None,
+    status: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 50,
+    _user: UserProfile = Depends(require_auth),
+    td_svc=Depends(get_td_data_service),
+) -> AssignmentListResponse:
+    user_company_slug = getattr(http_request.state, "company_slug", None)
+    if not user_company_slug or (
+        slug != user_company_slug
+        and not slug.startswith(f"{user_company_slug}__")
+    ):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    result = await td_svc.list_assignments(
+        slug,
+        buyer_stage=buyer_stage,
+        intent_type=intent_type,
+        persona_id=persona_id,
+        status=status,
+        page=page,
+        page_size=page_size,
+    )
+
+    return AssignmentListResponse(slug=slug, **result)
+
+
+# ── Endpoint 13: PATCH /{slug}/assignments/{assignment_id} ───────────
+
+
+@router.patch("/{slug}/assignments/{assignment_id}")
+async def update_assignment_status(
+    slug: str,
+    assignment_id: str,
+    body: AssignmentStatusUpdateRequest,
+    http_request: Request,
+    _user: UserProfile = Depends(require_role("member", "superuser")),
+    td_svc=Depends(get_td_data_service),
+) -> AssignmentStatusUpdateResponse:
+    user_company_slug = getattr(http_request.state, "company_slug", None)
+    if not user_company_slug or (
+        slug != user_company_slug
+        and not slug.startswith(f"{user_company_slug}__")
+    ):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    result = await td_svc.update_assignment_status(slug, assignment_id, body.status)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+
+    return AssignmentStatusUpdateResponse(
+        assignment_id=assignment_id,
+        status=body.status,
+        message=f"Assignment status updated to {body.status}",
+    )
+
+
+# ── Endpoint 14: POST /{slug}/assignments ─────────────────────────────
+
+
+@router.post("/{slug}/assignments", status_code=201)
+async def create_custom_assignment(
+    slug: str,
+    body: CreateCustomAssignmentRequest,
+    http_request: Request,
+    _user: UserProfile = Depends(require_role("member", "superuser")),
+    td_svc=Depends(get_td_data_service),
+) -> Dict[str, Any]:
+    user_company_slug = getattr(http_request.state, "company_slug", None)
+    if not user_company_slug or (
+        slug != user_company_slug
+        and not slug.startswith(f"{user_company_slug}__")
+    ):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    try:
+        result = await td_svc.create_assignment(
+            slug,
+            assignment_data={
+                "topic_text": body.topic_text,
+                "subdomain_id": body.subdomain_id or "",
+                "subdomain_name": body.subdomain_name or "",
+                "buyer_stage": body.buyer_stage.value,
+                "intent_type": body.intent_type.value,
+                "persona_id": body.persona_id or "",
+                "persona_name": body.persona_name or "",
+                "priority_score": body.priority_score,
+            },
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Tree CRUD: Node operations (editable tree)
+# ═══════════════════════════════════════════════════════════════════���═══
+
+
+# ── Endpoint 16: PATCH /{slug}/nodes/{node_id} ────────────────────────
+
+
+@router.patch("/{slug}/nodes/{node_id}")
+async def update_node(
+    slug: str,
+    node_id: str,
+    body: UpdateNodeRequest,
+    http_request: Request,
+    _user: UserProfile = Depends(require_role("member", "superuser")),
+    td_svc=Depends(get_td_data_service),
+) -> NodeResponse:
+    """Update a single taxonomy node's attributes (name, description, parent_id)."""
+    user_company_slug = getattr(http_request.state, "company_slug", None)
+    if not user_company_slug or (
+        slug != user_company_slug
+        and not slug.startswith(f"{user_company_slug}__")
+    ):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    kwargs = {}
+    if body.name is not None:
+        kwargs["name"] = body.name
+    if body.description is not None:
+        kwargs["description"] = body.description
+    if body.parent_id is not None:
+        import uuid as _uuid
+        try:
+            kwargs["parent_id"] = _uuid.UUID(body.parent_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid parent_id UUID")
+
+    if not kwargs:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    result = await td_svc.update_node(slug, node_id, **kwargs)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+    return NodeResponse(
+        id=str(result["id"]),
+        name=result.get("name", ""),
+        description=result.get("description", ""),
+        parent_id=str(result["parent_id"]) if result.get("parent_id") else None,
+        depth=result.get("depth", 0),
+        expansion_status=result.get("expansion_status", "not_expanded"),
+        message="Node updated",
+    )
+
+
+# ── Endpoint 17: DELETE /{slug}/nodes/{node_id} ──────────────────────
+
+
+@router.delete("/{slug}/nodes/{node_id}")
+async def delete_node(
+    slug: str,
+    node_id: str,
+    http_request: Request,
+    reparent_children: bool = True,
+    _user: UserProfile = Depends(require_role("member", "superuser")),
+    td_svc=Depends(get_td_data_service),
+) -> NodeResponse:
+    """Delete a single taxonomy node. Children are reparented by default."""
+    user_company_slug = getattr(http_request.state, "company_slug", None)
+    if not user_company_slug or (
+        slug != user_company_slug
+        and not slug.startswith(f"{user_company_slug}__")
+    ):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    deleted = await td_svc.delete_node(slug, node_id, reparent_children=reparent_children)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+    return NodeResponse(
+        id=node_id,
+        name="",
+        message="Node deleted" + (" (children reparented)" if reparent_children else ""),
+    )
+
+
+# ── Endpoint 18: POST /{slug}/nodes ──────────────────────────────────
+
+
+@router.post("/{slug}/nodes", status_code=201)
+async def create_node(
+    slug: str,
+    body: CreateNodeRequest,
+    http_request: Request,
+    _user: UserProfile = Depends(require_role("member", "superuser")),
+    td_svc=Depends(get_td_data_service),
+) -> NodeResponse:
+    """Add a new taxonomy node (manual addition)."""
+    user_company_slug = getattr(http_request.state, "company_slug", None)
+    if not user_company_slug or (
+        slug != user_company_slug
+        and not slug.startswith(f"{user_company_slug}__")
+    ):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    result = await td_svc.create_node(
+        slug,
+        name=body.name,
+        description=body.description,
+        parent_id=body.parent_id,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Discovery not found for slug")
+
+    return NodeResponse(
+        id=str(result["id"]),
+        name=result.get("name", ""),
+        description=result.get("description", ""),
+        parent_id=str(result["parent_id"]) if result.get("parent_id") else None,
+        depth=result.get("depth", 0),
+        expansion_status="not_expanded",
+        message="Node created",
     )

@@ -13,12 +13,161 @@ import random
 import re
 from typing import Any, Callable, Type, TypeVar
 
+import json_repair
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 M = TypeVar("M", bound=BaseModel)
+
+
+# ---------------------------------------------------------------------------
+# Literal field coercion — map invalid LLM values to allowed defaults
+# ---------------------------------------------------------------------------
+
+_CONTENT_FORMAT_ALLOWED = {"long_blog", "short_faq", "pillar_page", "comparison", "how_to"}
+_CONTENT_FORMAT_MAP: dict[str, str] = {
+    "technical_guide": "how_to",
+    "guide": "how_to",
+    "tutorial": "how_to",
+    "listicle": "short_faq",
+    "faq": "short_faq",
+    "deep_dive": "long_blog",
+    "thought_leadership": "long_blog",
+    "opinion": "long_blog",
+    "case_study": "long_blog",
+    "roundup": "comparison",
+    "versus": "comparison",
+    "ultimate_guide": "pillar_page",
+}
+
+_FUNNEL_STAGE_ALLOWED = {"awareness", "consideration", "decision", "retention"}
+_CHANNEL_ALLOWED = {"blog", "help_center", "landing_page", "resource_hub"}
+
+
+def _coerce_literal_fields(data: Any) -> Any:
+    """Coerce known Literal fields to valid values before Pydantic validation.
+
+    Handles content_format, funnel_stage, and channel — the three Literal
+    fields on ContentBrief/ContentBlueprint that LLMs occasionally hallucinate.
+    """
+    if not isinstance(data, dict):
+        return data
+
+    cf = data.get("content_format")
+    if isinstance(cf, str) and cf not in _CONTENT_FORMAT_ALLOWED:
+        mapped = _CONTENT_FORMAT_MAP.get(cf, "long_blog")
+        logger.warning(
+            "Coerced content_format %r → %r (not in allowed set)", cf, mapped,
+        )
+        data["content_format"] = mapped
+
+    fs = data.get("funnel_stage")
+    if isinstance(fs, str) and fs not in _FUNNEL_STAGE_ALLOWED:
+        logger.warning(
+            "Coerced funnel_stage %r → 'awareness' (not in allowed set)", fs,
+        )
+        data["funnel_stage"] = "awareness"
+
+    ch = data.get("channel")
+    if isinstance(ch, str) and ch not in _CHANNEL_ALLOWED:
+        logger.warning(
+            "Coerced channel %r → 'blog' (not in allowed set)", ch,
+        )
+        data["channel"] = "blog"
+
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Null coercion — replace null values with sensible defaults
+# ---------------------------------------------------------------------------
+
+_TYPE_DEFAULTS: dict[str, Any] = {
+    "string": "",
+    "integer": 0,
+    "number": 0.0,
+    "boolean": False,
+    "array": [],
+    "object": {},
+}
+
+
+def _coerce_nulls(data: Any, model_cls: type[BaseModel]) -> Any:
+    """Recursively replace null values with type-appropriate defaults.
+
+    Without constrained decoding, LLMs may emit ``null`` for fields that
+    Pydantic requires to be non-None.  This walks the data dict, consults
+    the model's field annotations, and swaps nulls for safe defaults
+    (empty string, 0, [], etc.) so that ``model_validate`` succeeds.
+    """
+    if not isinstance(data, dict):
+        return data
+
+    try:
+        fields = model_cls.model_fields
+    except AttributeError:
+        return data
+
+    for field_name, field_info in fields.items():
+        if field_name not in data:
+            continue
+        if data[field_name] is not None:
+            # Recurse into nested BaseModel fields
+            anno = field_info.annotation
+            if anno is not None:
+                origin = getattr(anno, "__origin__", None)
+                if origin is list and isinstance(data[field_name], list):
+                    args = getattr(anno, "__args__", ())
+                    if args and isinstance(args[0], type) and issubclass(args[0], BaseModel):
+                        data[field_name] = [
+                            _coerce_nulls(item, args[0])
+                            if isinstance(item, dict) else item
+                            for item in data[field_name]
+                        ]
+                elif isinstance(anno, type) and issubclass(anno, BaseModel) and isinstance(data[field_name], dict):
+                    data[field_name] = _coerce_nulls(data[field_name], anno)
+            continue
+
+        # data[field_name] is None — check if the field is Optional first
+        import typing
+
+        anno = field_info.annotation
+        if anno is None:
+            continue
+
+        # If the field is Optional (Union[X, None]), None is valid — leave it
+        origin = getattr(anno, "__origin__", None)
+        if origin is typing.Union:
+            args = getattr(anno, "__args__", ())
+            if type(None) in args:
+                continue  # Optional field — None is a valid value
+
+        # Field is required and non-Optional — coerce null to a safe default
+        if origin is list:
+            data[field_name] = []
+        elif origin is dict:
+            data[field_name] = {}
+        elif isinstance(anno, type):
+            if issubclass(anno, str):
+                data[field_name] = ""
+            elif issubclass(anno, bool):
+                data[field_name] = False
+            elif issubclass(anno, int):
+                data[field_name] = 0
+            elif issubclass(anno, float):
+                data[field_name] = 0.0
+            elif issubclass(anno, list):
+                data[field_name] = []
+            elif issubclass(anno, dict):
+                data[field_name] = {}
+            else:
+                data[field_name] = ""
+        else:
+            data[field_name] = ""
+
+    return data
 
 
 # ---------------------------------------------------------------------------
@@ -41,77 +190,40 @@ def _extract_json_block(text: str) -> str:
     return text.strip()
 
 
-def _repair_json(raw: str) -> str:
-    """Attempt to repair common LLM JSON errors.
-
-    Handles:
-    - Trailing commas before } or ]
-    - Single-line // comments
-    - Missing commas between object fields (}\n" or ]\n")
-    - Unescaped newlines inside string values
-    - Truncated JSON (unclosed braces/brackets)
-    """
-    # Strip single-line comments
-    text = re.sub(r"//.*$", "", raw, flags=re.MULTILINE)
-
-    # Strip trailing commas
-    text = re.sub(r",\s*([}\]])", r"\1", text)
-
-    # Fix missing commas between fields: }\n  " or ]\n  " or "\n  "
-    # e.g., "value"\n  "next_key" → "value",\n  "next_key"
-    text = re.sub(r'(?<=["}\]])\s*\n(\s*")', r',\n\1', text)
-
-    # Fix missing commas after true/false/null/numbers before a new key
-    text = re.sub(r'(true|false|null|\d)\s*\n(\s*")', r'\1,\n\2', text)
-
-    # Close unclosed braces/brackets (truncated output)
-    open_braces = text.count("{") - text.count("}")
-    open_brackets = text.count("[") - text.count("]")
-    if open_braces > 0 or open_brackets > 0:
-        # Strip any trailing incomplete key-value pair
-        text = re.sub(r',\s*"[^"]*"\s*:\s*$', "", text.rstrip())
-        text += "]" * max(open_brackets, 0) + "}" * max(open_braces, 0)
-
-    return text
-
-
 def safe_parse(text: str, model_cls: Type[M]) -> M:
     """Parse LLM text output into a Pydantic model.
 
-    4-layer parsing strategy:
-    1. Direct parse (handles well-formed JSON)
-    2. Trailing comma + comment cleanup
-    3. Full JSON repair (missing commas, unclosed braces, etc.)
-    4. Raises ValueError with diagnostics
+    2-layer parsing strategy:
+    1. Direct parse (handles well-formed JSON — fast path)
+    2. json_repair library (handles missing commas, unclosed braces,
+       trailing commas, unescaped chars, truncation, etc.)
 
     Raises:
         ValueError: If parsing fails after all attempts.
     """
     raw = _extract_json_block(text)
 
-    # Attempt 1: direct parse (strict=False tolerates control chars in strings)
+    # Layer 1: direct parse (strict=False tolerates control chars in strings)
     try:
         data = json.loads(raw, strict=False)
+        _coerce_literal_fields(data)
+        _coerce_nulls(data, model_cls)
         return model_cls.model_validate(data)
     except (json.JSONDecodeError, Exception):
         pass
 
-    # Attempt 2: strip trailing commas + single-line comments
-    cleaned = re.sub(r",\s*([}\]])", r"\1", raw)
-    cleaned = re.sub(r"//.*$", "", cleaned, flags=re.MULTILINE)
+    # Layer 2: json_repair — handles missing commas, unclosed brackets,
+    # trailing commas, single-line comments, truncated output, etc.
     try:
-        data = json.loads(cleaned, strict=False)
+        data = json_repair.loads(raw)
+        logger.info(
+            "json_repair succeeded for %s (repaired malformed LLM output)",
+            model_cls.__name__,
+        )
+        _coerce_literal_fields(data)
+        _coerce_nulls(data, model_cls)
         return model_cls.model_validate(data)
-    except (json.JSONDecodeError, Exception):
-        pass
-
-    # Attempt 3: full JSON repair
-    repaired = _repair_json(raw)
-    try:
-        data = json.loads(repaired, strict=False)
-        logger.info("JSON repair succeeded for %s (repaired from malformed LLM output)", model_cls.__name__)
-        return model_cls.model_validate(data)
-    except (json.JSONDecodeError, Exception) as exc:
+    except Exception as exc:
         raise ValueError(
             f"Failed to parse LLM output into {model_cls.__name__}: {exc}\n"
             f"Raw (first 500 chars): {text[:500]}"

@@ -33,6 +33,7 @@ from core.models.knowledge_base import (
     KnowledgeBaseInput,
     KnowledgeBaseOutput,
 )
+from core.config.settings import settings
 from core.research.knowledge_base.agents import (
     run_brand_perception_agent,
     run_company_overview_agent,
@@ -176,6 +177,58 @@ def _update_task(
         task_store.update_task(task_id, **kwargs)
 
 
+async def _maybe_extract_competitor_json(
+    result: KBAgentResult,
+    input_data: KnowledgeBaseInput,
+    parent_span: Optional[Any] = None,
+) -> None:
+    """Post-process competitor_registry: extract structured JSON sidecar.
+
+    Mutates ``result.content_json`` in-place.  Never raises — logs warnings
+    on failure and leaves ``content_json`` as ``None``.
+    """
+    if result.error or not result.content_md:
+        return
+    if result.doc_type != KBDocType.COMPETITOR_REGISTRY:
+        return
+
+    span = create_span(
+        parent_span,
+        "competitor_extraction",
+        metadata={"company_name": input_data.company_name},
+        input_data={"markdown_length": len(result.content_md)},
+    )
+
+    try:
+        from core.research.knowledge_base.extraction import (
+            extract_competitor_registry_json,
+        )
+
+        json_data = await extract_competitor_registry_json(
+            content_md=result.content_md,
+            company_name=input_data.company_name,
+            parent_span=span,
+        )
+        if json_data:
+            result.content_json = json_data
+            logger.info(
+                "Competitor JSON sidecar extracted: %d competitors",
+                json_data.get("total_competitor_count", 0),
+            )
+            end_span(span, output={
+                "total_competitors": json_data.get("total_competitor_count", 0),
+                "extraction_model": json_data.get("extraction_model", ""),
+            })
+        else:
+            end_span(span, output={"result": "no_data_extracted"})
+    except Exception:
+        logger.warning(
+            "Competitor JSON extraction failed — continuing without sidecar",
+            exc_info=True,
+        )
+        end_span(span, error="Competitor extraction failed")
+
+
 async def _run_single_agent(
     input_data: KnowledgeBaseInput,
     doc_type: KBDocType,
@@ -196,10 +249,12 @@ async def _run_single_agent(
             )
         elif doc_type == KBDocType.COMPETITOR_REGISTRY:
             overview_md = _get_doc_md(results, KBDocType.COMPANY_OVERVIEW, storage)
-            return await run_competitor_scanner_agent(
+            result = await run_competitor_scanner_agent(
                 input_data, company_overview_md=overview_md,
                 parent_span=parent_span, revision_note=revision_note,
             )
+            await _maybe_extract_competitor_json(result, input_data, parent_span)
+            return result
         elif doc_type == KBDocType.WEAKNESS_ANALYSIS:
             overview_md = _get_doc_md(results, KBDocType.COMPANY_OVERVIEW, storage)
             competitor_md = _get_doc_md(results, KBDocType.COMPETITOR_REGISTRY, storage)
@@ -314,6 +369,7 @@ async def _run_eager_dag(
                 )
                 results[KBDocType.COMPETITOR_REGISTRY] = result
                 if not result.error:
+                    await _maybe_extract_competitor_json(result, input_data, trace_span)
                     storage.write_version(
                         KBDocType.COMPETITOR_REGISTRY, result.content_md, result.content_json,
                     )
@@ -405,6 +461,7 @@ async def run_knowledge_base_pipeline(
     session_factory: Optional[Any] = None,
     run_id: Optional[Any] = None,
     company_id: Optional[Any] = None,
+    langsmith_project: Optional[str] = None,
 ) -> KnowledgeBaseOutput:
     """Run the full Knowledge Base pipeline.
 
@@ -421,9 +478,10 @@ async def run_knowledge_base_pipeline(
 
     # Tracing
     session_id = create_session(slug)
+    _ls_project = langsmith_project or settings.research_kb_project
     trace_span = create_trace(session_id, f"kb-pipeline/{slug}", input_data={
         "mode": mode, "target_docs": [d.value for d in target_docs],
-    })
+    }, project_name=_ls_project)
 
     # SSE: pipeline start
     _emit(event_bus, task_id, "pipeline_start", {"pipeline": "knowledge_base"})
@@ -719,6 +777,7 @@ async def run_knowledge_base_pipeline(
 
             _emit(event_bus, task_id, "kb_phase_complete", {"phase": 1})
 
+        extraction_task = None  # May be set below if competitor extraction runs
         # Phase 2: competitor_scanner (needs company_overview_md)
         if KBDocType.COMPETITOR_REGISTRY in target_docs:
             _emit(event_bus, task_id, "kb_phase_start", {
@@ -732,15 +791,34 @@ async def run_knowledge_base_pipeline(
             )
             results[KBDocType.COMPETITOR_REGISTRY] = cs_result
             if not cs_result.error:
+                # Fire extraction concurrently — Phase 3 agents only need the
+                # markdown (via _get_doc_md), not the JSON sidecar.  We write
+                # the markdown immediately so downstream agents aren't blocked,
+                # and await the extraction before the final write with JSON.
+                extraction_task = asyncio.create_task(
+                    _maybe_extract_competitor_json(cs_result, input_data, trace_span)
+                )
+                # Write markdown-only version first (JSON=None at this point)
                 storage.write_version(
                     KBDocType.COMPETITOR_REGISTRY, cs_result.content_md, cs_result.content_json,
                 )
                 changed_doc_types.append(KBDocType.COMPETITOR_REGISTRY)
+            else:
+                extraction_task = None
             _emit(event_bus, task_id, "kb_agent_complete", {
                 "agent": "competitor_registry", "word_count": cs_result.word_count,
                 "has_error": cs_result.error is not None,
             })
             _emit(event_bus, task_id, "kb_phase_complete", {"phase": 2})
+
+        # Await concurrent competitor JSON extraction (if running).
+        # The markdown was already written — now re-write with the JSON sidecar.
+        if KBDocType.COMPETITOR_REGISTRY in target_docs and extraction_task is not None:
+            await extraction_task
+            if cs_result.content_json is not None:
+                storage.write_version(
+                    KBDocType.COMPETITOR_REGISTRY, cs_result.content_md, cs_result.content_json,
+                )
 
         # ── HITL-1: review Phase 1+2 docs ──
         # Build graph once — reused for both HITL-1 and HITL-2

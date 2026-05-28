@@ -78,6 +78,18 @@ configure_logging()
 logger = logging.getLogger("run_td")
 
 
+def _get_session_factory():
+    """Create a DB session factory if DATABASE_URL is configured."""
+    if not settings.database_url:
+        return None
+    try:
+        from core.db.engine import get_session_factory
+        return get_session_factory()
+    except Exception as exc:
+        logger.warning("Could not create DB session factory: %s", exc)
+        return None
+
+
 # ── Argument parsing ─────────────────────────────────────────────────
 
 
@@ -210,9 +222,11 @@ async def _run_discover(args: argparse.Namespace) -> int:
     print(f"{'=' * 60}\n")
 
     t0 = time.time()
+    sf = _get_session_factory()
     result: TopicDiscoveryOutput = await run_topic_discovery_pipeline(
         inp,
         artifacts_root=Path(args.artifacts_root),
+        session_factory=sf,
     )
     elapsed = time.time() - t0
 
@@ -236,7 +250,100 @@ async def _run_discover(args: argparse.Namespace) -> int:
     print(f"  Time:              {elapsed:.1f}s")
     print()
 
+    # ── Persist results to filesystem (CLI-only) ──
+    _persist_discovery_output(result, Path(args.artifacts_root))
+
     return 0
+
+
+# ── CLI-only filesystem persistence ─────────────────────────────────
+
+
+def _persist_discovery_output(
+    result: TopicDiscoveryOutput, artifacts_root: Path
+) -> None:
+    """Write Pipeline A results to artifacts/ so CLI runs are never lost.
+
+    This is a CLI-only convenience — the pipeline itself is db_only.
+    Uses TopicDiscoveryStorage for consistent file layout.
+    """
+    from core.topic_discovery.storage import TopicDiscoveryStorage
+
+    slug = result.effective_slug or result.slug
+    if not slug:
+        logger.warning("No slug on output — skipping filesystem persist")
+        return
+
+    storage = TopicDiscoveryStorage(artifacts_root, slug)
+    written: list[str] = []
+
+    if result.manifest:
+        storage.write_manifest(result.manifest)
+        written.append("_manifest.json")
+
+    if result.taxonomy:
+        ver = result.taxonomy_version or result.taxonomy.version or 1
+        storage.write_taxonomy(result.taxonomy, version=ver)
+        written.append(f"taxonomy/v{ver}.json")
+
+    if result.coverage:
+        storage.write_coverage(result.coverage, version=1)
+        written.append("raw/coverage_v1.json")
+
+    if result.scored_subdomains:
+        ver = (result.manifest.scoring_version if result.manifest else 0) or 1
+        storage.write_scoring(result.scored_subdomains, version=ver)
+        written.append(f"scoring/v{ver}.json")
+
+    if result.persona_affinity:
+        ver = (result.manifest.persona_affinity_version if result.manifest else 0) or 1
+        storage.write_persona_affinity(result.persona_affinity, version=ver)
+        written.append(f"persona_affinity/v{ver}.json")
+
+    if result.matrix:
+        ver = result.matrix_version or 1
+        storage.write_matrix(result.matrix, version=ver)
+        written.append(f"matrix/v{ver}.json")
+
+    if written:
+        print(f"\n  📁 Saved {len(written)} artifacts to {storage.base_dir}/")
+        for f in written:
+            print(f"     {f}")
+    else:
+        logger.warning("No data on output — nothing written to filesystem")
+
+
+def _persist_expansion_output(
+    result: "TopicExpansionOutput", artifacts_root: Path
+) -> None:
+    """Write Pipeline B results to artifacts/ so CLI runs are never lost."""
+    from core.topic_discovery.storage import TopicDiscoveryStorage
+
+    slug = result.effective_slug or result.slug
+    if not slug:
+        logger.warning("No slug on output — skipping filesystem persist")
+        return
+
+    storage = TopicDiscoveryStorage(artifacts_root, slug)
+    written: list[str] = []
+
+    if result.matrix:
+        ver = result.matrix_version or 1
+        storage.write_matrix(result.matrix, version=ver)
+        written.append(f"matrix/v{ver}.json")
+
+        # Update manifest with new matrix version
+        manifest = storage.read_manifest()
+        manifest.matrix_version = ver
+        storage.write_manifest(manifest)
+        written.append("_manifest.json (updated)")
+
+    if written:
+        print(f"\n  📁 Saved {len(written)} artifacts to {storage.base_dir}/")
+        for f in written:
+            print(f"     {f}")
+    else:
+        logger.warning("No data on output — nothing written to filesystem")
 
 
 # ── Pipeline B: Expansion ────────────────────────────────────────────
@@ -295,9 +402,14 @@ async def _run_expand(args: argparse.Namespace) -> int:
     print(f"{'=' * 60}\n")
 
     t0 = time.time()
+    sf = _get_session_factory()
+    if sf is None:
+        print("ERROR: DATABASE_URL is required for topic expansion. Set it in .env or environment.")
+        return 1
     result: TopicExpansionOutput = await run_topic_expansion_pipeline(
         inp,
         artifacts_root=Path(args.artifacts_root),
+        session_factory=sf,
     )
     elapsed = time.time() - t0
 
@@ -316,6 +428,9 @@ async def _run_expand(args: argparse.Namespace) -> int:
         print(f"  Intent dist:        {result.matrix.intent_distribution}")
     print(f"  Time:               {elapsed:.1f}s")
     print()
+
+    # ── Persist results to filesystem (CLI-only) ──
+    _persist_expansion_output(result, Path(args.artifacts_root))
 
     return 0
 

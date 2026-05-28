@@ -314,7 +314,7 @@ async def _run_worker_chain_v13(
                 return str((bdir / filename).relative_to(storage.root)) if storage else ""
 
             # Step 1: Outline
-            await _write_pipeline_state_async(artifact_dir, [brief.brief_id], "outlining", task_id=task_id, redis_client=redis_client, effective_slug=effective_slug)
+            await _write_pipeline_state_async(artifact_dir, [brief.brief_id], "outlining", task_id=task_id, redis_client=redis_client, effective_slug=effective_slug, session_factory=session_factory)
             _emit(event_bus, task_id, "worker_progress", {
                 "brief_id": brief.brief_id, "step": "outlining", "worker_num": worker_num,
             })
@@ -339,7 +339,7 @@ async def _run_worker_chain_v13(
                 (bdir / "outline.json").write_text(outline_json, encoding="utf-8")
 
             # Step 2: Draft
-            await _write_pipeline_state_async(artifact_dir, [brief.brief_id], "drafting", task_id=task_id, redis_client=redis_client, effective_slug=effective_slug)
+            await _write_pipeline_state_async(artifact_dir, [brief.brief_id], "drafting", task_id=task_id, redis_client=redis_client, effective_slug=effective_slug, session_factory=session_factory)
             _emit(event_bus, task_id, "worker_progress", {
                 "brief_id": brief.brief_id, "step": "drafting", "worker_num": worker_num,
             })
@@ -362,7 +362,7 @@ async def _run_worker_chain_v13(
                 (bdir / "draft.md").write_text(draft.markdown, encoding="utf-8")
 
             # Step 3: Link
-            await _write_pipeline_state_async(artifact_dir, [brief.brief_id], "linking", task_id=task_id, redis_client=redis_client, effective_slug=effective_slug)
+            await _write_pipeline_state_async(artifact_dir, [brief.brief_id], "linking", task_id=task_id, redis_client=redis_client, effective_slug=effective_slug, session_factory=session_factory)
             _emit(event_bus, task_id, "worker_progress", {
                 "brief_id": brief.brief_id, "step": "linking", "worker_num": worker_num,
             })
@@ -386,7 +386,7 @@ async def _run_worker_chain_v13(
                 (bdir / "linked.md").write_text(linked.markdown, encoding="utf-8")
 
             # Step 4: Fact Check (verify-only, no new content)
-            await _write_pipeline_state_async(artifact_dir, [brief.brief_id], "enriching", task_id=task_id, redis_client=redis_client, effective_slug=effective_slug)
+            await _write_pipeline_state_async(artifact_dir, [brief.brief_id], "enriching", task_id=task_id, redis_client=redis_client, effective_slug=effective_slug, session_factory=session_factory)
             _emit(event_bus, task_id, "worker_progress", {
                 "brief_id": brief.brief_id, "step": "enriching", "worker_num": worker_num,
             })

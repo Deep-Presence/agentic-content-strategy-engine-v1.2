@@ -188,6 +188,7 @@ class PersonaAffinityResponse(BaseModel):
 
     slug: str = ""
     persona_entries: Dict[str, Any] = Field(default_factory=dict)
+    persona_metadata: Dict[str, Any] = Field(default_factory=dict)
     total_personas: int = 0
     total_subdomains: int = 0
 
@@ -244,3 +245,97 @@ class ExpansionStatusResponse(BaseModel):
     not_expanded: int = 0
     expanded_ids: List[str] = Field(default_factory=list)
     available_for_expansion: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Planner CRUD: Assignments list, status update, custom creation
+# ---------------------------------------------------------------------------
+
+
+class AssignmentListResponse(BaseModel):
+    """Response for GET /{slug}/assignments — paginated assignment list."""
+
+    slug: str = ""
+    items: List[Dict[str, Any]] = Field(default_factory=list)
+    total: int = 0
+    page: int = 1
+    page_size: int = 50
+
+
+class DiscoverySummaryResponse(BaseModel):
+    """Response for GET /{slug}/summary — quick overview of discovery state."""
+
+    slug: str = ""
+    company_name: str = ""
+    has_taxonomy: bool = False
+    taxonomy_version: int = 0
+    has_matrix: bool = False
+    matrix_version: int = 0
+    scoring_version: int = 0
+    persona_affinity_version: int = 0
+    status: Optional[str] = None
+    last_updated: Optional[str] = None
+
+
+class AssignmentStatusUpdateRequest(BaseModel):
+    """Request body for PATCH /{slug}/assignments/{id} — approve/reject/restore."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["approved", "rejected", "not_started"]
+
+
+class AssignmentStatusUpdateResponse(BaseModel):
+    """Response after updating an assignment status."""
+
+    assignment_id: str = ""
+    status: str = ""
+    message: str = ""
+
+
+class CreateCustomAssignmentRequest(BaseModel):
+    """Request body for POST /{slug}/assignments — create a custom topic."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    topic_text: str = Field(..., min_length=5)
+    subdomain_id: Optional[str] = None
+    subdomain_name: Optional[str] = None
+    buyer_stage: BuyerStage = BuyerStage.TOFU
+    intent_type: IntentType = IntentType.informational
+    persona_id: Optional[str] = None
+    persona_name: Optional[str] = None
+    priority_score: float = Field(default=0.5, ge=0.0, le=1.0)
+
+
+# ---------------------------------------------------------------------------
+# Tree CRUD: Node operations
+# ---------------------------------------------------------------------------
+
+
+class UpdateNodeRequest(BaseModel):
+    """PATCH /{slug}/nodes/{node_id} — update a single taxonomy node."""
+
+    name: Optional[str] = None
+    description: Optional[str] = None
+    parent_id: Optional[str] = None
+
+
+class CreateNodeRequest(BaseModel):
+    """POST /{slug}/nodes — add a new taxonomy node."""
+
+    name: str = Field(..., min_length=1)
+    description: str = ""
+    parent_id: Optional[str] = None
+
+
+class NodeResponse(BaseModel):
+    """Response for node CRUD operations."""
+
+    id: str
+    name: str
+    description: str = ""
+    parent_id: Optional[str] = None
+    depth: int = 0
+    expansion_status: str = "not_expanded"
+    message: str = ""

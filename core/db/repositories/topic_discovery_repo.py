@@ -15,9 +15,11 @@ Six table-specific repositories:
 from __future__ import annotations
 
 import uuid as _uuid
-from typing import List, Optional, Sequence, Tuple
+from typing import Any, List, Optional, Sequence, Tuple, Union
 
-from sqlalchemy import delete, func, select
+from datetime import datetime, timezone
+
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.db.enums import (
@@ -32,6 +34,7 @@ from core.db.models.topic_discovery import (
     SourceResultModel,
     SubdomainNodeModel,
     TaxonomyTreeModel,
+    TopicAssignmentCannibalizationModel,
     TopicAssignmentModel,
     TopicDiscoveryModel,
 )
@@ -67,6 +70,13 @@ class TopicDiscoveryRepository(SQLAlchemyRepository[TopicDiscoveryModel]):
         )
         result = await self._session.execute(stmt)
         return result.scalars().all()
+
+    async def get_latest_by_company(
+        self, company_id: _uuid.UUID | str
+    ) -> Optional[TopicDiscoveryModel]:
+        """Return the latest discovery row for a company."""
+        discoveries = await self.get_by_company(company_id)
+        return discoveries[0] if discoveries else None
 
     async def update_status(
         self, discovery_id: _uuid.UUID | str, status: TDStatus
@@ -227,6 +237,30 @@ class TaxonomyTreeRepository(SQLAlchemyRepository[TaxonomyTreeModel]):
         await self._session.flush()
         return taxonomy
 
+    async def invalidate_tree_json(self, taxonomy_id: _uuid.UUID) -> None:
+        """Set tree_json to NULL to mark the cached snapshot as stale."""
+        tid = _uuid.UUID(str(taxonomy_id)) if isinstance(taxonomy_id, str) else taxonomy_id
+        stmt = (
+            update(TaxonomyTreeModel)
+            .where(TaxonomyTreeModel.id == tid)
+            .values(tree_json=None)
+        )
+        await self._session.execute(stmt)
+        await self._session.flush()
+
+    async def update_tree_json(
+        self, taxonomy_id: _uuid.UUID, tree_json: dict,
+    ) -> None:
+        """Update tree_json with a rebuilt snapshot."""
+        tid = _uuid.UUID(str(taxonomy_id)) if isinstance(taxonomy_id, str) else taxonomy_id
+        stmt = (
+            update(TaxonomyTreeModel)
+            .where(TaxonomyTreeModel.id == tid)
+            .values(tree_json=tree_json)
+        )
+        await self._session.execute(stmt)
+        await self._session.flush()
+
 
 class SubdomainNodeRepository(SQLAlchemyRepository[SubdomainNodeModel]):
     """Repository for subdomain_nodes table."""
@@ -279,6 +313,159 @@ class SubdomainNodeRepository(SQLAlchemyRepository[SubdomainNodeModel]):
         await self._session.flush()
         return result.rowcount
 
+    async def claim_for_expansion(
+        self, node_id: _uuid.UUID, *, allow_re_expand: bool = True,
+    ) -> bool:
+        """Atomically claim a subdomain for expansion via optimistic concurrency.
+
+        Sets expansion_status='expanding' if the node is in an eligible state.
+
+        Eligible states:
+        - 'not_expanded', 'failed': always claimable
+        - 'expanded': claimable when allow_re_expand=True (user explicitly
+          selected this subdomain for re-expansion)
+        - 'expanding': claimable only if stale (>20 min, likely crashed worker)
+
+        Returns True if claimed, False if already claimed by another worker.
+        """
+        import datetime as dt_mod
+
+        nid = _uuid.UUID(str(node_id)) if isinstance(node_id, str) else node_id
+        stale_cutoff = datetime.now(timezone.utc) - dt_mod.timedelta(minutes=20)
+
+        # Build eligible statuses
+        eligible = ["not_expanded", "failed"]
+        if allow_re_expand:
+            eligible.append("expanded")
+
+        # Claim if: eligible status, OR expanding but stale (>15min or no timestamp)
+        stmt = (
+            update(SubdomainNodeModel)
+            .where(
+                SubdomainNodeModel.id == nid,
+                SubdomainNodeModel.expansion_status.in_(eligible)
+                | (
+                    (SubdomainNodeModel.expansion_status == "expanding")
+                    & (
+                        (SubdomainNodeModel.updated_at.is_(None))
+                        | (SubdomainNodeModel.updated_at < stale_cutoff)
+                    )
+                ),
+            )
+            .values(
+                expansion_status="expanding",
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
+        result = await self._session.execute(stmt)
+        await self._session.flush()
+        return result.rowcount > 0
+
+    async def mark_expanded(
+        self, node_id: _uuid.UUID, success: bool,
+    ) -> None:
+        """Set expansion_status to 'expanded' or 'failed'."""
+        nid = _uuid.UUID(str(node_id)) if isinstance(node_id, str) else node_id
+        new_status = "expanded" if success else "failed"
+        stmt = (
+            update(SubdomainNodeModel)
+            .where(SubdomainNodeModel.id == nid)
+            .values(
+                expansion_status=new_status,
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
+        await self._session.execute(stmt)
+        await self._session.flush()
+
+    async def update_node(
+        self, node_id: _uuid.UUID, **kwargs,
+    ) -> Optional[SubdomainNodeModel]:
+        """Update a single node's attributes (name, description, parent_id, etc.)."""
+        return await self.update(node_id, **kwargs)
+
+    async def delete_single_node(
+        self, node_id: _uuid.UUID, *, reparent_children: bool = True,
+    ) -> bool:
+        """Delete a single node. If reparent_children=True, reassign children
+        to the deleted node's parent_id BEFORE deleting (CASCADE safety)."""
+        nid = _uuid.UUID(str(node_id)) if isinstance(node_id, str) else node_id
+        node = await self.get_by_id(nid)
+        if node is None:
+            return False
+
+        if reparent_children:
+            # Reparent children BEFORE delete to avoid CASCADE deletion
+            reparent_stmt = (
+                update(SubdomainNodeModel)
+                .where(SubdomainNodeModel.parent_id == nid)
+                .values(parent_id=node.parent_id)
+            )
+            await self._session.execute(reparent_stmt)
+            await self._session.flush()
+
+        del_stmt = delete(SubdomainNodeModel).where(
+            SubdomainNodeModel.id == nid
+        )
+        await self._session.execute(del_stmt)
+        await self._session.flush()
+        return True
+
+    async def get_by_ids(
+        self, node_ids: List[_uuid.UUID],
+    ) -> Sequence[SubdomainNodeModel]:
+        """Fetch specific nodes by a list of IDs."""
+        if not node_ids:
+            return []
+        stmt = select(SubdomainNodeModel).where(
+            SubdomainNodeModel.id.in_(node_ids)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
+    async def get_all_for_taxonomy(
+        self, taxonomy_id: _uuid.UUID,
+    ) -> Sequence[SubdomainNodeModel]:
+        """Get all nodes for a taxonomy, ordered by depth then sort_order.
+
+        Used for tree reconstruction from flat rows.
+        """
+        tid = _uuid.UUID(str(taxonomy_id)) if isinstance(taxonomy_id, str) else taxonomy_id
+        stmt = (
+            select(SubdomainNodeModel)
+            .where(SubdomainNodeModel.taxonomy_id == tid)
+            .order_by(SubdomainNodeModel.depth, SubdomainNodeModel.sort_order)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
+    async def reset_stale_expanding(
+        self, taxonomy_id: _uuid.UUID, stale_minutes: int = 20,
+    ) -> int:
+        """Reset nodes stuck in 'expanding' status for longer than stale_minutes.
+
+        Called during expansion pipeline preflight to recover from crashes.
+        Returns count of nodes reset.
+        """
+        import datetime as dt_mod
+
+        tid = _uuid.UUID(str(taxonomy_id)) if isinstance(taxonomy_id, str) else taxonomy_id
+        cutoff = datetime.now(timezone.utc) - dt_mod.timedelta(minutes=stale_minutes)
+
+        stmt = (
+            update(SubdomainNodeModel)
+            .where(
+                SubdomainNodeModel.taxonomy_id == tid,
+                SubdomainNodeModel.expansion_status == "expanding",
+                (SubdomainNodeModel.updated_at.is_(None))
+                | (SubdomainNodeModel.updated_at < cutoff),
+            )
+            .values(expansion_status="not_expanded")
+        )
+        result = await self._session.execute(stmt)
+        await self._session.flush()
+        return result.rowcount
+
 
 class TopicAssignmentRepository(SQLAlchemyRepository[TopicAssignmentModel]):
     """Repository for topic_assignments table."""
@@ -311,6 +498,98 @@ class TopicAssignmentRepository(SQLAlchemyRepository[TopicAssignmentModel]):
         stmt = stmt.order_by(TopicAssignmentModel.priority_score.desc().nullslast())
         result = await self._session.execute(stmt)
         return result.scalars().all()
+
+    async def get_by_ids(
+        self, assignment_ids: List[_uuid.UUID],
+    ) -> Sequence[TopicAssignmentModel]:
+        """Fetch specific assignments by a list of IDs."""
+        if not assignment_ids:
+            return []
+        stmt = select(TopicAssignmentModel).where(
+            TopicAssignmentModel.id.in_(assignment_ids)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
+    async def list_for_cannibalization(
+        self,
+        discovery_id: _uuid.UUID,
+        *,
+        matrix_version: int | None = None,
+        subdomain_node_id: _uuid.UUID | None = None,
+        expansion_batch_id: _uuid.UUID | None = None,
+        assignment_ids: Sequence[_uuid.UUID] | None = None,
+    ) -> Sequence[TopicAssignmentModel]:
+        """List assignments for durable cannibalization synchronization."""
+        stmt = select(TopicAssignmentModel).where(
+            TopicAssignmentModel.discovery_id == discovery_id
+        )
+        if matrix_version is not None:
+            stmt = stmt.where(TopicAssignmentModel.matrix_version == matrix_version)
+        if subdomain_node_id is not None:
+            stmt = stmt.where(TopicAssignmentModel.subdomain_node_id == subdomain_node_id)
+        if expansion_batch_id is not None:
+            stmt = stmt.where(TopicAssignmentModel.expansion_batch_id == expansion_batch_id)
+        if assignment_ids is not None:
+            assignment_id_list = list(dict.fromkeys(assignment_ids))
+            if not assignment_id_list:
+                return []
+            stmt = stmt.where(TopicAssignmentModel.id.in_(assignment_id_list))
+        stmt = stmt.order_by(TopicAssignmentModel.created_at.asc())
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
+    async def list_delta_recompute_assignment_ids(
+        self,
+        discovery_id: _uuid.UUID,
+        *,
+        matrix_version: int | None = None,
+        limit: int | None = None,
+    ) -> list[_uuid.UUID]:
+        """Return planner-open assignment IDs for capped delta recomputation.
+
+        This is intentionally narrower than the full assignment universe so
+        content inventory / prompt changes only re-evaluate current planner work.
+        """
+        stmt = select(TopicAssignmentModel.id).where(
+            TopicAssignmentModel.discovery_id == discovery_id,
+            TopicAssignmentModel.status.in_(
+                (
+                    TopicAssignmentStatus.not_started,
+                    TopicAssignmentStatus.approved,
+                    TopicAssignmentStatus.rejected,
+                    TopicAssignmentStatus.gap_analysis_complete,
+                )
+            ),
+        )
+        if matrix_version is not None:
+            stmt = stmt.where(TopicAssignmentModel.matrix_version == matrix_version)
+        stmt = stmt.order_by(
+            TopicAssignmentModel.priority_score.desc().nullslast(),
+            TopicAssignmentModel.created_at.asc(),
+        )
+        if limit is not None and limit > 0:
+            stmt = stmt.limit(limit)
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def bulk_merge_metadata(
+        self,
+        metadata_by_assignment_id: dict[_uuid.UUID, dict[str, Any]],
+    ) -> int:
+        """Merge additive metadata into assignment metadata_json."""
+        if not metadata_by_assignment_id:
+            return 0
+
+        rows = await self.get_by_ids(list(metadata_by_assignment_id))
+        for row in rows:
+            existing = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+            row.metadata_json = {
+                **existing,
+                **metadata_by_assignment_id.get(row.id, {}),
+            }
+        await self._session.flush()
+        return len(rows)
 
     async def update_assignment_status(
         self,
@@ -356,6 +635,51 @@ class TopicAssignmentRepository(SQLAlchemyRepository[TopicAssignmentModel]):
         await self._session.flush()
         return result.rowcount
 
+    async def delete_by_subdomain(
+        self,
+        discovery_id: _uuid.UUID,
+        subdomain_node_id: _uuid.UUID,
+        *,
+        matrix_version: int | None = None,
+        preserve_statuses: Sequence[TopicAssignmentStatus] | None = None,
+    ) -> int:
+        """Delete assignments for a SINGLE subdomain.
+
+        When preserve_statuses is set (e.g. [in_gap_analysis, content_produced,
+        published]), assignments in those states are kept to avoid breaking
+        content_pieces.topic_assignment_id FK references.
+
+        Returns count of deleted rows.
+        """
+        stmt = delete(TopicAssignmentModel).where(
+            TopicAssignmentModel.discovery_id == discovery_id,
+            TopicAssignmentModel.subdomain_node_id == subdomain_node_id,
+        )
+        if matrix_version is not None:
+            stmt = stmt.where(
+                TopicAssignmentModel.matrix_version == matrix_version
+            )
+        if preserve_statuses:
+            stmt = stmt.where(
+                TopicAssignmentModel.status.notin_(preserve_statuses)
+            )
+        result = await self._session.execute(stmt)
+        await self._session.flush()
+        return result.rowcount
+
+    async def insert_for_subdomain(
+        self, assignments: List[TopicAssignmentModel],
+    ) -> int:
+        """Bulk insert assignments for one subdomain's expansion output.
+
+        Returns count of assignments inserted.
+        """
+        if not assignments:
+            return 0
+        self._session.add_all(assignments)
+        await self._session.flush()
+        return len(assignments)
+
     async def list_paginated(
         self,
         discovery_id: _uuid.UUID,
@@ -363,6 +687,7 @@ class TopicAssignmentRepository(SQLAlchemyRepository[TopicAssignmentModel]):
         buyer_stage: BuyerStage | None = None,
         intent_type: IntentType | None = None,
         persona_id: str | None = None,
+        status: TopicAssignmentStatus | None = None,
         page: int = 1,
         page_size: int = 50,
     ) -> Tuple[Sequence[TopicAssignmentModel], int]:
@@ -376,6 +701,8 @@ class TopicAssignmentRepository(SQLAlchemyRepository[TopicAssignmentModel]):
             base = base.where(TopicAssignmentModel.intent_type == intent_type)
         if persona_id is not None:
             base = base.where(TopicAssignmentModel.persona_id == persona_id)
+        if status is not None:
+            base = base.where(TopicAssignmentModel.status == status)
 
         # Count
         count_stmt = select(func.count()).select_from(base.subquery())
@@ -421,6 +748,79 @@ class TopicAssignmentRepository(SQLAlchemyRepository[TopicAssignmentModel]):
             "by_relevance": await _group_by(TopicAssignmentModel.relevance),
             "by_status": await _group_by(TopicAssignmentModel.status),
         }
+
+
+class TopicAssignmentCannibalizationRepository(
+    SQLAlchemyRepository[TopicAssignmentCannibalizationModel]
+):
+    """Repository for durable topic assignment cannibalization assessments."""
+
+    model_class = TopicAssignmentCannibalizationModel
+
+    async def get_by_assignment_ids(
+        self,
+        assignment_ids: Sequence[_uuid.UUID],
+    ) -> Sequence[TopicAssignmentCannibalizationModel]:
+        """Fetch durable assessments for a set of assignments."""
+        if not assignment_ids:
+            return []
+        stmt = select(TopicAssignmentCannibalizationModel).where(
+            TopicAssignmentCannibalizationModel.assignment_id.in_(assignment_ids)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
+    async def get_assignment_ids_by_top_match_inventory_ids(
+        self,
+        inventory_ids: Sequence[_uuid.UUID],
+        *,
+        discovery_id: _uuid.UUID | None = None,
+    ) -> list[_uuid.UUID]:
+        """Return assignment IDs whose durable top match is in the given page set."""
+        inventory_id_list = list(dict.fromkeys(inventory_ids))
+        if not inventory_id_list:
+            return []
+
+        stmt = select(TopicAssignmentCannibalizationModel.assignment_id).where(
+            TopicAssignmentCannibalizationModel.top_match_inventory_id.in_(inventory_id_list)
+        )
+        if discovery_id is not None:
+            stmt = stmt.where(
+                TopicAssignmentCannibalizationModel.discovery_id == discovery_id
+            )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def bulk_upsert_assessments(
+        self,
+        assessments: list[dict[str, Any]],
+    ) -> int:
+        """Insert or update durable assessment rows keyed by assignment_id."""
+        if not assessments:
+            return 0
+
+        existing_rows = await self.get_by_assignment_ids(
+            [
+                item["assignment_id"]
+                for item in assessments
+                if item.get("assignment_id") is not None
+            ]
+        )
+        existing_by_assignment_id = {
+            row.assignment_id: row
+            for row in existing_rows
+        }
+
+        for item in assessments:
+            existing = existing_by_assignment_id.get(item["assignment_id"])
+            if existing is not None:
+                for key, value in item.items():
+                    setattr(existing, key, value)
+                continue
+            self._session.add(TopicAssignmentCannibalizationModel(**item))
+
+        await self._session.flush()
+        return len(assessments)
 
 
 class SourceResultRepository(SQLAlchemyRepository[SourceResultModel]):

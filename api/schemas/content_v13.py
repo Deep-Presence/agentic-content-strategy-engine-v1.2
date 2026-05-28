@@ -31,8 +31,8 @@ class ContentStartRequestV13(BaseModel):
     manual_cluster: Optional[str] = Field(default=None, max_length=200)
     gap_query_id: Optional[str] = None  # Direct gap lookup key from Analytics
     brief_id_hint: Optional[str] = Field(
-        default=None, max_length=20, pattern=r"^brief-\d{1,4}$",
-    )  # Pre-created brief_id (validated to prevent path traversal)
+        default=None, max_length=20, pattern=r"^[A-Za-z][A-Za-z0-9]{0,9}-\d{1,4}$",
+    )  # Pre-created brief_id — accepts brief-001 and display_id (WE-003)
 
     # Product scope
     product_slug: Optional[str] = None
@@ -130,15 +130,57 @@ class ContentApprovalRequestV13(BaseModel):
     brief_id: str
     decision: Literal["approve", "edit", "reject"]
     editor_notes: Optional[str] = Field(default=None, max_length=5000)
+    content_markdown: Optional[str] = Field(default=None)
     rethink: bool = Field(
         default=False,
         description="If true on reject, trigger major direction change (re-brief).",
     )
 
 
+class ContentDraftRequestV13(BaseModel):
+    """Save a user-edited review draft for a final content piece."""
+
+    brief_id: str
+    content_markdown: str = Field(default="")
+
+
+class ContentDraftResponseV13(BaseModel):
+    """Review draft payload returned by draft save/load endpoints."""
+
+    brief_id: str = ""
+    content_markdown: str = ""
+
+
+class ContentDraftSaveResponseV13(BaseModel):
+    """Review draft save acknowledgement."""
+
+    status: str = "saved"
+    brief_id: str = ""
+    storage_key: Optional[str] = None
+
+
 # ---------------------------------------------------------------------------
 # Responses
 # ---------------------------------------------------------------------------
+
+
+class TopicRunSummaryV13(BaseModel):
+    """Durable topic-run summary for TD-entry Content Engine flows."""
+
+    topic_run_id: str = ""
+    batch_run_id: str = ""
+    topic_assignment_id: str = ""
+    display_id: str = ""
+    topic_text: str = ""
+    brief_id: str = ""
+    ga_run_id: Optional[str] = None
+    pipeline_task_id: Optional[str] = None
+    status: str = ""
+    stage: str = ""
+    seq: int = 0
+    content_piece_id: Optional[str] = None
+    created_at: str = ""
+    updated_at: str = ""
 
 
 class PipelineRunResponseV13(BaseModel):
@@ -148,6 +190,8 @@ class PipelineRunResponseV13(BaseModel):
     status: str = "started"
     entry_mode: str = "autonomous"
     message: Optional[str] = None
+    batch_run_id: Optional[str] = None
+    topic_runs: List[TopicRunSummaryV13] = Field(default_factory=list)
 
 
 class ApprovalResponseV13(BaseModel):
@@ -212,6 +256,53 @@ class TopicContentStartRequest(BaseModel):
         return v
 
 
+class TopicContentProductionRequest(BaseModel):
+    """Start content production from pre-computed topic-scoped GA results.
+
+    Phase 2 of the two-phase TD → GA → CE pipeline. The user has reviewed
+    the GA results and clicked "Start Production" in the Content Studio.
+    """
+
+    company_name: str
+    domain: str
+    effective_slug: str
+    topic_assignment_ids: List[str] = Field(min_length=1, max_length=20)
+    ga_run_id: str  # UUID of the completed topic-scoped GA run
+
+    @field_validator("topic_assignment_ids")
+    @classmethod
+    def _validate_topic_ids_prod(cls, v: List[str]) -> List[str]:
+        import uuid as _uuid
+
+        for tid in v:
+            try:
+                _uuid.UUID(tid)
+            except ValueError:
+                raise ValueError(
+                    f"Each topic_assignment_id must be a valid UUID, got: {tid!r}"
+                )
+        return v
+
+    @field_validator("ga_run_id")
+    @classmethod
+    def _validate_ga_run_id(cls, v: str) -> str:
+        import uuid as _uuid
+
+        try:
+            _uuid.UUID(v)
+        except ValueError:
+            raise ValueError(f"ga_run_id must be a valid UUID, got: {v!r}")
+        return v
+
+    # Product scope
+    product_slug: Optional[str] = None
+    product_name: Optional[str] = None
+    product_description: Optional[str] = None
+
+    # Options
+    auto_approve: bool = False
+
+
 class TopicContentStatusItem(BaseModel):
     """Per-assignment status in a topic content run."""
 
@@ -228,3 +319,42 @@ class TopicContentStatusResponse(BaseModel):
     effective_slug: str
     total_assignments: int = 0
     items: List[TopicContentStatusItem] = Field(default_factory=list)
+
+
+class TopicRunListResponseV13(BaseModel):
+    """List response for TD-entry durable topic runs."""
+
+    effective_slug: str = ""
+    total: int = 0
+    items: List[TopicRunSummaryV13] = Field(default_factory=list)
+
+
+class TopicRunEventV13(BaseModel):
+    """Durable append-only event for one TD-entry topic run."""
+
+    topic_event_id: str = ""
+    topic_run_id: str = ""
+    topic_assignment_id: str = ""
+    display_id: str = ""
+    brief_id: str = ""
+    event_type: str = ""
+    stage: str = ""
+    status: str = ""
+    seq: int = 0
+    content_piece_id: Optional[str] = None
+    pipeline_task_id: Optional[str] = None
+    payload_json: Dict[str, Any] = Field(default_factory=dict)
+    created_at: str = ""
+
+
+class TopicRunEventListResponseV13(BaseModel):
+    """List response for one durable TD-entry topic-run event stream."""
+
+    effective_slug: str = ""
+    topic_run_id: str = ""
+    topic_assignment_id: str = ""
+    display_id: str = ""
+    topic_text: str = ""
+    brief_id: str = ""
+    total: int = 0
+    items: List[TopicRunEventV13] = Field(default_factory=list)

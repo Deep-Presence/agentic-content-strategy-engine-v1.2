@@ -28,7 +28,6 @@ def _make_response(texts: List[str], dim: int = 8) -> FakeEmbeddingResponse:
 def _patch_settings(**overrides):
     """Patch settings with test defaults + any overrides."""
     defaults = {
-        "openai_api_key": "test-key",
         "embedding_model": "text-embedding-3-small",
         "gap_analysis_s5_embed_batch_size": 256,
         "gap_analysis_s5_embed_concurrent_batches": 4,
@@ -39,12 +38,10 @@ def _patch_settings(**overrides):
 
 
 def _make_mock_client(create_side_effect):
-    """Build a MagicMock AsyncOpenAI client with async context manager support."""
+    """Build a MagicMock AsyncOpenAI client (no context manager needed)."""
     mock_client = MagicMock()
     mock_client.embeddings = MagicMock()
     mock_client.embeddings.create = AsyncMock(side_effect=create_side_effect)
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
     return mock_client
 
 
@@ -73,7 +70,7 @@ class TestAsyncEmbedTexts:
         mock_client = _make_mock_client(fake_create)
 
         with _patch_settings(), \
-             patch("core.shared_tools.async_embedding_client.AsyncOpenAI", return_value=mock_client):
+             patch("core.shared_tools.async_embedding_client.get_async_client", return_value=mock_client):
             from core.shared_tools.async_embedding_client import async_embed_texts
 
             result = await async_embed_texts(texts, batch_size=64)
@@ -92,7 +89,7 @@ class TestAsyncEmbedTexts:
         mock_client = _make_mock_client(fake_create)
 
         with _patch_settings(), \
-             patch("core.shared_tools.async_embedding_client.AsyncOpenAI", return_value=mock_client):
+             patch("core.shared_tools.async_embedding_client.get_async_client", return_value=mock_client):
             from core.shared_tools.async_embedding_client import async_embed_texts
 
             result = await async_embed_texts(texts, batch_size=3)
@@ -118,7 +115,7 @@ class TestAsyncEmbedTexts:
         mock_client = _make_mock_client(fake_create_shuffled)
 
         with _patch_settings(), \
-             patch("core.shared_tools.async_embedding_client.AsyncOpenAI", return_value=mock_client):
+             patch("core.shared_tools.async_embedding_client.get_async_client", return_value=mock_client):
             from core.shared_tools.async_embedding_client import async_embed_texts
 
             result = await async_embed_texts(texts, batch_size=64)
@@ -130,11 +127,15 @@ class TestAsyncEmbedTexts:
 
     @pytest.mark.asyncio
     async def test_missing_api_key_raises(self):
-        """Should raise RuntimeError when OPENAI_API_KEY is not set."""
-        with _patch_settings(openai_api_key=None):
+        """Should raise RuntimeError when OPENROUTER_API_KEY is not set."""
+        with _patch_settings(), \
+             patch(
+                 "core.shared_tools.async_embedding_client.get_async_client",
+                 side_effect=RuntimeError("OPENROUTER_API_KEY is not set"),
+             ):
             from core.shared_tools.async_embedding_client import async_embed_texts
 
-            with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
+            with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
                 await async_embed_texts(["test"])
 
     @pytest.mark.asyncio
@@ -145,6 +146,26 @@ class TestAsyncEmbedTexts:
 
             with pytest.raises(RuntimeError, match="EMBEDDING_MODEL"):
                 await async_embed_texts(["test"])
+
+    @pytest.mark.asyncio
+    async def test_model_prefix_applied(self):
+        """Model passed to API should be prefixed for OpenRouter."""
+        texts = ["test"]
+        captured_models = []
+
+        async def fake_create(*, model, input, **kw):
+            captured_models.append(model)
+            return _make_response(input)
+
+        mock_client = _make_mock_client(fake_create)
+
+        with _patch_settings(), \
+             patch("core.shared_tools.async_embedding_client.get_async_client", return_value=mock_client):
+            from core.shared_tools.async_embedding_client import async_embed_texts
+
+            await async_embed_texts(texts, batch_size=64)
+
+        assert captured_models[0] == "openai/text-embedding-3-small"
 
 
 class TestConcurrentBatchDispatch:
@@ -166,7 +187,7 @@ class TestConcurrentBatchDispatch:
         mock_client = _make_mock_client(fake_create)
 
         with _patch_settings(), \
-             patch("core.shared_tools.async_embedding_client.AsyncOpenAI", return_value=mock_client):
+             patch("core.shared_tools.async_embedding_client.get_async_client", return_value=mock_client):
             from core.shared_tools.async_embedding_client import async_embed_texts
 
             start = time.monotonic()
@@ -190,7 +211,7 @@ class TestConcurrentBatchDispatch:
         mock_client = _make_mock_client(fake_create)
 
         with _patch_settings(), \
-             patch("core.shared_tools.async_embedding_client.AsyncOpenAI", return_value=mock_client):
+             patch("core.shared_tools.async_embedding_client.get_async_client", return_value=mock_client):
             from core.shared_tools.async_embedding_client import async_embed_texts
 
             result = await async_embed_texts(texts, batch_size=4, max_concurrent_batches=3)
@@ -215,7 +236,7 @@ class TestConcurrentBatchDispatch:
         mock_client = _make_mock_client(fake_create)
 
         with _patch_settings(), \
-             patch("core.shared_tools.async_embedding_client.AsyncOpenAI", return_value=mock_client):
+             patch("core.shared_tools.async_embedding_client.get_async_client", return_value=mock_client):
             from core.shared_tools.async_embedding_client import async_embed_texts
 
             result = await async_embed_texts(texts, batch_size=64)
@@ -244,7 +265,7 @@ class TestConcurrentBatchDispatch:
         mock_client = _make_mock_client(tracking_create)
 
         with _patch_settings(), \
-             patch("core.shared_tools.async_embedding_client.AsyncOpenAI", return_value=mock_client):
+             patch("core.shared_tools.async_embedding_client.get_async_client", return_value=mock_client):
             from core.shared_tools.async_embedding_client import async_embed_texts
 
             await async_embed_texts(texts, batch_size=4, max_concurrent_batches=2)
@@ -252,30 +273,28 @@ class TestConcurrentBatchDispatch:
         assert max_concurrent <= 2, f"Max concurrent was {max_concurrent}, expected <= 2"
 
 
-class TestClientLifecycle:
-    """Tests for Fix 7: AsyncOpenAI client lifecycle management."""
+class TestSingletonFactory:
+    """Tests for singleton client usage (replaces context manager tests)."""
 
     @pytest.mark.asyncio
-    async def test_client_used_as_context_manager(self):
-        """AsyncOpenAI should be entered/exited via async with for proper cleanup."""
+    async def test_uses_singleton_factory(self):
+        """Should call get_async_client() instead of constructing AsyncOpenAI directly."""
         texts = ["hello"]
 
         async def fake_create(*, model, input, **kw):
             return _make_response(input)
 
         mock_client = _make_mock_client(fake_create)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_factory = MagicMock(return_value=mock_client)
 
         with _patch_settings(), \
-             patch("core.shared_tools.async_embedding_client.AsyncOpenAI", return_value=mock_client):
+             patch("core.shared_tools.async_embedding_client.get_async_client", mock_factory):
             from core.shared_tools.async_embedding_client import async_embed_texts
 
             result = await async_embed_texts(texts, batch_size=64)
 
         assert len(result) == 1
-        mock_client.__aenter__.assert_awaited_once()
-        mock_client.__aexit__.assert_awaited_once()
+        mock_factory.assert_called_once()
 
 
 class TestRetryAsync:
@@ -321,3 +340,41 @@ class TestRetryAsync:
 
         with pytest.raises(RateLimitError):
             await _retry_async(always_fails, max_retries=2, base_delay=0.01)
+
+
+class TestAsyncEmbedTextsCostTracking:
+    """Verify track_llm_cost() is called per batch in async_embed_texts()."""
+
+    @pytest.mark.asyncio
+    async def test_cost_tracked_per_batch(self):
+        texts = ["hello", "world", "test"]
+
+        async def fake_create(*, model, input, **kw):
+            resp = _make_response(input)
+            resp.usage = MagicMock(prompt_tokens=len(input) * 10)
+            return resp
+
+        mock_client = _make_mock_client(fake_create)
+
+        with _patch_settings(), \
+             patch("core.shared_tools.async_embedding_client.get_async_client", return_value=mock_client), \
+             patch("core.shared_tools.cost_tracker.track_llm_cost") as mock_track:
+            from core.shared_tools.async_embedding_client import async_embed_texts
+
+            await async_embed_texts(texts, batch_size=2)  # 2 batches
+
+        assert mock_track.call_count == 2
+        kw0 = mock_track.call_args_list[0][1]
+        assert kw0["pipeline"] == "embeddings"
+        assert kw0["pipeline_step"] == "async_embed_texts"
+        assert kw0["completion_tokens"] == 0
+        assert kw0["source"] == "openrouter"
+
+    @pytest.mark.asyncio
+    async def test_no_cost_tracked_for_empty_input(self):
+        with patch("core.shared_tools.cost_tracker.track_llm_cost") as mock_track:
+            from core.shared_tools.async_embedding_client import async_embed_texts
+
+            await async_embed_texts([])
+
+        mock_track.assert_not_called()

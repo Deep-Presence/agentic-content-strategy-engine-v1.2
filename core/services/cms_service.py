@@ -21,7 +21,13 @@ from typing import Any
 
 from core.cms.exceptions import CMSError
 from core.cms.factory import create_cms_adapter
-from core.cms.models import CMSConnectionConfig, CMSPost, CMSPostCreate, CMSPostUpdate
+from core.cms.models import (
+    CMSConnectionConfig,
+    CMSPost,
+    CMSPostCreate,
+    CMSPostUpdate,
+    CMSPublishMetadata,
+)
 from core.cms.protocols import CMSAdapterProtocol
 from core.db.enums import CMSPostStatus, CMSProvider, CMSPublishAction
 from core.db.models.cms import CMSConnectionModel
@@ -30,6 +36,7 @@ from core.db.repositories.cms_repo import (
     CMSPublishRecordRepository,
     CMSSyncedPostRepository,
 )
+from core.db.repositories.company_repo import CompanyRepository
 from core.db.repositories.content_repo import ContentRepository
 from core.storage.backends.base import StorageBackend
 
@@ -57,6 +64,9 @@ class CMSService:
         storage: StorageBackend,
         fernet_key: str,
         content_repo: ContentRepository | None = None,
+        inventory_service: Any | None = None,
+        company_repo: CompanyRepository | None = None,
+        content_to_prompt_orchestrator: Any | None = None,
     ) -> None:
         self._connection_repo = connection_repo
         self._publish_repo = publish_repo
@@ -64,6 +74,9 @@ class CMSService:
         self._storage = storage
         self._fernet_key = fernet_key
         self._content_repo = content_repo
+        self._inventory_service = inventory_service
+        self._company_repo = company_repo
+        self._content_to_prompt_orchestrator = content_to_prompt_orchestrator
 
     # ── Connect Flow ──────────────────────────────────────────────
 
@@ -179,11 +192,15 @@ class CMSService:
         stale_count = 0
 
         for post in all_posts:
+            # Ensure timezone-aware comparison (CMS may return naive datetimes)
+            mod_at = post.modified_at
+            if mod_at is not None and mod_at.tzinfo is None:
+                mod_at = mod_at.replace(tzinfo=timezone.utc)
             is_stale = (
-                post.modified_at is not None and post.modified_at < stale_threshold
+                mod_at is not None and mod_at < stale_threshold
             )
             staleness_days = (
-                (now - post.modified_at).days if post.modified_at else 0
+                (now - mod_at).days if mod_at else 0
             )
             if is_stale:
                 stale_count += 1
@@ -216,6 +233,29 @@ class CMSService:
                 staleness_days=staleness_days,
             )
 
+        # Hydrate content inventory (non-blocking, savepoint-isolated)
+        new_page_ids: list[str] = []
+        if self._inventory_service is not None:
+            try:
+                # Use a nested savepoint so DB errors don't poison the session
+                async with self._synced_post_repo._session.begin_nested():
+                    pairs, _new_ids = await self._inventory_service.ingest_from_cms_sync(
+                        company_id=connection.company_id,
+                        effective_slug=company_slug,
+                        cms_posts=all_posts,
+                    )
+                    new_page_ids = [str(pid) for pid in _new_ids]
+                    if pairs:
+                        await self._synced_post_repo.batch_link_inventory_ids(
+                            connection_id=connection.id,
+                            pairs=pairs,
+                        )
+            except Exception:
+                logger.warning(
+                    "content_inventory.cms_sync_failed",
+                    exc_info=True,
+                )
+
         # Update connection sync metadata
         await self._connection_repo.update_sync_metadata(
             connection.id,
@@ -228,6 +268,7 @@ class CMSService:
             "stale": stale_count,
             "categories": len(categories),
             "truncated": truncated,
+            "new_page_ids": new_page_ids,
         }
 
     # ── Publish Flow ──────────────────────────────────────────────
@@ -242,6 +283,7 @@ class CMSService:
         target_status: str = "draft",
         category_names: list[str] | None = None,
         slug_override: str | None = None,
+        publish_metadata: CMSPublishMetadata | None = None,
     ) -> CMSPost:
         """Read final.md from StorageBackend, convert to HTML, publish to CMS.
 
@@ -257,7 +299,18 @@ class CMSService:
             )
 
         title = self._extract_title(final_md)
-        slug = slug_override or self._generate_slug(title)
+        normalized_publish_metadata = self._normalize_publish_metadata(
+            publish_metadata,
+            title=title,
+        )
+        requested_publish_at = self._parse_publish_date(
+            normalized_publish_metadata.publish_date,
+        )
+        slug = (
+            slug_override
+            or normalized_publish_metadata.slug
+            or self._generate_slug(title)
+        )
         content_html = self._markdown_to_html(final_md)
 
         adapter = self._reconstruct_adapter(connection)
@@ -265,10 +318,23 @@ class CMSService:
             title=title,
             slug=slug,
             content_html=content_html,
+            excerpt=normalized_publish_metadata.meta_description,
             status=CMSPostStatus(target_status),
             categories=category_names or [],
+            tags=normalized_publish_metadata.tags,
+            seo_title=normalized_publish_metadata.meta_title,
+            seo_description=normalized_publish_metadata.meta_description,
+            canonical_url=normalized_publish_metadata.canonical_url,
+            published_at=requested_publish_at,
+            author=normalized_publish_metadata.author,
+            schema_markup=normalized_publish_metadata.schema_markup,
         )
         published_post = await adapter.publish_post(post_create)
+        effective_published_at = (
+            published_post.published_at
+            or requested_publish_at
+            or datetime.now(timezone.utc)
+        )
 
         # Invalidate categories cache if publish may have created new categories
         if category_names:
@@ -299,11 +365,57 @@ class CMSService:
                 effective_slug, brief_id,
             )
             if piece:
+                merged_results = dict(piece.evaluation_results or {})
+                merged_results["publish_metadata"] = normalized_publish_metadata.model_dump(mode="json")
                 await self._content_repo.update(
                     piece.id,
                     published_url=published_post.url,
-                    published_at=datetime.now(timezone.utc),
+                    published_at=effective_published_at,
                     status=ContentPieceStatus.published,
+                    evaluation_results=merged_results,
+                )
+
+        inventory_item = None
+        if self._inventory_service is not None and connection.company_id:
+            try:
+                inventory_item = await self._inventory_service.register_published_content(
+                    company_id=connection.company_id,
+                    effective_slug=effective_slug,
+                    url=published_post.url,
+                    title=title,
+                    word_count=published_post.word_count,
+                    content_text=final_md,
+                    content_html=content_html,
+                    published_at=effective_published_at,
+                    h1_text=title,
+                    meta_description=normalized_publish_metadata.meta_description,
+                    categories=category_names or [],
+                    tags=normalized_publish_metadata.tags,
+                    seo_title=normalized_publish_metadata.meta_title,
+                    seo_description=normalized_publish_metadata.meta_description,
+                    has_schema_markup=normalized_publish_metadata.schema_markup,
+                )
+            except Exception:
+                logger.warning(
+                    "content_inventory.publish_register_failed",
+                    exc_info=True,
+                )
+
+        if inventory_item is not None and connection.company_id:
+            try:
+                await self._auto_generate_prompts_for_published_page(
+                    company_slug=company_slug,
+                    company_uuid=connection.company_id,
+                    inventory_id=inventory_item.id,
+                )
+            except Exception:
+                logger.warning(
+                    "cms.publish_auto_prompt_failed",
+                    extra={
+                        "company_slug": company_slug,
+                        "inventory_id": str(inventory_item.id),
+                    },
+                    exc_info=True,
                 )
 
         return published_post
@@ -589,6 +701,64 @@ class CMSService:
         slug = re.sub(r"[\s]+", "-", slug)
         slug = slug.strip("-")
         return slug[:200]
+
+    @staticmethod
+    def _normalize_publish_metadata(
+        publish_metadata: CMSPublishMetadata | None,
+        *,
+        title: str,
+    ) -> CMSPublishMetadata:
+        if publish_metadata is None:
+            return CMSPublishMetadata(
+                slug=CMSService._generate_slug(title),
+                meta_title=title,
+            )
+        return CMSPublishMetadata(
+            slug=publish_metadata.slug or CMSService._generate_slug(title),
+            meta_title=publish_metadata.meta_title or title,
+            meta_description=publish_metadata.meta_description or "",
+            canonical_url=publish_metadata.canonical_url or "",
+            schema_markup=publish_metadata.schema_markup,
+            publish_date=publish_metadata.publish_date or "",
+            author=publish_metadata.author or "",
+            tags=publish_metadata.tags or [],
+        )
+
+    @staticmethod
+    def _parse_publish_date(publish_date: str) -> datetime | None:
+        if not publish_date:
+            return None
+        try:
+            return datetime.fromisoformat(f"{publish_date}T00:00:00+00:00")
+        except ValueError:
+            return None
+
+    async def _auto_generate_prompts_for_published_page(
+        self,
+        *,
+        company_slug: str,
+        company_uuid: _uuid.UUID,
+        inventory_id: _uuid.UUID,
+    ) -> None:
+        """Best-effort content-to-prompt generation for newly published pages."""
+        if self._content_to_prompt_orchestrator is None:
+            return
+
+        brand_name = company_slug
+        if self._company_repo is not None:
+            company = await self._company_repo.get_by_slug(company_slug)
+            resolved_name = getattr(company, "name", "") if company else ""
+            if resolved_name:
+                brand_name = resolved_name
+
+        await self._content_to_prompt_orchestrator.run_for_pages(
+            company_id=company_slug,
+            company_uuid=company_uuid,
+            page_ids=[inventory_id],
+            brand_name=brand_name,
+            k=6,
+            auto_approve=True,
+        )
 
     @staticmethod
     def _markdown_to_html(md_text: str) -> str:

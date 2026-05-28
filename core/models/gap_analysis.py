@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
@@ -209,6 +210,8 @@ class PlatformResult(BaseModel):
     query_text: Optional[str] = None
     response_text: Optional[str] = None
     citations: List[CitationRef] = Field(default_factory=list)
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
 
 class StructuralSignals(BaseModel):
@@ -318,6 +321,8 @@ class EnrichedCitation(BaseModel):
     paragraphs: List[str] = Field(default_factory=list)
     best_paragraphs: List[ParagraphMatch] = Field(default_factory=list)
     structural_signals: Optional[StructuralSignals] = None
+    published_at: Optional[datetime] = None
+    modified_at: Optional[datetime] = None
     is_company_citation: bool = False
 
 

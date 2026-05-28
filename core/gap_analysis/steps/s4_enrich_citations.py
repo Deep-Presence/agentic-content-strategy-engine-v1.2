@@ -13,6 +13,7 @@ import re
 import statistics
 import threading
 import time
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -21,13 +22,15 @@ import trafilatura
 from bs4 import BeautifulSoup
 
 from core.config.settings import settings
-from core.storage.backends.base import StorageBackend
 from core.models.gap_analysis import (
     EnrichedCitation,
     GeneratedQuery,
     PlatformResult,
     StructuralSignals,
 )
+from core.site_audit.checks.eeat_signals import _parse_date_robust
+from core.site_audit.steps.s2_analyze_pages import _extract_freshness
+from core.storage.backends.base import StorageBackend
 
 logger = logging.getLogger(__name__)
 
@@ -375,6 +378,17 @@ def _extract_paragraphs(html: str) -> Tuple[List[str], StructuralSignals]:
     return paragraphs, signals
 
 
+def _extract_freshness_dates(
+    html: str,
+) -> Tuple[datetime | None, datetime | None]:
+    """Extract and parse publication / modification dates from cited HTML."""
+    soup = BeautifulSoup(html, "html.parser")
+    publish_date_str, modified_date_str = _extract_freshness(soup)
+    published_at = _parse_date_robust(publish_date_str) if publish_date_str else None
+    modified_at = _parse_date_robust(modified_date_str) if modified_date_str else None
+    return published_at, modified_at
+
+
 async def _fetch_html(
     url: str,
     client: httpx.AsyncClient | None = None,
@@ -513,9 +527,11 @@ async def enrich_citations(
     # ── Phase 2: Parse HTMLs in thread pool (CPU-bound offload) ───────
     parse_sem = asyncio.Semaphore(thread_workers)
 
-    async def _parse_one(html: str) -> Tuple[List[str], StructuralSignals]:
+    async def _parse_one(
+        html: str,
+    ) -> Tuple[List[str], StructuralSignals, datetime | None, datetime | None]:
         async with parse_sem:
-            return await asyncio.to_thread(_extract_paragraphs, html)
+            return await asyncio.to_thread(_parse_html_payload, html)
 
     fetchable_entries: List[Tuple[int, str, dict, str]] = []
     parse_tasks_list: List[asyncio.Task] = []
@@ -543,7 +559,7 @@ async def enrich_citations(
         if isinstance(result, BaseException):
             logger.warning("Parse failed for %s: %s", final_url, result)
             continue
-        paragraphs, signals = result
+        paragraphs, signals, published_at, modified_at = result
         if final_url != original_url:
             resolved_count += 1
         domain = urlparse(final_url).netloc
@@ -567,6 +583,8 @@ async def enrich_citations(
                 paragraphs=paragraphs,
                 best_paragraphs=[],
                 structural_signals=signals,
+                published_at=published_at,
+                modified_at=modified_at,
                 is_company_citation=meta.get("is_company_citation", False),
             )
         )
@@ -584,6 +602,15 @@ def compute_structural_signals(html: str) -> Tuple[List[str], StructuralSignals]
     Returns (paragraph_texts, StructuralSignals).
     """
     return _extract_paragraphs(html)
+
+
+def _parse_html_payload(
+    html: str,
+) -> Tuple[List[str], StructuralSignals, datetime | None, datetime | None]:
+    """Parse both structural and freshness signals from cited HTML."""
+    paragraphs, signals = _extract_paragraphs(html)
+    published_at, modified_at = _extract_freshness_dates(html)
+    return paragraphs, signals, published_at, modified_at
 
 
 def save_enriched_citations(enriched: List[EnrichedCitation], storage: StorageBackend, key: str) -> None:

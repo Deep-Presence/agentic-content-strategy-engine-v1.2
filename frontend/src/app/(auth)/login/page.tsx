@@ -1,26 +1,48 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Button, Input } from '@/components/ui';
+import { useAuth } from '@/hooks/useAuth';
+import { ApiError } from '@/lib/api-client';
+import { AlertCircle } from 'lucide-react';
 import Link from 'next/link';
-import { useAuthStore } from '@/stores/auth';
 
 export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginForm() {
   const router = useRouter();
-  const { login, checkOnboardingNeeded, isLoading, error, clearError } = useAuthStore();
+  const searchParams = useSearchParams();
+  const { login } = useAuth();
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    clearError();
+    setError(null);
+    setIsSubmitting(true);
+
     try {
-      await login(email, password);
-      const needsOnboarding = await checkOnboardingNeeded();
-      router.push(needsOnboarding ? '/onboarding' : '/');
-    } catch {
-      // error is set in the store
+      await login({ email, password });
+      const redirect = searchParams.get('redirect') || '/';
+      router.push(redirect);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setError(err.detail);
+      } else {
+        setError('Something went wrong. Please try again.');
+      }
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -32,11 +54,6 @@ export default function LoginPage() {
       <p className="text-[14px] text-text-secondary mb-8 leading-[1.6]">
         Enter your credentials to access your workspace.
       </p>
-      {error && (
-        <div className="bg-error/10 border border-error/30 text-error text-[13px] rounded-md px-3 py-2 mb-4">
-          {error}
-        </div>
-      )}
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
@@ -49,6 +66,7 @@ export default function LoginPage() {
             onChange={(e) => setEmail(e.target.value)}
             className="w-full h-[36px] text-[14px] px-3"
             required
+            disabled={isSubmitting}
           />
         </div>
         <div>
@@ -62,15 +80,17 @@ export default function LoginPage() {
             onChange={(e) => setPassword(e.target.value)}
             className="w-full h-[36px] text-[14px] px-3"
             required
+            disabled={isSubmitting}
           />
         </div>
-        <Button
-          variant="primary"
-          className="w-full mt-4 h-[36px] text-[14px]"
-          type="submit"
-          disabled={isLoading}
-        >
-          {isLoading ? 'Signing in...' : 'Sign In'}
+        {error && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-sm border border-error bg-error-subtle text-[13px] text-error">
+            <AlertCircle size={14} strokeWidth={1.5} className="flex-shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+        <Button variant="primary" className="w-full mt-4 h-[36px] text-[14px]" type="submit" disabled={isSubmitting}>
+          {isSubmitting ? 'Signing in...' : 'Sign In'}
         </Button>
       </form>
       <div className="mt-6 flex items-center justify-between text-[13px]">

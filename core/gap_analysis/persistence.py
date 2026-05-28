@@ -226,6 +226,7 @@ async def persist_s3(
                         "title": getattr(cit, "title", None),
                         "snippet": getattr(cit, "snippet", None),
                         "citation_rank": getattr(cit, "rank", i + 1),
+                        "is_company_citation": getattr(cit, "is_company_citation", False),
                     })
             if citation_rows:
                 await repo.bulk_insert_run_citations(citation_rows)
@@ -286,6 +287,8 @@ async def persist_s4(
                         cit.structural_signals.content_type
                         if cit.structural_signals else None
                     ),
+                    "published_at": getattr(cit, "published_at", None),
+                    "modified_at": getattr(cit, "modified_at", None),
                     "paragraph_count": len(cit.paragraphs) if cit.paragraphs else 0,
                     "http_status": 200,
                     "scraped_at": datetime.now(tz=timezone.utc),
@@ -421,6 +424,7 @@ async def persist_s6(
     try:
         from core.db.models.gap_analysis import (
             CentroidResultModel,
+            ClusterProximityStatsModel,
             ClusterSpecModel,
             QueryExemplarModel,
             QueryGapModel,
@@ -438,6 +442,7 @@ async def persist_s6(
                 ClusterSpecModel,
                 SpaResultModel,
                 CentroidResultModel,
+                ClusterProximityStatsModel,
             ):
                 await session.execute(
                     delete(model_cls).where(model_cls.run_id == run_id)  # type: ignore[attr-defined]
@@ -458,6 +463,15 @@ async def persist_s6(
                     content_brief = gap.content_brief.model_dump(mode="json") if hasattr(gap.content_brief, "model_dump") else gap.content_brief
 
                 source_ids = getattr(gap, "source_topic_ids", None) or []
+                # Serialize best_company_structural_signals to dict if present
+                _bcs_raw = getattr(gap, "best_company_structural_signals", None)
+                bcs_dict: Optional[Dict[str, Any]] = None
+                if _bcs_raw is not None:
+                    if hasattr(_bcs_raw, "model_dump"):
+                        bcs_dict = _bcs_raw.model_dump(mode="json")
+                    elif isinstance(_bcs_raw, dict):
+                        bcs_dict = _bcs_raw
+
                 gap_rows.append({
                     "id": gap_id,
                     "run_id": run_id,
@@ -468,6 +482,9 @@ async def persist_s6(
                     "best_company_similarity": _safe_float(gap.best_company_similarity),
                     "best_company_unit_id": getattr(gap, "best_company_unit", None),
                     "best_company_unit_text": getattr(gap, "best_company_unit_text", None),
+                    "best_company_url": getattr(gap, "best_company_url", None),
+                    "best_company_structural_signals": bcs_dict,
+                    "company_cited": getattr(gap, "company_cited", False),
                     "avg_citation_similarity": _safe_float(gap.avg_citation_similarity),
                     "gap": _safe_float(gap.gap),
                     "classification": _classify(gap.interpretation or "no_data"),
@@ -476,10 +493,21 @@ async def persist_s6(
                 })
 
                 for rank, ex in enumerate(exemplars[:5], start=1):
+                    # Deterministic url_enrichment_id — matches persist_s4
+                    # UUID derivation.  S4 always runs before S6 in the
+                    # pipeline, so the url_enrichment_cache row exists.
+                    # If S4 was skipped, persist_s6's try/except catches
+                    # the IntegrityError and the pipeline continues.
+                    ex_url_str = str(ex.url)
+                    ex_url_hash = _hash_text(ex_url_str)
+                    ex_enrichment_id = _uuid.uuid5(
+                        _uuid.NAMESPACE_URL, ex_url_hash,
+                    )
                     exemplar_rows.append({
                         "id": _uuid.uuid4(),
                         "query_gap_id": gap_id,
-                        "url": str(ex.url),
+                        "url_enrichment_id": ex_enrichment_id,
+                        "url": ex_url_str,
                         "domain": getattr(ex, "domain", None),
                         "similarity": _safe_float(ex.similarity),
                         "snippet": getattr(ex, "snippet", None),
@@ -558,12 +586,52 @@ async def persist_s6(
             if centroid_rows:
                 await repo.bulk_insert_centroid_results(centroid_rows)
 
+            # ── Cluster Proximity Stats ────────────────────────────
+            prox_rows: list[dict[str, object]] = []
+            prox_stats_raw = getattr(analysis, "proximity_stats", None) or {}
+            if isinstance(prox_stats_raw, dict):
+                # Per-cluster rows
+                per_cluster = prox_stats_raw.get("per_cluster", {})
+                for cname, stats in per_cluster.items():
+                    if isinstance(stats, dict):
+                        prox_rows.append({
+                            "id": _uuid.uuid4(),
+                            "run_id": run_id,
+                            "cluster_name": cname,
+                            "cluster_id": None,
+                            "citation_mean": _safe_float(stats.get("mean")),
+                            "citation_std": _safe_float(stats.get("std")),
+                            "citation_min": _safe_float(stats.get("min")),
+                            "citation_max": _safe_float(stats.get("max")),
+                            "citation_median": 0.0,
+                            "company_mean": 0.0,
+                            "company_median": 0.0,
+                            "count": int(stats.get("count", 0)),
+                        })
+                # Global row with run-level aggregates
+                prox_rows.append({
+                    "id": _uuid.uuid4(),
+                    "run_id": run_id,
+                    "cluster_name": "__global__",
+                    "cluster_id": None,
+                    "citation_mean": _safe_float(prox_stats_raw.get("citation_similarity_mean")),
+                    "citation_std": 0.0,
+                    "citation_min": 0.0,
+                    "citation_max": 0.0,
+                    "citation_median": _safe_float(prox_stats_raw.get("citation_similarity_median")),
+                    "company_mean": _safe_float(prox_stats_raw.get("company_similarity_mean")),
+                    "company_median": _safe_float(prox_stats_raw.get("company_similarity_median")),
+                    "count": 0,
+                })
+            if prox_rows:
+                await repo.bulk_insert_cluster_proximity_stats(prox_rows)
+
             await session.commit()
 
         logger.info(
-            "persist_s6: %d gaps, %d exemplars, %d specs, %d spa, %d centroids for %s",
+            "persist_s6: %d gaps, %d exemplars, %d specs, %d spa, %d centroids, %d prox for %s",
             len(gap_rows), len(exemplar_rows), len(spec_rows),
-            len(spa_rows), len(centroid_rows), slug,
+            len(spa_rows), len(centroid_rows), len(prox_rows), slug,
         )
     except Exception:
         logger.warning("persist_s6 failed for %s, continuing without DB", slug, exc_info=True)

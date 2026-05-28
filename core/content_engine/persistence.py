@@ -52,6 +52,113 @@ def _map_content_status(status_value: str) -> Any:
         return ContentPieceStatus.planned
 
 
+async def persist_blueprints_early(
+    session_factory: Optional[async_sessionmaker],
+    run_id: Optional[_uuid.UUID],
+    company_id: Optional[_uuid.UUID],
+    slug: str,
+    blueprints: list,
+) -> None:
+    """Persist blueprint placeholders to content_pieces BEFORE HITL-2.
+
+    Creates minimal ContentPiece records so ``DbContentDataService.get_briefs()``
+    returns them during the HITL-2 approval pause. Pipeline state in Redis
+    overrides the display status to ``pending_brief_approval``.
+
+    Uses upsert by (effective_slug, brief_id) — safe to call even if records
+    already exist from a previous run.
+    """
+    if not _should_persist(session_factory, run_id, company_id):
+        return
+    assert session_factory is not None and run_id is not None
+    try:
+        from core.db.repositories.content_repo import ContentRepository
+        from core.db.enums import ContentPieceStatus
+
+        async with session_factory() as session:
+            repo = ContentRepository(session)
+            for bp in blueprints:
+                brief_id = bp.brief_id if hasattr(bp, "brief_id") else bp.get("brief_id", "")
+                title = bp.title if hasattr(bp, "title") else bp.get("title", "")
+                content_format = (
+                    bp.content_format if hasattr(bp, "content_format")
+                    else bp.get("content_format", "long_blog")
+                )
+                cluster = (
+                    bp.target_cluster if hasattr(bp, "target_cluster")
+                    else bp.get("target_cluster", "")
+                )
+                ta_id_raw = getattr(bp, "topic_assignment_id", None) or bp.get("topic_assignment_id") if isinstance(bp, dict) else getattr(bp, "topic_assignment_id", None)
+                ta_id: _uuid.UUID | None = None
+                if ta_id_raw:
+                    try:
+                        ta_id = _uuid.UUID(str(ta_id_raw))
+                    except (ValueError, AttributeError):
+                        ta_id = None
+
+                # Extract brief metadata for the detail endpoint
+                # so it works without the blueprints.json fallback
+                # (concurrent pipelines cause file race conditions).
+                _bp_dict = bp if isinstance(bp, dict) else (
+                    bp.model_dump(mode="json") if hasattr(bp, "model_dump") else {}
+                )
+                eval_data = {}
+                if _bp_dict.get("key_topics"):
+                    eval_data["key_topics"] = _bp_dict["key_topics"]
+                if _bp_dict.get("key_angles"):
+                    eval_data["key_angles"] = _bp_dict["key_angles"]
+                wc = _bp_dict.get("word_count_range")
+                if wc:
+                    if isinstance(wc, (list, tuple)) and len(wc) >= 2:
+                        eval_data["word_count_range"] = {"min": wc[0], "max": wc[1]}
+                    elif isinstance(wc, dict):
+                        eval_data["word_count_range"] = wc
+                if _bp_dict.get("priority_score") is not None:
+                    eval_data["priority_score"] = _bp_dict["priority_score"]
+                if _bp_dict.get("structural_targets") is not None:
+                    eval_data["structural_targets"] = _bp_dict["structural_targets"]
+                if _bp_dict.get("gap_context") is not None:
+                    eval_data["gap_context"] = _bp_dict["gap_context"]
+
+                existing = await repo.get_by_slug_and_brief_id(slug, brief_id)
+                if existing:
+                    existing.run_id = run_id
+                    existing.title = title
+                    existing.company_id = company_id
+                    existing.cluster_name = cluster
+                    existing.content_type = content_format
+                    existing.topic_assignment_id = ta_id
+                    if eval_data:
+                        existing.evaluation_results = {
+                            **(existing.evaluation_results or {}),
+                            **eval_data,
+                        }
+                    await session.flush()
+                else:
+                    await repo.create_piece(
+                        run_id=run_id,
+                        effective_slug=slug,
+                        brief_id=brief_id,
+                        company_id=company_id,
+                        title=title,
+                        status=ContentPieceStatus.planned,
+                        content_type=content_format,
+                        cluster_name=cluster,
+                        topic_assignment_id=ta_id,
+                        evaluation_results=eval_data or None,
+                    )
+            await session.commit()
+        logger.info(
+            "persist_blueprints_early: %d placeholders stored for %s",
+            len(blueprints), slug,
+        )
+    except Exception:
+        logger.warning(
+            "persist_blueprints_early failed for %s, continuing without DB",
+            slug, exc_info=True,
+        )
+
+
 async def persist_content_pieces(
     session_factory: Optional[async_sessionmaker],
     run_id: Optional[_uuid.UUID],
@@ -78,6 +185,7 @@ async def persist_content_pieces(
                 eval_summary = getattr(piece, "eval_summary", None)
                 if eval_summary and hasattr(eval_summary, "model_dump"):
                     eval_summary = eval_summary.model_dump(mode="json")
+                eval_summary = dict(eval_summary or {})
 
                 ta_id_raw = getattr(piece, "topic_assignment_id", None)
                 ta_id: _uuid.UUID | None = None
@@ -93,12 +201,18 @@ async def persist_content_pieces(
                 # Upsert: find existing by (slug, brief_id), patch fields, preserve ID
                 existing = await repo.get_by_slug_and_brief_id(slug, piece.brief_id)
                 if existing:
+                    if (
+                        existing.evaluation_results
+                        and existing.evaluation_results.get("gap_context") is not None
+                        and eval_summary.get("gap_context") is None
+                    ):
+                        eval_summary["gap_context"] = existing.evaluation_results["gap_context"]
                     existing.run_id = run_id
                     existing.title = piece.title
                     existing.status = mapped_status
                     existing.storage_key = getattr(piece, "artifact_path", None)
                     existing.word_count = word_count
-                    existing.evaluation_results = eval_summary
+                    existing.evaluation_results = eval_summary or None
                     existing.topic_assignment_id = ta_id
                     existing.company_id = company_id
                     await session.flush()
@@ -112,7 +226,7 @@ async def persist_content_pieces(
                         status=mapped_status,
                         storage_key=getattr(piece, "artifact_path", None),
                         word_count=word_count,
-                        evaluation_results=eval_summary,
+                        evaluation_results=eval_summary or None,
                         revision_count=0,
                         topic_assignment_id=ta_id,
                     )

@@ -188,17 +188,11 @@ def _prefilter(
 
 def _get_llm():
     """
-    LLM used for final ranking + drafting. Uses Gemini via LangChain.
+    LLM used for final ranking + drafting. Uses Gemini via OpenRouter (ChatOpenAI).
     """
-    from langchain_google_genai import ChatGoogleGenerativeAI
+    from core.shared_tools.openrouter_client import build_chat_openai_via_openrouter
 
-    api_key = settings.google_api_key_reddit_hil or settings.google_api_key_company_deepagent
-    if not api_key:
-        raise RuntimeError(
-            "Missing GOOGLE_API_KEY_REDDIT_HIL (recommended) or GOOGLE_API_KEY_COMPANY_DEEPAGENT (fallback)."
-        )
-    model_name = settings.google_gemini_model_reddit_hil
-    return ChatGoogleGenerativeAI(model=model_name, api_key=api_key)
+    return build_chat_openai_via_openrouter(settings.google_gemini_model_reddit_hil)
 
 
 def _llm_select_and_draft(
@@ -289,6 +283,30 @@ Candidate threads (JSON):
     content = getattr(res, "content", None) if res is not None else None
     if not isinstance(content, str) or not content.strip():
         raise RuntimeError("LLM returned empty content for select+draft")
+
+    # Cost tracking — try actual usage from ChatOpenAI response_metadata, fallback to char estimation
+    try:
+        from core.shared_tools.cost_tracker import track_llm_cost
+
+        _usage_meta = getattr(res, "response_metadata", {}).get("token_usage", {})
+        _actual_pt = _usage_meta.get("prompt_tokens", 0) if isinstance(_usage_meta, dict) else 0
+        _actual_ct = _usage_meta.get("completion_tokens", 0) if isinstance(_usage_meta, dict) else 0
+        if _actual_pt or _actual_ct:
+            _est_pt, _est_ct, _method = _actual_pt, _actual_ct, "sdk"
+        else:
+            _est_pt = len(prompt) // 4
+            _est_ct = len(content) // 4
+            _method = "char_count"
+        track_llm_cost(
+            model=settings.google_gemini_model_reddit_hil, provider="openrouter",
+            pipeline="reddit_hil", pipeline_step="select_and_draft",
+            prompt_tokens=_est_pt, completion_tokens=_est_ct,
+            call_site="core.reddit_hil.graph",
+            source="openrouter",
+            extra={"estimation_method": _method},
+        )
+    except Exception:  # noqa: BLE001
+        pass  # Cost tracking is best-effort
 
     try:
         parsed = json.loads(content)

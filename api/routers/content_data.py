@@ -9,13 +9,15 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 
-from api.auth.dependencies import require_tenant
+from api.auth.dependencies import require_role, require_tenant
 from api.dependencies import get_content_data_service
 from api.schemas.content_data import (
     AddBriefRequest,
+    ContentPublishMetadata,
     ContentBriefDetailResponse,
     ContentBriefListItem,
     ContentBriefListResponse,
+    SavePublishMetadataRequest,
     StageContentResponse,
 )
 from core.services.content_data import ContentDataServiceProtocol
@@ -94,4 +96,22 @@ async def get_stage_content(
     """
     return await content_service.get_brief_stage_content(
         _effective(slug, product_slug), brief_id, stage,
+    )
+
+
+@router.put("/briefs/{brief_id}/publish-metadata", response_model=ContentPublishMetadata)
+async def save_publish_metadata(
+    slug: str,
+    brief_id: str,
+    body: SavePublishMetadataRequest,
+    content_service: ContentDataServiceProtocol = Depends(get_content_data_service),
+    product_slug: Optional[str] = Query(None, description="Filter by product slug"),
+    _access=Depends(require_role("member", "superuser")),
+) -> ContentPublishMetadata:
+    """Persist SEO/publish metadata for a content brief."""
+    effective_slug = body.effective_slug or _effective(slug, product_slug)
+    return await content_service.save_publish_metadata(
+        effective_slug,
+        brief_id,
+        body.publish_metadata,
     )

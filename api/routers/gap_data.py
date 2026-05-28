@@ -15,11 +15,13 @@ from api.schemas.brand_data import SPATrendResponse
 from api.schemas.content_data import EmbeddingProjectionResponse
 from api.schemas.gap_data import (
     ClusterListResponse,
+    ClusterProfileListResponse,
     GapSummaryResponse,
     HeatmapResponse,
     PlatformListResponse,
     QueryListResponse,
     SignalAveragesResponse,
+    TerritoryGapsResponse,
 )
 from core.services.gap_data import GapDataServiceProtocol
 
@@ -39,10 +41,11 @@ async def get_gap_summary(
     slug: str,
     gap_service: GapDataServiceProtocol = Depends(get_gap_data_service),
     product_slug: Optional[str] = Query(None, description="Filter by product slug"),
+    ga_run_id: Optional[str] = Query(None, description="Topic-scoped GA run ID (loads from topic_scoped/{id}/)"),
     _access=Depends(require_tenant),
 ) -> GapSummaryResponse:
     """Executive overview: SPA score, proximity stats, classifications, clusters."""
-    return await gap_service.get_summary(_effective(slug, product_slug))
+    return await gap_service.get_summary(_effective(slug, product_slug), ga_run_id=ga_run_id)
 
 
 @router.get("/queries", response_model=QueryListResponse)
@@ -139,3 +142,25 @@ async def get_spa_trend_endpoint(
 ) -> SPATrendResponse:
     """SPA score trend across completed gap analysis runs."""
     return await gap_service.get_spa_trend(_effective(slug, product_slug))
+
+
+@router.get("/cluster-profiles", response_model=ClusterProfileListResponse)
+async def get_cluster_profiles(
+    slug: str,
+    gap_service: GapDataServiceProtocol = Depends(get_gap_data_service),
+    product_slug: Optional[str] = Query(None, description="Filter by product slug"),
+    _access=Depends(require_tenant),
+) -> ClusterProfileListResponse:
+    """Rich cluster profiles for Embedding Lab territory intelligence."""
+    return await gap_service.get_cluster_profiles(_effective(slug, product_slug))
+
+
+@router.get("/territory-gaps", response_model=TerritoryGapsResponse)
+async def get_territory_gaps(
+    slug: str,
+    gap_service: GapDataServiceProtocol = Depends(get_gap_data_service),
+    product_slug: Optional[str] = Query(None, description="Filter by product slug"),
+    _access=Depends(require_tenant),
+) -> TerritoryGapsResponse:
+    """Gap queries with rich exemplars and signals for Embedding Lab."""
+    return await gap_service.get_territory_gaps(_effective(slug, product_slug))

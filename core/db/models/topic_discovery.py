@@ -33,7 +33,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID as PgUUID
 from sqlalchemy.dialects.postgresql import ENUM as PgEnum
 from sqlalchemy.orm import Mapped, mapped_column
 
-from core.db.base import Base, UUIDPKMixin
+from core.db.base import Base, TimestampMixin, UUIDPKMixin
 from core.db.enums import (
     AudienceSegmentType,
     BuyerStage,
@@ -84,6 +84,8 @@ class TopicDiscoveryModel(UUIDPKMixin, Base):
         Integer, nullable=False, default=0, server_default="0",
     )
     manifest_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    scoring_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    persona_affinity_index_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     discovered_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -147,6 +149,8 @@ class SubdomainNodeModel(UUIDPKMixin, Base):
     __table_args__ = (
         Index("ix_subdomain_nodes_taxonomy", "taxonomy_id"),
         Index("ix_subdomain_nodes_parent", "parent_id"),
+        # Partial unique indexes created in migration 0031 via raw SQL
+        # (not representable as declarative constraints due to WHERE clauses).
     )
 
     taxonomy_id: Mapped[_uuid.UUID] = mapped_column(
@@ -184,6 +188,9 @@ class SubdomainNodeModel(UUIDPKMixin, Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, onupdate=func.now(),
+    )
 
 
 # ── Topic Assignments ───────────────────────────────────────────────────
@@ -197,6 +204,11 @@ class TopicAssignmentModel(UUIDPKMixin, Base):
         Index("ix_topic_assignments_discovery", "discovery_id"),
         Index("ix_topic_assignments_subdomain", "subdomain_node_id"),
         Index("ix_topic_assignments_persona", "persona_id"),
+        Index(
+            "ix_topic_assignments_subdomain_version",
+            "discovery_id", "subdomain_node_id", "matrix_version",
+        ),
+        Index("ix_topic_assignments_batch", "expansion_batch_id"),
     )
 
     discovery_id: Mapped[_uuid.UUID] = mapped_column(
@@ -252,9 +264,79 @@ class TopicAssignmentModel(UUIDPKMixin, Base):
     persona_name: Mapped[str | None] = mapped_column(String, nullable=True)
     subdomain_id_text: Mapped[str | None] = mapped_column(String, nullable=True)
     subdomain_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    persona_affinity_json: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True,
+    )
+    expansion_batch_id: Mapped[_uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), nullable=True,
+    )
+    display_id: Mapped[str | None] = mapped_column(
+        String(20), nullable=True, index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class TopicAssignmentCannibalizationModel(UUIDPKMixin, TimestampMixin, Base):
+    """Durable cannibalization assessment for a topic assignment."""
+
+    __tablename__ = "topic_assignment_cannibalization"
+    __table_args__ = (
+        UniqueConstraint(
+            "assignment_id",
+            name="uq_topic_assignment_cannibalization_assignment",
+        ),
+        Index(
+            "ix_td_assignment_cannibalization_discovery",
+            "discovery_id",
+        ),
+        Index(
+            "ix_td_assignment_cannibalization_company_level",
+            "company_id",
+            "risk_level",
+        ),
+    )
+
+    assignment_id: Mapped[_uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("topic_assignments.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    discovery_id: Mapped[_uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("topic_discoveries.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    company_id: Mapped[_uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    top_match_inventory_id: Mapped[_uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("content_inventory.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    max_similarity: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0, server_default="0",
+    )
+    risk_score: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0, server_default="0",
+    )
+    risk_level: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="none", server_default="none",
+    )
+    recommended_action: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="safe_to_create_new",
+        server_default="safe_to_create_new",
+    )
+    reasons_json: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    matches_json: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    signals_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
 
 # ── Source Results ──────────────────────────────────────────────────────
@@ -325,6 +407,7 @@ class PersonaAffinityModel(UUIDPKMixin, Base):
     )
     persona_id: Mapped[str] = mapped_column(String, nullable=False)
     persona_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    career_role: Mapped[str | None] = mapped_column(String, nullable=True)
     subdomain_id_str: Mapped[str | None] = mapped_column(String, nullable=True)
     subdomain_name: Mapped[str | None] = mapped_column(String, nullable=True)
     affinity_score: Mapped[float] = mapped_column(

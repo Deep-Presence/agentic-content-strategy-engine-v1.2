@@ -26,6 +26,10 @@ class ApiSettings(BaseSettings):
         default=3,
         description="Max pipeline runs allowed in parallel",
     )
+    max_concurrent_content_engine_per_company: int = Field(
+        default=15,
+        description="Max content-engine runs allowed in parallel per company",
+    )
 
     model_config = {"env_prefix": "API_"}
 

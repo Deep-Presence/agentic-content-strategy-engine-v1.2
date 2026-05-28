@@ -19,16 +19,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import re
 import time
-import uuid
+import uuid as _uuid
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from core.config.settings import settings
-from core.content_engine.llm_client import configure_litellm_callbacks
+from core.content_engine.llm_client import configure_openrouter
 from core.models.topic_discovery import (
     BuyerStage,
     CaptureRecaptureResult,
@@ -73,6 +74,12 @@ from core.topic_discovery.agents import (
     run_topic_generation,
     run_unified_hierarchy_and_scoring,
 )
+from core.topic_discovery.cannibalization_service import (
+    assess_assignment_cannibalization,
+    build_assignment_assessments,
+    build_assignment_candidate_queries,
+    build_assignment_similarity_query,
+)
 from core.topic_discovery.graph import (
     build_td_matrix_review_graph,
     build_td_subdomain_selection_graph,
@@ -88,7 +95,27 @@ from core.topic_discovery.scoring import (
     compute_subdomain_scores,
     compute_topic_priority,
 )
-from core.topic_discovery.storage import TopicDiscoveryStorage
+from core.topic_discovery.db_ops import (
+    db_read_manifest,
+    db_write_manifest,
+    db_write_source_results,
+    db_write_coverage,
+    db_write_taxonomy,
+    db_read_taxonomy,
+    db_write_scoring,
+    db_read_scoring,
+    db_write_persona_affinity,
+    db_read_persona_affinity,
+    db_write_matrix,
+    db_read_latest_matrix,
+    db_get_discovery_id,
+    # Additive upsert functions (Pipeline B per-subdomain writes)
+    db_write_assignments_for_subdomain,
+    db_claim_subdomain_for_expansion,
+    db_mark_subdomain_expanded,
+    db_rebuild_tree_json,
+    db_reset_stale_expanding,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -210,8 +237,8 @@ def _load_persona_entries(
     backend: Any,
     effective_slug: str,
     company_slug: Optional[str] = None,
-) -> List[Tuple[str, str]]:
-    """Load (persona_id, persona_name) tuples from persona manifest.
+) -> List[Tuple[str, str, str]]:
+    """Load (persona_id, persona_name, career_role) tuples from persona manifest.
 
     Falls back from effective_slug to company_slug.
     Returns list of tuples for active (fresh/stale) personas.
@@ -227,18 +254,32 @@ def _load_persona_entries(
     else:
         return []
 
-    entries: List[Tuple[str, str]] = []
+    entries: List[Tuple[str, str, str]] = []
     for pid, entry in manifest.personas.items():
         if entry.status in ("fresh", "stale"):
-            entries.append((pid, entry.persona_name or pid))
+            entries.append((
+                pid,
+                entry.persona_name or pid,
+                getattr(entry, "career_role", "") or "",
+            ))
     return entries
 
 
 def _build_persona_name_to_id(
-    entries: List[Tuple[str, str]],
+    entries: List[Tuple[str, str, str]],
 ) -> Dict[str, str]:
     """Build persona_name → persona_id mapping from entries."""
-    return {name: pid for pid, name in entries}
+    return {name: pid for pid, name, _role in entries}
+
+
+def _build_persona_metadata(
+    entries: List[Tuple[str, str, str]],
+) -> Dict[str, Dict[str, str]]:
+    """Build persona_id → {persona_name, career_role} metadata lookup."""
+    return {
+        pid: {"persona_name": name, "career_role": role}
+        for pid, name, role in entries
+    }
 
 
 def _compute_distributions(
@@ -270,6 +311,7 @@ async def run_topic_discovery_pipeline(
     session_factory: Optional[Any] = None,
     run_id: Optional[Any] = None,
     company_id: Optional[Any] = None,
+    langsmith_project: Optional[str] = None,
 ) -> TopicDiscoveryOutput:
     """Run the Topic Discovery pipeline (Pipeline A: Discovery).
 
@@ -281,20 +323,20 @@ async def run_topic_discovery_pipeline(
     slug = _resolve_slug(input_data)
     company_slug = slug
     effective_slug = _resolve_effective_slug(input_data)
-    storage = TopicDiscoveryStorage(root, effective_slug)
     auto_approve_cps = set(input_data.auto_approve_checkpoints)
     max_rounds = input_data.max_expansion_rounds or settings.topic_discovery_max_expansion_rounds
     dedup_threshold = input_data.dedup_threshold or settings.topic_discovery_dedup_threshold
     timeout_s = settings.topic_discovery_source_timeout_s
 
     # Configure LiteLLM callbacks for LangSmith tracing
-    configure_litellm_callbacks()
+    configure_openrouter()
 
     # Tracing
     session_id = create_session(slug)
+    _ls_project = langsmith_project or settings.topic_discovery_langsmith_project
     trace_span = create_trace(session_id, f"td-pipeline/{slug}", input_data={
         "company": input_data.company_name, "domain": input_data.domain,
-    }, tags=["topic-discovery", "pipeline-a"])
+    }, tags=["topic-discovery", "pipeline-a"], project_name=_ls_project)
 
     # SSE: pipeline start
     _emit(event_bus, task_id, "pipeline_start", {"pipeline": "topic_discovery"})
@@ -462,20 +504,11 @@ async def run_topic_discovery_pipeline(
                 "error": source_d_result.error,
             })
 
-            # Write raw source results to storage
-            for sr in source_results:
-                await asyncio.to_thread(storage.write_source_result, sr.source, sr)
-
-            # ── DB: Persist source results ──
-            try:
-                from core.topic_discovery.persistence import persist_td_source_results
-
-                await persist_td_source_results(
-                    session_factory, run_id, company_id,
-                    discovery_id, source_results,
+            # Write source results to DB
+            if session_factory is not None and discovery_id is not None:
+                await db_write_source_results(
+                    session_factory, discovery_id, source_results, version=1,
                 )
-            except Exception:
-                logger.warning("TD persist_td_source_results failed, continuing", exc_info=True)
 
             _emit(event_bus, task_id, "td_phase_complete", {"phase": 1})
             end_span(s1_span, output={
@@ -523,7 +556,7 @@ async def run_topic_discovery_pipeline(
             coverage = compute_all_coverage_metrics(
                 source_results, dedup_result=dedup_result,
             )
-            await asyncio.to_thread(storage.write_coverage, coverage)
+            # NOTE: coverage DB write is deferred until after taxonomy write (needs taxonomy_db_id)
 
             # Log coverage metrics
             coverage_span = create_span(s2_span, "td-s2-coverage")
@@ -536,7 +569,7 @@ async def run_topic_discovery_pipeline(
             # Unified S2: hierarchy + priority scoring + persona affinity
             deduped_names = [c.name for c in deduped if c.name]
             persona_profiles_for_s2: List[Tuple[str, str]] = []
-            for (pid, _pname), md in zip(persona_entries, persona_mds):
+            for (pid, _pname, _role), md in zip(persona_entries, persona_mds):
                 persona_profiles_for_s2.append((pid, md))
             taxonomy = await run_unified_hierarchy_and_scoring(
                 subdomains=deduped_names,
@@ -553,8 +586,15 @@ async def run_topic_discovery_pipeline(
             taxonomy.chao1_estimate = coverage.chao1_lower_bound
             taxonomy.capture_recapture_est = coverage.model_dump(mode="json")
 
-            # Write taxonomy
-            tax_version = await asyncio.to_thread(storage.write_taxonomy, taxonomy)
+            # Write taxonomy to DB
+            if session_factory is not None and discovery_id is not None:
+                taxonomy_db_id, tax_version = await db_write_taxonomy(
+                    session_factory, discovery_id, taxonomy, version=0,
+                )
+                # Now write coverage (needs taxonomy_db_id)
+                await db_write_coverage(session_factory, taxonomy_db_id, coverage)
+            else:
+                tax_version = taxonomy.version
 
             _emit(event_bus, task_id, "td_phase_complete", {
                 "phase": 2,
@@ -585,7 +625,7 @@ async def run_topic_discovery_pipeline(
 
             hitl1_result = await run_td_hitl_checkpoint(
                 taxonomy_review_graph, hitl1_state,
-                thread_id=f"td-hitl-1-{slug}-{uuid.uuid4().hex[:8]}",
+                thread_id=f"td-hitl-1-{slug}-{_uuid.uuid4().hex[:8]}",
                 task_store=task_store, event_bus=event_bus, task_id=task_id,
                 stage_name="td_taxonomy_review",
                 parent_span=hitl1_span,
@@ -607,9 +647,10 @@ async def run_topic_discovery_pipeline(
                     )
                     # H3: Explicitly approve the last-generated taxonomy
                     taxonomy.status = TopicDiscoveryStatus.approved
-                    tax_version = await asyncio.to_thread(
-                        storage.write_taxonomy, taxonomy,
-                    )
+                    if session_factory is not None and discovery_id is not None:
+                        taxonomy_db_id, tax_version = await db_write_taxonomy(
+                            session_factory, discovery_id, taxonomy, version=tax_version,
+                        )
                     break
                 logger.info(
                     "TD/%s: taxonomy retry %d/%d (feedback: %s)",
@@ -623,25 +664,15 @@ async def run_topic_discovery_pipeline(
                 if approved_tax_raw:
                     taxonomy = TaxonomyTree.model_validate(approved_tax_raw)
                     taxonomy.status = TopicDiscoveryStatus.approved
-                    tax_version = await asyncio.to_thread(
-                        storage.write_taxonomy, taxonomy,
-                    )
+                    if session_factory is not None and discovery_id is not None:
+                        taxonomy_db_id, tax_version = await db_write_taxonomy(
+                            session_factory, discovery_id, taxonomy, version=tax_version,
+                        )
                 break
 
         _emit(event_bus, task_id, "td_phase_complete", {
             "phase": "hitl_1", "decision": decision,
         })
-
-        # ── DB: Persist approved taxonomy ──
-        try:
-            from core.topic_discovery.persistence import persist_td_taxonomy
-
-            taxonomy_db_id = await persist_td_taxonomy(
-                session_factory, run_id, company_id,
-                discovery_id, taxonomy, tax_version,
-            )
-        except Exception:
-            logger.warning("TD persist_td_taxonomy failed, continuing", exc_info=True)
 
         # =============================================================
         # Phase 2.5: Post-Processing — Source Confidence Blend (trial)
@@ -668,53 +699,25 @@ async def run_topic_discovery_pipeline(
 
         # Build ScoredSubdomainList from taxonomy (Pipeline B compatibility)
         scored_subdomains = build_scored_subdomain_list_from_taxonomy(taxonomy)
-        scoring_version = await asyncio.to_thread(
-            storage.write_scoring, scored_subdomains
-        )
 
         # Build PersonaAffinityIndex from taxonomy (Pipeline B compatibility)
         persona_affinity = build_persona_affinity_index_from_taxonomy(taxonomy)
-        affinity_version = await asyncio.to_thread(
-            storage.write_persona_affinity, persona_affinity
-        )
+        persona_affinity.persona_metadata = _build_persona_metadata(persona_entries)
 
-        # Re-persist taxonomy with blended priority_score
-        await asyncio.to_thread(
-            storage.write_taxonomy, taxonomy, taxonomy.version
-        )
-
-        # ── DB: Re-persist taxonomy with scoring data on nodes ──
-        try:
-            from core.topic_discovery.persistence import persist_td_taxonomy as _re_persist_tax
-
-            await _re_persist_tax(
-                session_factory, run_id, company_id,
-                discovery_id, taxonomy, tax_version,
+        # Persist scoring, affinity, and re-persist taxonomy with blended scores
+        if session_factory is not None and discovery_id is not None:
+            scoring_version = await db_write_scoring(
+                session_factory, discovery_id, scored_subdomains,
             )
-        except Exception:
-            logger.warning("TD re-persist_td_taxonomy (post-scoring) failed, continuing", exc_info=True)
-
-        # ── DB: Persist persona affinity index ──
-        try:
-            from core.topic_discovery.persistence import persist_td_persona_affinity
-
-            await persist_td_persona_affinity(
-                session_factory, run_id, company_id,
-                discovery_id, persona_affinity, affinity_version,
+            affinity_version = await db_write_persona_affinity(
+                session_factory, discovery_id, persona_affinity, version=1,
             )
-        except Exception:
-            logger.warning("TD persist_td_persona_affinity failed, continuing", exc_info=True)
-
-        # ── DB: Persist scoring + affinity version metadata ──
-        try:
-            from core.topic_discovery.persistence import persist_td_scoring_metadata
-
-            await persist_td_scoring_metadata(
-                session_factory, discovery_id,
-                scoring_version, affinity_version,
+            await db_write_taxonomy(
+                session_factory, discovery_id, taxonomy, version=taxonomy.version,
             )
-        except Exception:
-            logger.warning("TD persist_td_scoring_metadata failed, continuing", exc_info=True)
+        else:
+            scoring_version = scored_subdomains.version
+            affinity_version = 1
 
         _emit(event_bus, task_id, "td_phase_complete", {
             "phase": "2.5",
@@ -732,7 +735,10 @@ async def run_topic_discovery_pipeline(
         _emit(event_bus, task_id, "td_phase_start", {"phase": "finalize", "stage": "discovery_finalize"})
         _update_task(task_store, task_id, current_step="finalize_discovery")
 
-        manifest = await asyncio.to_thread(storage.read_manifest)
+        if session_factory is not None and discovery_id is not None:
+            manifest = await db_read_manifest(session_factory, effective_slug)
+        else:
+            manifest = TopicDiscoveryManifest(slug=company_slug, effective_slug=effective_slug)
         manifest.slug = company_slug
         manifest.effective_slug = effective_slug
         manifest.company_name = input_data.company_name
@@ -745,31 +751,9 @@ async def run_topic_discovery_pipeline(
         manifest.last_updated = datetime.now(timezone.utc).isoformat()
         manifest.discovery_completed_at = datetime.now(timezone.utc).isoformat()
         manifest.source_results_written = [sr.source.value for sr in source_results]
-        await asyncio.to_thread(storage.write_manifest, manifest)
 
-        # ── DB Persistence (fire-and-forget) ──
-        try:
-            from core.topic_discovery.persistence import persist_td_status_update
-
-            await persist_td_status_update(session_factory, discovery_id, "discovery_complete")
-        except Exception:
-            logger.warning("TD persist_td_status_update failed, continuing", exc_info=True)
-
-        # ── DB: Persist manifest metadata ──
-        try:
-            if session_factory is not None and discovery_id is not None:
-                from core.db.repositories.topic_discovery_repo import TopicDiscoveryRepository
-
-                async with session_factory() as _msess:
-                    _mrepo = TopicDiscoveryRepository(_msess)
-                    await _mrepo.update(discovery_id, manifest_json={
-                        "source_results_written": manifest.source_results_written,
-                        "expanded_subdomain_ids": getattr(manifest, "expanded_subdomain_ids", []),
-                        "last_expansion_task_id": getattr(manifest, "last_expansion_task_id", None),
-                    })
-                    await _msess.commit()
-        except Exception:
-            logger.warning("TD manifest_json DB persist failed, continuing", exc_info=True)
+        if session_factory is not None and discovery_id is not None:
+            await db_write_manifest(session_factory, discovery_id, manifest)
 
         try:
             from core.research.persistence import persist_pipeline_run_complete
@@ -837,6 +821,49 @@ def _update_expansion_status(
         _update_expansion_status(node.children, expanded_ids, failed_ids)
 
 
+# ---------------------------------------------------------------------------
+# Cannibalization detection helpers
+# ---------------------------------------------------------------------------
+
+
+def _build_cannibal_query(assignment: TopicAssignment) -> str:
+    """Compatibility wrapper for the shared similarity query builder."""
+    return build_assignment_similarity_query(assignment)
+
+
+def _apply_cannibalization_results(
+    assignments: List[TopicAssignment],
+    query_texts: List[str],
+    cannibal_results: Dict[str, list],
+    *,
+    signal_overrides_by_query: Dict[str, Dict[str, dict[str, Any]]] | None = None,
+) -> None:
+    """Enrich assignments with planner-ready cannibalization data."""
+    assessments = build_assignment_assessments(
+        assignments,
+        query_texts,
+        cannibal_results,
+        signal_overrides_by_query=signal_overrides_by_query,
+    )
+    for a in assignments:
+        a.metadata.update(assessments.get(a.id, {}))
+
+        # Piecewise priority penalty
+        max_sim = float(a.metadata.get("cannibalization_risk") or 0.0)
+        if a.priority_score > 0 and max_sim > 0:
+            threshold = settings.td_cannibalization_threshold
+            if max_sim >= 0.90:
+                penalty = 0.20 + (max_sim - 0.90) * 1.5  # 0.20 to 0.35
+            elif max_sim > threshold:
+                penalty = (max_sim - threshold) * (0.20 / (0.90 - threshold))
+            else:
+                penalty = 0.0
+            penalty = min(penalty, 0.35)
+            if penalty > 0:
+                a.priority_score = round(a.priority_score * (1 - penalty), 4)
+                a.priority_factors["cannibalization_penalty"] = round(-penalty, 4)
+
+
 async def run_topic_expansion_pipeline(
     input_data: TopicExpansionInput,
     *,
@@ -847,6 +874,7 @@ async def run_topic_expansion_pipeline(
     session_factory: Optional[Any] = None,
     run_id: Optional[Any] = None,
     company_id: Optional[Any] = None,
+    langsmith_project: Optional[str] = None,
 ) -> TopicExpansionOutput:
     """Run the Topic Expansion pipeline (Pipeline B).
 
@@ -866,13 +894,15 @@ async def run_topic_expansion_pipeline(
         "effective_slug": effective_slug,
     })
 
-    configure_litellm_callbacks()
+    configure_openrouter()
     session_id = create_session(f"td-expansion-{effective_slug}")
+    _ls_project = langsmith_project or settings.topic_discovery_langsmith_project
     trace_span = create_trace(
         session_id,
         f"td-expansion/{effective_slug}",
         input_data={"effective_slug": effective_slug, "subdomain_ids": input_data.subdomain_ids},
         tags=["topic-discovery", "expansion"],
+        project_name=_ls_project,
     )
 
     try:
@@ -883,8 +913,10 @@ async def run_topic_expansion_pipeline(
         _emit(event_bus, task_id, "td_phase_start", {"phase": "preflight", "stage": "expansion_preflight"})
         _update_task(task_store, task_id, current_step="expansion_preflight")
 
-        storage = TopicDiscoveryStorage(root, effective_slug)
-        manifest = await asyncio.to_thread(storage.read_manifest)
+        if session_factory is None:
+            raise RuntimeError("session_factory is required for topic expansion pipeline")
+
+        manifest = await db_read_manifest(session_factory, effective_slug)
 
         if manifest.taxonomy_version == 0 or manifest.scoring_version == 0:
             raise RuntimeError(
@@ -894,17 +926,13 @@ async def run_topic_expansion_pipeline(
 
         # Load taxonomy
         tax_version = input_data.taxonomy_version or manifest.taxonomy_version
-        taxonomy = await asyncio.to_thread(storage.read_taxonomy, tax_version)
+        taxonomy = await db_read_taxonomy(session_factory, effective_slug, version=tax_version)
         if taxonomy is None:
             raise RuntimeError(f"Taxonomy v{tax_version} not found for '{effective_slug}'.")
 
         # Load scored subdomains + persona affinity
-        scored_subdomains = await asyncio.to_thread(
-            storage.read_scoring, manifest.scoring_version,
-        )
-        persona_affinity = await asyncio.to_thread(
-            storage.read_persona_affinity, manifest.persona_affinity_version,
-        )
+        scored_subdomains = await db_read_scoring(session_factory, effective_slug)
+        persona_affinity = await db_read_persona_affinity(session_factory, effective_slug)
 
         # Load company context + persona profiles (needed for expansion prompts)
         domain = input_data.domain or f"{company_slug}.com"
@@ -926,7 +954,7 @@ async def run_topic_expansion_pipeline(
         persona_entries = _load_persona_entries(backend, effective_slug, company_slug)
         persona_mds_by_id: Dict[str, str] = {}
         if persona_entries and persona_mds:
-            for idx, (pid, _pname) in enumerate(persona_entries):
+            for idx, (pid, _pname, _role) in enumerate(persona_entries):
                 if idx < len(persona_mds):
                     persona_mds_by_id[pid] = persona_mds[idx]
 
@@ -972,7 +1000,9 @@ async def run_topic_expansion_pipeline(
 
         buyer_stages = [s.value for s in BuyerStage]
         intent_types = [t.value for t in IntentType]
-        audience_segments: List[Tuple[str, str]] = persona_entries or [("general", "General")]
+        audience_segments: List[Tuple[str, str]] = [
+            (pid, pname) for pid, pname, _role in persona_entries
+        ] if persona_entries else [("general", "General")]
 
         # Filter to selected subdomains
         selected_set = set(selected_subdomain_ids)
@@ -996,82 +1026,350 @@ async def run_topic_expansion_pipeline(
         if persona_filter and persona_filter in persona_mds_by_id:
             expansion_persona_ctx = persona_mds_by_id[persona_filter][:500]
 
-        # Expand each selected subdomain
-        all_assignments: List[TopicAssignment] = []
-        semaphore = asyncio.Semaphore(settings.topic_discovery_max_concurrent_sources)
-        expanded_ids: set = set()
-        failed_ids: set = set()
+        # ── Resolve discovery_id BEFORE the expansion loop ──
+        discovery_id: Optional[Any] = None
+        try:
+            from core.topic_discovery.persistence import persist_td_discovery
 
-        async def _expand_subdomain(
-            sd_id: str, sd_name: str, sd_desc: str,
-        ) -> List[TopicAssignment]:
-            async with semaphore:
-                assignments = await run_subdomain_expansion(
-                    subdomain_name=sd_name,
-                    subdomain_description=sd_desc,
-                    buyer_stages=buyer_stages,
-                    intent_types=intent_types,
-                    audience_segments=audience_segments,
-                    company_context=company_md,
-                    persona_context=expansion_persona_ctx,
-                    timeout_s=settings.topic_discovery_expansion_timeout_s,
-                    parent_span=s3_span,
-                    company_slug=company_slug,
-                )
-            for a in assignments:
-                a.subdomain_id = sd_id
-            return assignments
+            discovery_id = await persist_td_discovery(
+                session_factory, run_id, company_id,
+                effective_slug, domain,
+                pipeline_run_id=run_id,
+            )
+        except Exception:
+            logger.warning("TD-Expansion persist_td_discovery failed, continuing", exc_info=True)
 
-        expansion_tasks = [
-            _expand_subdomain(sid, sname, sdesc)
-            for sid, sname, sdesc in selected_tuples
-        ]
-        expansion_results = await asyncio.gather(
-            *expansion_tasks, return_exceptions=True,
-        )
+        # Resolve current matrix_version (additive writes use same version)
+        mat_version = manifest.matrix_version or 1
 
-        for i, res in enumerate(expansion_results):
-            sd_id = selected_tuples[i][0]
-            if isinstance(res, Exception):
-                logger.warning(
-                    "TD-Expansion/%s: expansion failed for '%s': %s(%s)",
-                    effective_slug, selected_tuples[i][1],
-                    type(res).__name__, res,
-                )
-                failed_ids.add(sd_id)
-            else:
-                all_assignments.extend(res)
-                expanded_ids.add(sd_id)
+        # Resolve taxonomy_id for stale-expanding reset
+        taxonomy_db_id: Optional[Any] = None
+        if session_factory is not None and discovery_id is not None:
+            try:
+                from core.db.repositories.topic_discovery_repo import TaxonomyTreeRepository
+                async with session_factory() as _sess:
+                    _tax_repo = TaxonomyTreeRepository(_sess)
+                    _tax_row = await _tax_repo.get_by_discovery(discovery_id, version=tax_version)
+                    taxonomy_db_id = _tax_row.id if _tax_row else None
+            except Exception:
+                logger.debug("TD-Expansion: could not resolve taxonomy_db_id, skipping stale reset")
 
-        # Compute topic priority scores
+        # Reset stale 'expanding' nodes from previous crashed runs
+        if taxonomy_db_id is not None:
+            try:
+                await db_reset_stale_expanding(session_factory, taxonomy_db_id)
+            except Exception:
+                logger.debug("TD-Expansion: stale reset failed, continuing")
+
+        # Generate expansion batch ID for this run
+        expansion_batch_id = _uuid.uuid4()
+
+        # Build score lookup for topic priority computation
         score_lookup: Dict[str, Any] = {}
         if scored_subdomains:
             for sc in scored_subdomains.scores:
                 score_lookup[sc.subdomain_id] = sc
 
-        for assignment in all_assignments:
-            sd_score = score_lookup.get(assignment.subdomain_id)
-            if sd_score:
-                priority, factors = compute_topic_priority(
-                    assignment.buyer_stage.value,
-                    assignment.intent_type.value,
-                    sd_score.composite_score,
+        # Build subdomain affinity lookup for per-assignment persona affinity
+        subdomain_affinity_map: Dict[str, Dict[str, float]] = {}
+        if persona_affinity and persona_affinity.persona_entries:
+            for pid, entries in persona_affinity.persona_entries.items():
+                for entry in entries:
+                    if entry.subdomain_id not in subdomain_affinity_map:
+                        subdomain_affinity_map[entry.subdomain_id] = {}
+                    subdomain_affinity_map[entry.subdomain_id][pid] = entry.affinity_score
+
+        # ── Per-subdomain expansion + persist loop ──
+        # Uses semaphore-gated create_task instead of asyncio.gather
+        # to support circuit breaker (stop launching new tasks on N failures).
+        semaphore = asyncio.Semaphore(settings.topic_discovery_max_concurrent_sources)
+        expanded_ids: set = set()
+        failed_ids: set = set()
+        all_new_assignments: List[TopicAssignment] = []  # in-memory accumulator
+        total_assignments_written = 0
+        consecutive_failures = 0
+        circuit_open = False
+        cb_threshold = settings.topic_discovery_expansion_circuit_breaker_threshold
+
+        async def _expand_and_persist_subdomain(
+            sd_id: str, sd_name: str, sd_desc: str,
+        ) -> Tuple[str, int, Optional[Exception], List[TopicAssignment]]:
+            """Expand a single subdomain and persist results atomically.
+
+            Returns (subdomain_id, count, error_or_none, assignments).
+            Never raises — captures all exceptions as the error tuple element.
+            """
+            nonlocal consecutive_failures, circuit_open
+            try:
+                return await _expand_and_persist_subdomain_inner(sd_id, sd_name, sd_desc)
+            except Exception as exc:
+                return sd_id, 0, exc, []
+
+        async def _expand_and_persist_subdomain_inner(
+            sd_id: str, sd_name: str, sd_desc: str,
+        ) -> Tuple[str, int, Optional[Exception], List[TopicAssignment]]:
+            nonlocal consecutive_failures, circuit_open
+
+            # Circuit breaker check — skip if tripped
+            if circuit_open:
+                return sd_id, 0, RuntimeError("Circuit breaker open — skipped"), []
+
+            # Parse subdomain ID as UUID (graceful if non-UUID in tests)
+            try:
+                sd_uuid = _uuid.UUID(sd_id)
+            except (ValueError, AttributeError):
+                sd_uuid = None
+
+            # 1. Claim subdomain for expansion
+            if session_factory is not None and discovery_id is not None and sd_uuid is not None:
+                claimed = await db_claim_subdomain_for_expansion(session_factory, sd_uuid)
+                if not claimed:
+                    logger.info(
+                        "TD-Expansion/%s: subdomain '%s' already claimed, skipping",
+                        effective_slug, sd_name,
+                    )
+                    return sd_id, 0, None, []
+
+            # 2. LLM call with retry + exponential backoff
+            assignments: List[TopicAssignment] = []
+            max_retries = settings.topic_discovery_expansion_max_retries
+            retry_delay = settings.topic_discovery_expansion_retry_base_delay_s
+
+            async with semaphore:
+                for attempt in range(max_retries + 1):
+                    try:
+                        assignments = await run_subdomain_expansion(
+                            subdomain_name=sd_name,
+                            subdomain_description=sd_desc,
+                            buyer_stages=buyer_stages,
+                            intent_types=intent_types,
+                            audience_segments=audience_segments,
+                            company_context=company_md,
+                            persona_context=expansion_persona_ctx,
+                            timeout_s=settings.topic_discovery_expansion_timeout_s,
+                            parent_span=s3_span,
+                            company_slug=company_slug,
+                        )
+                        break
+                    except Exception as llm_exc:
+                        if attempt == max_retries:
+                            raise
+                        delay = retry_delay * (2 ** attempt) + random.uniform(0, retry_delay)
+                        logger.warning(
+                            "TD-Expansion/%s: LLM retry %d/%d for '%s': %s",
+                            effective_slug, attempt + 1, max_retries, sd_name, llm_exc,
+                        )
+                        await asyncio.sleep(delay)
+
+            # 3. Set subdomain_id and compute priority scores
+            for a in assignments:
+                a.subdomain_id = sd_id
+                a.subdomain_name = sd_name
+                sd_score = score_lookup.get(sd_id)
+                if sd_score:
+                    priority, factors = compute_topic_priority(
+                        a.buyer_stage.value,
+                        a.intent_type.value,
+                        sd_score.composite_score,
+                    )
+                    a.priority_score = priority
+                    a.priority_factors = factors
+
+            # 3b. Cannibalization detection (batch)
+            if session_factory is not None and company_id is not None and assignments:
+                try:
+                    from core.db.repositories.content_inventory_prompt_repo import (
+                        ContentInventoryPromptRepository,
+                        _compute_query_overlap_signals,
+                    )
+                    from core.db.repositories.content_inventory_repo import ContentInventoryRepository
+                    from core.services.content_inventory_service import ContentInventoryService
+
+                    async with session_factory() as _cannibal_session:
+                        cannibal_svc = ContentInventoryService(
+                            inventory_repo=ContentInventoryRepository(_cannibal_session),
+                        )
+                        ci_prompt_repo = ContentInventoryPromptRepository(_cannibal_session)
+                        query_texts = [_build_cannibal_query(a) for a in assignments]
+                        cannibal_results = await cannibal_svc.check_cannibalization_batch(
+                            company_id, query_texts,
+                            threshold=settings.td_cannibalization_threshold,
+                        )
+                        match_inventory_ids = {
+                            _uuid.UUID(match.inventory_id)
+                            for result_matches in cannibal_results.values()
+                            for match in result_matches
+                        }
+                        signal_overrides_by_query: Dict[str, Dict[str, dict[str, Any]]] = {}
+                        citation_lookup: dict[str, dict[str, Any]] = {}
+                        page_scope_lookup: dict[_uuid.UUID, dict[str, Any]] = {}
+                        if match_inventory_ids:
+                            end_dt = datetime.now(timezone.utc)
+                            start_dt = end_dt - timedelta(
+                                days=settings.td_cannibalization_overlap_window_days,
+                            )
+                            citation_rows = await ci_prompt_repo.get_citation_metrics_batch(
+                                company_id,
+                                start_dt,
+                                end_dt,
+                                inventory_ids=list(match_inventory_ids),
+                            )
+                            citation_lookup = {
+                                str(row["inventory_id"]): row
+                                for row in citation_rows
+                            }
+                            page_scope_lookup = await ci_prompt_repo.get_page_prompt_scopes_batch(
+                                list(match_inventory_ids)
+                            )
+
+                        for assignment, query_text in zip(assignments, query_texts):
+                            candidate_queries = build_assignment_candidate_queries(assignment)
+                            assignment_signal_overrides: Dict[str, dict[str, Any]] = {}
+                            for match in cannibal_results.get(query_text, []):
+                                inventory_uuid = _uuid.UUID(match.inventory_id)
+                                query_overlap = _compute_query_overlap_signals(
+                                    page_scope_lookup.get(inventory_uuid, {
+                                        "root_prompt_ids": [],
+                                        "prompt_ids": [],
+                                        "fanout_prompt_ids": [],
+                                        "prompt_texts": [],
+                                    }),
+                                    candidate_queries,
+                                )
+                                citation_metrics = citation_lookup.get(match.inventory_id, {})
+                                citation_count = int(citation_metrics.get("total_cited") or 0)
+                                assignment_signal_overrides[match.inventory_id] = {
+                                    **query_overlap,
+                                    "citation_count": citation_count,
+                                    "citation_overlap_score": min(citation_count / 5, 1.0),
+                                }
+                            signal_overrides_by_query[query_text] = assignment_signal_overrides
+                        _apply_cannibalization_results(
+                            assignments,
+                            query_texts,
+                            cannibal_results,
+                            signal_overrides_by_query=signal_overrides_by_query,
+                        )
+                except Exception:
+                    logger.warning(
+                        "TD-Expansion/%s: cannibalization check failed for '%s', continuing",
+                        effective_slug, sd_name, exc_info=True,
+                    )
+                    for a in assignments:
+                        a.metadata["cannibalization_risk"] = None
+
+            # 4. Compute per-assignment persona affinity
+            sd_affinity = subdomain_affinity_map.get(sd_id, {})
+            if persona_entries:
+                from core.topic_discovery.scoring import compute_assignment_persona_affinity
+                for a in assignments:
+                    a.persona_affinity = compute_assignment_persona_affinity(
+                        a.buyer_stage.value,
+                        a.persona_id,
+                        sd_affinity,
+                        persona_entries,
+                    )
+
+            # 5. Persist assignments to DB (per-subdomain atomic write)
+            count = len(assignments)
+            if session_factory is not None and discovery_id is not None and sd_uuid is not None and assignments:
+                db_retries = settings.topic_discovery_expansion_db_max_retries
+                for db_attempt in range(db_retries + 1):
+                    try:
+                        count = await db_write_assignments_for_subdomain(
+                            session_factory, discovery_id, sd_uuid,
+                            assignments, mat_version, expansion_batch_id,
+                            company_id=company_id,
+                        )
+                        break
+                    except Exception as db_exc:
+                        if db_attempt == db_retries:
+                            raise
+                        logger.warning(
+                            "TD-Expansion/%s: DB retry %d/%d for '%s': %s",
+                            effective_slug, db_attempt + 1, db_retries, sd_name, db_exc,
+                        )
+                        await asyncio.sleep(0.5 * (2 ** db_attempt))
+
+            # 6. Mark subdomain as expanded
+            if session_factory is not None and discovery_id is not None and sd_uuid is not None:
+                await db_mark_subdomain_expanded(session_factory, sd_uuid, success=True)
+
+            # Reset consecutive failure count on success
+            consecutive_failures = 0
+            return sd_id, count, None, assignments
+
+        # Launch tasks with semaphore-gated loop (not asyncio.gather)
+        pending_tasks: List[asyncio.Task] = []
+        for sid, sname, sdesc in selected_tuples:
+            if circuit_open:
+                failed_ids.add(sid)
+                continue
+            task = asyncio.create_task(
+                _expand_and_persist_subdomain(sid, sname, sdesc),
+            )
+            pending_tasks.append(task)
+
+        # Await all tasks and collect results
+        for task in pending_tasks:
+            try:
+                sd_id, count, err, task_assignments = await task
+                if err is not None:
+                    logger.warning(
+                        "TD-Expansion/%s: expansion failed for '%s': %s",
+                        effective_slug, sd_id, err,
+                    )
+                    failed_ids.add(sd_id)
+                    consecutive_failures += 1
+                    if consecutive_failures >= cb_threshold:
+                        circuit_open = True
+                        logger.error(
+                            "TD-Expansion/%s: circuit breaker OPEN after %d consecutive failures",
+                            effective_slug, consecutive_failures,
+                        )
+                    # Mark as failed in DB
+                    if session_factory is not None and discovery_id is not None:
+                        try:
+                            _fail_uuid = _uuid.UUID(sd_id)
+                            await db_mark_subdomain_expanded(
+                                session_factory, _fail_uuid, success=False,
+                            )
+                        except (ValueError, Exception):
+                            pass
+                else:
+                    expanded_ids.add(sd_id)
+                    total_assignments_written += count
+                    all_new_assignments.extend(task_assignments)
+            except Exception as exc:
+                # Task raised an exception
+                logger.warning(
+                    "TD-Expansion/%s: task exception: %s",
+                    effective_slug, exc,
                 )
-                assignment.priority_score = priority
-                assignment.priority_factors = factors
+                consecutive_failures += 1
+                if consecutive_failures >= cb_threshold:
+                    circuit_open = True
 
-        # ── Merge with previous matrix (re-entrant accumulation) ──
-        # Keep assignments from subdomains NOT touched in this run;
-        # only successful expansions replace previous assignments.
-        previous_matrix = await asyncio.to_thread(storage.get_latest_matrix)
-        if previous_matrix and previous_matrix.assignments:
-            previous_kept = [
-                a for a in previous_matrix.assignments
-                if a.subdomain_id not in expanded_ids
-            ]
-            all_assignments = previous_kept + all_assignments
+        # ── Update in-memory taxonomy nodes for tree_json rebuild ──
+        _update_expansion_status(taxonomy.root_nodes, expanded_ids, failed_ids)
 
-        # Build matrix
+        # ── Rebuild tree_json after batch completes ──
+        if session_factory is not None and discovery_id is not None and taxonomy_db_id is not None:
+            await db_rebuild_tree_json(session_factory, discovery_id, tax_version)
+
+        # ── Build combined matrix for HITL-2 ──
+        # Read existing assignments from DB, then merge with new expansions.
+        # In production, per-subdomain writes already accumulated in DB;
+        # the merge here handles the case where DB writes were skipped
+        # (non-UUID test IDs, no session_factory, etc.).
+        db_matrix = await db_read_latest_matrix(session_factory, effective_slug)
+        db_assignments = db_matrix.assignments if db_matrix and db_matrix.assignments else []
+
+        # Merge: keep DB assignments for non-expanded subdomains,
+        # use in-memory assignments for subdomains expanded in this run.
+        kept_from_db = [a for a in db_assignments if a.subdomain_id not in expanded_ids]
+        all_assignments = kept_from_db + all_new_assignments
+
         distributions = _compute_distributions(all_assignments)
         matrix = TopicAssignmentMatrix(
             status=TopicDiscoveryStatus.draft,
@@ -1083,12 +1381,6 @@ async def run_topic_expansion_pipeline(
             intent_distribution=distributions["intent"],
             audience_distribution=distributions["audience"],
         )
-
-        mat_version = await asyncio.to_thread(storage.write_matrix, matrix)
-
-        # Update expansion_status on taxonomy nodes
-        _update_expansion_status(taxonomy.root_nodes, expanded_ids, failed_ids)
-        await asyncio.to_thread(storage.write_taxonomy, taxonomy, taxonomy.version)
 
         _emit(event_bus, task_id, "td_phase_complete", {
             "phase": 3,
@@ -1123,7 +1415,7 @@ async def run_topic_expansion_pipeline(
 
         hitl2_result = await run_td_hitl_checkpoint(
             matrix_review_graph, hitl2_state,
-            thread_id=f"td-hitl-2-{slug}-{uuid.uuid4().hex[:8]}",
+            thread_id=f"td-hitl-2-{slug}-{_uuid.uuid4().hex[:8]}",
             task_store=task_store, event_bus=event_bus, task_id=task_id,
             stage_name="td_matrix_review",
             parent_span=hitl2_span,
@@ -1136,32 +1428,15 @@ async def run_topic_expansion_pipeline(
         if approved_mat_raw:
             matrix = TopicAssignmentMatrix.model_validate(approved_mat_raw)
             matrix.status = TopicDiscoveryStatus.approved
-            mat_version = await asyncio.to_thread(storage.write_matrix, matrix)
+            if session_factory is not None and discovery_id is not None:
+                mat_version = await db_write_matrix(
+                    session_factory, discovery_id, matrix, version=mat_version,
+                    company_id=company_id,
+                )
 
         _emit(event_bus, task_id, "td_phase_complete", {
             "phase": "hitl_2", "decision": mat_decision,
         })
-
-        # ── DB: Persist approved assignments ──
-        discovery_id: Optional[Any] = None
-        taxonomy_db_id: Optional[Any] = None
-        try:
-            from core.topic_discovery.persistence import (
-                persist_td_assignments,
-                persist_td_discovery,
-            )
-
-            discovery_id = await persist_td_discovery(
-                session_factory, run_id, company_id,
-                effective_slug, domain,
-            )
-            await persist_td_assignments(
-                session_factory, run_id, company_id,
-                discovery_id, matrix, mat_version,
-                taxonomy_id=taxonomy_db_id,
-            )
-        except Exception:
-            logger.warning("TD-Expansion persist failed, continuing", exc_info=True)
 
         # =============================================================
         # Finalize
@@ -1170,7 +1445,10 @@ async def run_topic_expansion_pipeline(
         _emit(event_bus, task_id, "td_phase_start", {"phase": "finalize", "stage": "expansion_finalize"})
         _update_task(task_store, task_id, current_step="finalize_expansion")
 
-        manifest = await asyncio.to_thread(storage.read_manifest)
+        if session_factory is not None and discovery_id is not None:
+            manifest = await db_read_manifest(session_factory, effective_slug)
+        else:
+            manifest = TopicDiscoveryManifest(slug=company_slug, effective_slug=effective_slug)
         manifest.status = TopicDiscoveryStatus.approved
         manifest.matrix_version = mat_version
         manifest.last_updated = datetime.now(timezone.utc).isoformat()
@@ -1179,14 +1457,9 @@ async def run_topic_expansion_pipeline(
         existing_expanded = set(manifest.expanded_subdomain_ids)
         existing_expanded.update(expanded_ids)
         manifest.expanded_subdomain_ids = sorted(existing_expanded)
-        await asyncio.to_thread(storage.write_manifest, manifest)
 
-        try:
-            from core.topic_discovery.persistence import persist_td_status_update
-
-            await persist_td_status_update(session_factory, discovery_id, "approved")
-        except Exception:
-            logger.warning("TD-Expansion persist_td_status_update failed", exc_info=True)
+        if session_factory is not None and discovery_id is not None:
+            await db_write_manifest(session_factory, discovery_id, manifest)
 
         output = TopicExpansionOutput(
             slug=company_slug,

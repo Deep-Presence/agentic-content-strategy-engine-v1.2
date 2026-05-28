@@ -1,4 +1,4 @@
-export { Button } from './Button';
+export { Button } from './button';
 export { Input } from './Input';
 export { Card } from './Card';
 export { MetricCard } from './MetricCard';
@@ -23,3 +23,6 @@ export { ScoreGauge } from './ScoreGauge';
 export { Sparkline } from './Sparkline';
 export { LocusLogo } from './LocusLogo';
 export { WorkspaceSelector } from './WorkspaceSelector';
+export { DateRangePicker } from './DateRangePicker';
+export { BrandLogo } from './BrandLogo';
+export { SlideDrawer } from './SlideDrawer';

@@ -22,7 +22,7 @@ from core.models.topic_discovery import (
 from core.models.content_generation_v13 import EntryMode
 from core.orchestration.td_content_orchestrator import (
     TDContentPipelineError,
-    _validate_preflight,
+    _validate_preflight_db,
     run_td_to_content_pipeline,
 )
 
@@ -56,14 +56,16 @@ def _make_matrix(assignments: list[TopicAssignment]) -> TopicAssignmentMatrix:
 
 
 class TestPreflightValidation:
-    def test_missing_company_context(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_missing_company_context(self, tmp_path):
         with patch(
             "core.orchestration.td_content_orchestrator._PROJECT_ROOT", tmp_path,
         ):
             with pytest.raises(TDContentPipelineError, match="Company context"):
-                _validate_preflight("test-co", ["ta-1"])
+                await _validate_preflight_db(AsyncMock(), "test-co", ["ta-1"])
 
-    def test_empty_company_context(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_empty_company_context(self, tmp_path):
         ctx_dir = tmp_path / "artifacts" / "company_context"
         ctx_dir.mkdir(parents=True)
         (ctx_dir / "test-co.md").write_text("")
@@ -72,9 +74,10 @@ class TestPreflightValidation:
             "core.orchestration.td_content_orchestrator._PROJECT_ROOT", tmp_path,
         ):
             with pytest.raises(TDContentPipelineError, match="Company context"):
-                _validate_preflight("test-co", ["ta-1"])
+                await _validate_preflight_db(AsyncMock(), "test-co", ["ta-1"])
 
-    def test_missing_personas(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_missing_personas(self, tmp_path):
         ctx_dir = tmp_path / "artifacts" / "company_context"
         ctx_dir.mkdir(parents=True)
         (ctx_dir / "test-co.md").write_text("Company context here")
@@ -86,62 +89,86 @@ class TestPreflightValidation:
         ) as mock_ps:
             mock_ps.return_value.list_persona_paths.return_value = []
             with pytest.raises(TDContentPipelineError, match="persona"):
-                _validate_preflight("test-co", ["ta-1"])
+                await _validate_preflight_db(AsyncMock(), "test-co", ["ta-1"])
 
-    def test_missing_matrix(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_missing_matrix(self, tmp_path):
+        from core.models.topic_discovery import TopicDiscoveryManifest
+
         ctx_dir = tmp_path / "artifacts" / "company_context"
         ctx_dir.mkdir(parents=True)
         (ctx_dir / "test-co.md").write_text("Company context")
+
+        empty_manifest = TopicDiscoveryManifest(slug="test-co", matrix_version=0)
 
         with patch(
             "core.orchestration.td_content_orchestrator._PROJECT_ROOT", tmp_path,
         ), patch(
             "core.orchestration.td_content_orchestrator.PersonaStorage"
         ) as mock_ps, patch(
-            "core.orchestration.td_content_orchestrator.TopicDiscoveryStorage"
-        ) as mock_tds:
+            "core.orchestration.td_content_orchestrator.db_read_manifest",
+            new_callable=AsyncMock,
+            return_value=empty_manifest,
+        ):
             mock_ps.return_value.list_persona_paths.return_value = ["p1.md"]
-            mock_tds.return_value.get_latest_matrix.return_value = None
             with pytest.raises(TDContentPipelineError, match="matrix"):
-                _validate_preflight("test-co", ["ta-1"])
+                await _validate_preflight_db(AsyncMock(), "test-co", ["ta-1"])
 
-    def test_missing_assignment_ids(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_missing_assignment_ids(self, tmp_path):
+        from core.models.topic_discovery import TopicDiscoveryManifest
+
         ctx_dir = tmp_path / "artifacts" / "company_context"
         ctx_dir.mkdir(parents=True)
         (ctx_dir / "test-co.md").write_text("Company context")
 
         matrix = _make_matrix([_make_assignment("ta-1")])
+        manifest = TopicDiscoveryManifest(slug="test-co", matrix_version=1)
 
         with patch(
             "core.orchestration.td_content_orchestrator._PROJECT_ROOT", tmp_path,
         ), patch(
             "core.orchestration.td_content_orchestrator.PersonaStorage"
         ) as mock_ps, patch(
-            "core.orchestration.td_content_orchestrator.TopicDiscoveryStorage"
-        ) as mock_tds:
+            "core.orchestration.td_content_orchestrator.db_read_manifest",
+            new_callable=AsyncMock,
+            return_value=manifest,
+        ), patch(
+            "core.orchestration.td_content_orchestrator.db_read_latest_matrix",
+            new_callable=AsyncMock,
+            return_value=matrix,
+        ):
             mock_ps.return_value.list_persona_paths.return_value = ["p1.md"]
-            mock_tds.return_value.get_latest_matrix.return_value = matrix
             with pytest.raises(TDContentPipelineError, match="not found"):
-                _validate_preflight("test-co", ["ta-99"])
+                await _validate_preflight_db(AsyncMock(), "test-co", ["ta-99"])
 
-    def test_passes_when_all_valid(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_passes_when_all_valid(self, tmp_path):
+        from core.models.topic_discovery import TopicDiscoveryManifest
+
         ctx_dir = tmp_path / "artifacts" / "company_context"
         ctx_dir.mkdir(parents=True)
         (ctx_dir / "test-co.md").write_text("Company context")
 
         matrix = _make_matrix([_make_assignment("ta-1")])
+        manifest = TopicDiscoveryManifest(slug="test-co", matrix_version=1)
 
         with patch(
             "core.orchestration.td_content_orchestrator._PROJECT_ROOT", tmp_path,
         ), patch(
             "core.orchestration.td_content_orchestrator.PersonaStorage"
         ) as mock_ps, patch(
-            "core.orchestration.td_content_orchestrator.TopicDiscoveryStorage"
-        ) as mock_tds:
+            "core.orchestration.td_content_orchestrator.db_read_manifest",
+            new_callable=AsyncMock,
+            return_value=manifest,
+        ), patch(
+            "core.orchestration.td_content_orchestrator.db_read_latest_matrix",
+            new_callable=AsyncMock,
+            return_value=matrix,
+        ):
             mock_ps.return_value.list_persona_paths.return_value = ["p1.md"]
-            mock_tds.return_value.get_latest_matrix.return_value = matrix
             # Should not raise
-            _validate_preflight("test-co", ["ta-1"])
+            await _validate_preflight_db(AsyncMock(), "test-co", ["ta-1"])
 
 
 # ---------------------------------------------------------------------------
@@ -159,20 +186,21 @@ class TestRunTDToContentPipeline:
             _make_assignment("ta-2", BuyerStage.BOFU, IntentType.navigational),
         ])
 
+        mock_sf = AsyncMock()
+
         with patch(
             "core.orchestration.td_content_orchestrator._PROJECT_ROOT", tmp_path,
         ), patch(
-            "core.orchestration.td_content_orchestrator._validate_preflight",
-        ), patch(
-            "core.orchestration.td_content_orchestrator.TopicDiscoveryStorage"
-        ) as mock_tds:
-            mock_tds.return_value.get_latest_matrix.return_value = matrix
-
+            "core.orchestration.td_content_orchestrator._validate_preflight_db",
+            new_callable=AsyncMock,
+            return_value=matrix,
+        ):
             output = await run_td_to_content_pipeline(
                 effective_slug="test-co",
                 topic_assignment_ids=["ta-1", "ta-2"],
                 company_name="Test Co",
                 domain="test.co",
+                session_factory=mock_sf,
             )
 
         assert isinstance(output, ContentGenerationOutput)
@@ -193,13 +221,18 @@ class TestRunTDToContentPipeline:
             pieces=[],
         )
 
+        mock_sf = AsyncMock()
+
         with patch(
             "core.orchestration.td_content_orchestrator._PROJECT_ROOT", tmp_path,
         ), patch(
-            "core.orchestration.td_content_orchestrator._validate_preflight",
+            "core.orchestration.td_content_orchestrator._validate_preflight_db",
+            new_callable=AsyncMock,
+            return_value=matrix,
         ), patch(
-            "core.orchestration.td_content_orchestrator.TopicDiscoveryStorage"
-        ) as mock_tds, patch(
+            "core.orchestration.td_content_orchestrator._update_assignment_statuses_db",
+            new_callable=AsyncMock,
+        ), patch(
             "core.orchestration.td_content_orchestrator.PersonaStorage"
         ) as mock_ps, patch(
             "core.orchestration.td_content_orchestrator.run_topic_scoped_gap_analysis",
@@ -210,7 +243,6 @@ class TestRunTDToContentPipeline:
             new_callable=AsyncMock,
             return_value=mock_output,
         ) as mock_ce:
-            mock_tds.return_value.get_latest_matrix.return_value = matrix
             mock_ps.return_value.list_persona_paths.return_value = ["p1.md"]
 
             output = await run_td_to_content_pipeline(
@@ -218,6 +250,7 @@ class TestRunTDToContentPipeline:
                 topic_assignment_ids=["ta-1"],
                 company_name="Test Co",
                 domain="test.co",
+                session_factory=mock_sf,
             )
 
         assert output is mock_output

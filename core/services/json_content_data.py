@@ -10,11 +10,13 @@ from pathlib import Path
 from typing import Optional
 
 from api.schemas.content_data import (
+    ContentPublishMetadata,
     ContentBriefDetailResponse,
     ContentBriefListItem,
     ContentBriefListResponse,
     StageContentResponse,
 )
+from fastapi import HTTPException
 from api.services import content_data_service as _content_svc
 from core.storage.backends.base import StorageBackend
 
@@ -82,4 +84,15 @@ class JsonContentDataService:
             source,
             gap_query_id,
             storage=self._storage,
+        )
+
+    async def save_publish_metadata(
+        self,
+        effective_slug: str,
+        brief_id: str,
+        metadata: dict | ContentPublishMetadata,
+    ) -> ContentPublishMetadata:
+        raise HTTPException(
+            status_code=501,
+            detail="Publish metadata editing requires database-backed content storage.",
         )

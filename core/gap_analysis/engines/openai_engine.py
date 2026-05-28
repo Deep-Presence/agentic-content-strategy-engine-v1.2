@@ -61,6 +61,14 @@ class OpenAIEngine(SearchEngine):
                     {"role": "user", "content": query_text},
                 ],
             )
+            from core.shared_tools.cost_tracker import extract_usage_openai_responses, track_llm_cost
+
+            _pt, _ct = extract_usage_openai_responses(response)
+            track_llm_cost(
+                model=self.model, provider="openai", pipeline="gap_analysis",
+                pipeline_step="s3_openai_engine", prompt_tokens=_pt, completion_tokens=_ct,
+                call_site="core.gap_analysis.engines.openai_engine",
+            )
             output = getattr(response, "output", None) or []
             response_text, citations = _extract_openai_output(output)
         except Exception as exc:
@@ -72,6 +80,15 @@ class OpenAIEngine(SearchEngine):
             response = await oai_client.responses.create(
                 model=self.model,
                 input=query_text,
+            )
+            from core.shared_tools.cost_tracker import extract_usage_openai_responses, track_llm_cost
+
+            _pt, _ct = extract_usage_openai_responses(response)
+            track_llm_cost(
+                model=self.model, provider="openai", pipeline="gap_analysis",
+                pipeline_step="s3_openai_engine_fallback", prompt_tokens=_pt,
+                completion_tokens=_ct,
+                call_site="core.gap_analysis.engines.openai_engine",
             )
             content = getattr(response, "output_text", None) or ""
             response_text, citations = content, []
@@ -91,4 +108,6 @@ class OpenAIEngine(SearchEngine):
             query_text=query_text,
             response_text=response_text,
             citations=citation_refs,
+            prompt_tokens=_pt,
+            completion_tokens=_ct,
         )

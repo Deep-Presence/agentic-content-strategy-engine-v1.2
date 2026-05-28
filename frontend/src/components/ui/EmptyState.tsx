@@ -1,20 +1,19 @@
 import { cn } from '@/lib/utils';
 import { LocusLogo } from './LocusLogo';
-import { Button } from './Button';
+import { Button } from './button';
 
-export interface EmptyStateProps {
+interface EmptyStateProps {
   title: string;
   description?: string;
   action?: { label: string; onClick: () => void };
-  icon?: React.ReactNode;
   className?: string;
 }
 
-export function EmptyState({ title, description, action, icon, className }: EmptyStateProps) {
+export function EmptyState({ title, description, action, className }: EmptyStateProps) {
   return (
     <div className={cn('flex flex-col items-center justify-center py-16 px-4', className)}>
       <div className="text-text-tertiary mb-5">
-        {icon ?? <LocusLogo variant="symbol" size={48} />}
+        <LocusLogo variant="symbol" size={48} />
       </div>
       <h3 className="text-[20px] font-semibold text-text-primary mb-1.5">{title}</h3>
       {description && (

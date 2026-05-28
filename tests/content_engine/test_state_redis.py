@@ -303,13 +303,12 @@ class TestLockTTLRefresh:
 
 
 class TestReadFallback:
-    def test_consults_file_when_redis_returns_empty(self, tmp_path: Path, mock_sync_redis: MagicMock) -> None:
-        """When Redis returns {}, file is consulted (migration window)."""
+    def test_returns_empty_when_redis_returns_empty(self, tmp_path: Path, mock_sync_redis: MagicMock) -> None:
+        """When Redis returns {}, result is empty (no file fallback)."""
         # Redis returns empty
         mock_sync_redis.hgetall.return_value = {}
 
-        # File has data — must match the path _load_pipeline_state constructs:
-        # artifacts_root / "content" / slug / "pipeline_state.json"
+        # File has stale data — must NOT be consulted
         state_dir = tmp_path / "content" / "ramp"
         state_dir.mkdir(parents=True)
         (state_dir / "pipeline_state.json").write_text(
@@ -323,17 +322,18 @@ class TestReadFallback:
                 from api.services.content_data_service import _load_pipeline_state
                 result = _load_pipeline_state(tmp_path, "ramp")
 
-        assert result.get("brief-001") == "generating"
+        # File fallback removed — stale file ignored, empty result
+        assert result == {}
 
 
 # ── state_helpers.py integration tests ─────────────────────────────
 
 
 class TestWritePipelineStateIntegration:
-    def test_uses_redis_and_writes_file(
+    def test_uses_redis_skips_file(
         self, tmp_path: Path, mock_sync_redis: MagicMock
     ) -> None:
-        """Calls write_pipeline_state_redis AND writes file (dual-write)."""
+        """Calls write_pipeline_state_redis; file NOT written when Redis succeeds."""
         from core.content_engine.state_helpers import _write_pipeline_state
 
         _write_pipeline_state(
@@ -345,8 +345,8 @@ class TestWritePipelineStateIntegration:
 
         # Redis pipeline was used
         mock_sync_redis.pipeline.assert_called_once()
-        # File ALSO written (dual-write for fallback resilience)
-        assert (tmp_path / "pipeline_state.json").exists()
+        # File NOT written when Redis succeeds (Redis is primary store)
+        assert not (tmp_path / "pipeline_state.json").exists()
 
     def test_falls_back_to_file_when_redis_raises(
         self, tmp_path: Path, mock_sync_redis: MagicMock
@@ -400,8 +400,8 @@ class TestCleanupPipelineStateIntegration:
     def test_uses_redis_when_client_and_slug_provided(
         self, tmp_path: Path, mock_sync_redis: MagicMock
     ) -> None:
-        """Calls cleanup_pipeline_state_redis + file cleanup."""
-        # Create a file to verify file cleanup also runs
+        """Calls cleanup_pipeline_state_redis; skips file cleanup when Redis succeeds."""
+        # Create a file — should NOT be cleaned when Redis succeeds
         state_path = tmp_path / "pipeline_state.json"
         state_path.write_text(json.dumps({"brief-001": "generating"}))
 
@@ -415,8 +415,8 @@ class TestCleanupPipelineStateIntegration:
 
         # Redis HDEL was called
         mock_sync_redis.hdel.assert_called_once()
-        # File was also cleaned (dual cleanup for safety)
-        assert not state_path.exists()
+        # File NOT cleaned when Redis succeeds (Redis is primary store)
+        assert state_path.exists()
 
     def test_falls_back_to_file_when_redis_raises(
         self, tmp_path: Path, mock_sync_redis: MagicMock

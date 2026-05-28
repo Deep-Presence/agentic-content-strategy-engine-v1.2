@@ -1,5 +1,169 @@
 [
   {
+    "id": "F30",
+    "timestamp": "2026-04-11",
+    "what_broke": "After GA4 property loading was fixed, selecting a property still ended with `Property saved, but the initial sync did not complete`. The backend sync task failed before any analytics data became usable on Content Performance.",
+    "root_cause": "Three issues stacked in the GA4 write path. First, `GA4TrafficDataRepository.bulk_upsert()` and `GA4ConversionEventRepository.bulk_upsert()` used `ON CONFLICT ON CONSTRAINT ...`, but migration `0027_analytics_integration` created named unique indexes, not constraints, so Postgres raised `UndefinedObjectError` for `uq_ga4_traffic_*` / `uq_ga4_conv_*`. After fixing that, the next live repro showed that GA4 report rows still carried `date` as strings like `2026-04-06`, and asyncpg rejected those for `DATE` bind params. Finally, after a failed write, `sync_data()` rolled the session back and then referenced `conn.id`; on a real ORM instance that can be expired by rollback, which risks follow-on loader errors when handling the failure.",
+    "fix_applied": "Fixed on 2026-04-11. Changed both analytics upsert repos to use `index_elements` targeting the existing unique indexes, coerced report dates to concrete `date` objects before insert, and captured `conn_id` before rollback for all sync status transitions. Added regression tests for the upsert SQL contract, date coercion, and rollback-safe failure handling. Live repro after the fix succeeded for `webflow` with 2 traffic rows and 7 conversion rows stored, and `last_sync_status` moved to `success`.",
+    "lesson": "Do not rely on index names as `ON CONFLICT ON CONSTRAINT` targets unless the database object is actually a named constraint. For bulk inserts through asyncpg, normalize typed fields like dates before binding instead of assuming the driver will coerce strings. In failure handlers around ORM-backed async sessions, capture identifiers before rollback because rollback may expire loaded state and make even simple attribute access unsafe.",
+    "files_affected": [
+      "core/db/repositories/analytics_repo.py",
+      "core/analytics/service.py",
+      "tests/analytics/test_repository_sql.py",
+      "tests/analytics/test_service.py"
+    ]
+  },
+  {
+    "id": "F29",
+    "timestamp": "2026-04-11",
+    "what_broke": "GA4 Settings showed a connected Google Analytics card, but clicking `Load Properties` consistently returned `502 Bad Gateway`, so no GA4 property dropdown ever appeared and the first-sync flow was blocked before property selection.",
+    "root_cause": "The GA4 Admin adapter had drifted from the installed Google SDK. `core/analytics/adapters/ga4.py` parsed `PropertySummary.property_`, but the current `google.analytics.admin_v1alpha` client exposes the field as `property`. Live calls to `list_account_summaries()` therefore raised `AttributeError: Unknown field for PropertySummary: property_`, which our adapter translated into a generic `GA4APIError` and the router surfaced as a 502. The existing adapter unit test used the same wrong mock field (`property_`), so the test suite falsely validated the broken contract and hid the regression.",
+    "fix_applied": "Fixed on 2026-04-11. Updated the adapter to read `prop.property`, corrected the adapter unit test to mirror the real SDK response shape, and re-ran both the mocked adapter tests and the live token-refresh + property-list flow against the local `webflow` connection. The live repro successfully returned GA4 property `531354380` after the fix.",
+    "lesson": "Third-party SDK response shapes are part of the production contract. For wrapper adapters like GA4 Admin, mocks must match the concrete SDK object fields exactly or they become self-fulfilling false positives. When an integration endpoint returns a generic 502, reproduce the real adapter flow against stored credentials before assuming OAuth or frontend wiring is missing.",
+    "files_affected": [
+      "core/analytics/adapters/ga4.py",
+      "tests/analytics/test_adapter.py"
+    ]
+  },
+  {
+    "id": "F28",
+    "timestamp": "2026-04-10",
+    "what_broke": "During TD-entry manual QA, cards in `Agent work` sometimes stopped showing the visible stage text even though the backend and console were still emitting statuses like `outlining`, `drafting`, and `revising`. Final HITL-3 review pages could also render as a blank main pane while the backend detail endpoints were still returning 200s.",
+    "root_cause": "Two frontend contracts were too strict. `ContentCardItem` only rendered the agent-stage block when `card.agentProgress` existed, even though the board already had the authoritative stage in `card.status`, so active cards without per-task progress metadata appeared blank. Separately, `useBriefDetail()` swallowed stage-content fetch failures and left `articleContent = null`, while `FullPageView` only rendered the article pane when review/pending-content-approval status had a non-null `articleContent`; that produced an empty main pane instead of a loading or error fallback. The same QA session also hit SQLAlchemy pool exhaustion on `/content/briefs`, which amplified the latency that made this frontend weakness visible.",
+    "fix_applied": "Fixed on 2026-04-10. Active agent cards now always render the stage label from `card.status`, with `agentProgress` treated as an optional enhancement for percent/bars. `useBriefDetail()` now surfaces article-load failures, `FullPageView` renders a non-blank review fallback shell when article content is missing, and `RightSidebar` guards metrics calculations against empty arrays / zero targets. On the backend, `DbContentDataService.get_briefs()` now skips `_resolve_run_id()` unless the slug-scoped query is empty, and the default async DB pool was raised from `5/10` to `15/20` to reduce poll-path starvation during local QA.",
+    "lesson": "Content Studio board/status rendering must anchor on authoritative card status, not on optional per-task progress metadata. Review-stage detail views must never render an empty pane when article content is late or missing; they need explicit loading/error fallbacks. On the backend, hot poll paths like `/content/briefs` should avoid extra DB queries in the common case because frontend polling magnifies even one unnecessary query into pool pressure under concurrent pipeline load.",
+    "files_affected": [
+      "frontend/src/app/(dashboard)/content-studio/_components/ContentCardItem.tsx",
+      "frontend/src/app/(dashboard)/content-studio/_hooks/useBriefDetail.ts",
+      "frontend/src/app/(dashboard)/content-studio/_components/FullPageView.tsx",
+      "frontend/src/app/(dashboard)/content-studio/_components/RightSidebar.tsx",
+      "core/services/db_content_data.py",
+      "core/config/settings.py"
+    ]
+  },
+  {
+    "id": "F27",
+    "timestamp": "2026-04-10",
+    "what_broke": "After the resume-loop bug had already poisoned live TD cards, restarting the app did not make WE-114/WE-118/WE-119/WE-175 approvable again. The frontend still sent `approve_brief` to old paused task ids and got `409 No topic run found for pipeline task ...`.",
+    "root_cause": "The dispatcher bug had already rebound the durable `content_engine_topic_runs.pipeline_task_id` for those cards to newer restarted `td_content` tasks, but Redis `pipeline_state:{slug}` still contained stale brief-card keys (`WE-*`) and stale `__tid:WE-*` mappings for the old paused tasks. `/content/briefs` was therefore still surfacing the old task id for the brief card even though the durable topic run now belonged to a different task. Phase 6 startup reconciliation repaired topic-run scheduler rows, but it did not repair stale Redis brief/task mappings left behind by the earlier corrupted run.",
+    "fix_applied": "Runtime cleanup only on 2026-04-10 for the poisoned cards: deleted the affected topic-run rows/events and related `api_tasks`, reset the associated `topic_assignments` to `gap_analysis_complete`, and removed the stale `WE-*`, `__tid:WE-*`, `ta-*`, `__tid:ta-*`, and `__meta:ta-*` fields from `pipeline_state:webflow`. The underlying code-path hardening to make `/content/briefs` prefer durable topic-run task identity for TD brief cards is still pending.",
+    "lesson": "Once TD scheduling becomes durable-topic-run-led, Redis `__tid:WE-*` brief mappings are only a cache and can drift after a poisoned or partially repaired run. Approval routes and read paths must ultimately anchor on durable topic-run identity, or startup/cleanup code must repair Redis brief-card task ids from the durable source of truth before the frontend can trust them again.",
+    "files_affected": [
+      "core/services/db_content_data.py",
+      "core/content_engine/state_redis.py",
+      "api/app.py"
+    ]
+  },
+  {
+    "id": "F26",
+    "timestamp": "2026-04-10",
+    "what_broke": "Manual TD-entry QA showed WE-175/WE-119/WE-114/WE-118 looping `briefing -> pending_brief_approval -> outlining -> pending_brief_approval`, with later brief approvals failing as `409 No topic run found for pipeline task ...`.",
+    "root_cause": "Phase 5/6 durable continuations correctly stored `continuation_payload_json` on the topic run, but `claim_queued_runs_for_company()` flips `scheduler_state` from `resume_queued` to `claimed` before the dispatcher builds its launch snapshot. `dispatch_queued_td_content_runs()` was then checking `claim.scheduler_state == 'resume_queued'` to decide whether to reuse the paused task and pass `td_resume_payload`. Real claimed resume rows therefore looked like plain queued runs, so the dispatcher created a fresh `td_content` task, launched `run_td_content_production_task(... td_resume_payload=None)`, and the TD pipeline restarted at `Building brief ...` instead of resuming after HITL-2. Because the topic run's `pipeline_task_id` was replaced with the fresh task id, the frontend still holding the old paused task id started sending approvals to a task that no longer matched any waiting-human topic run, producing 409s.",
+    "fix_applied": "Fixed on 2026-04-10. `dispatch_queued_td_content_runs()` now treats any claimed topic run with a non-empty continuation payload as a resume claim, regardless of the post-claim `scheduler_state`, reuses the paused task id when present, and forwards the stored `td_resume_payload` / approval payload into `run_td_content_production_task()`. Added a regression test that uses the real claimed-snapshot shape instead of the idealized pre-claim `resume_queued` shape.",
+    "lesson": "If a queue/claim repo mutates scheduler state before returning rows to the dispatcher, resume detection cannot rely on the pre-claim state string anymore. Durable continuation dispatch should key off the preserved continuation payload or a dedicated immutable claim kind, otherwise claimed resume rows will silently degrade into fresh starts and invalidate frontend HITL task ids.",
+    "files_affected": [
+      "api/tasks/runner.py",
+      "tests/api/test_content_v13_ga_endpoints.py"
+    ]
+  },
+  {
+    "id": "F25",
+    "timestamp": "2026-04-10",
+    "what_broke": "After Phase 5, TD durable continuations were restart-durable in normal flow but not restart-self-healing. A process death between durable queueing and dispatch, or during `claimed` / `running`, could leave topic runs stranded until a later user action happened to trigger dispatch again.",
+    "root_cause": "The Phase 5 scheduler made `content_engine_topic_runs` the durable runtime record, but startup recovery still only repaired task rows. `DbTaskStore` could mark orphaned tasks `failed_restart`, yet nothing reconciled those task states back onto topic-run scheduler states on boot. There was also no startup sweep to clear stale queued task ids or auto-dispatch existing `queued` / `resume_queued` rows, so the durable continuation model still depended on incidental later traffic to wake the queue back up.",
+    "fix_applied": "Fixed on 2026-04-10 via Phase 6. Added startup reconciliation over topic runs in `queued`, `resume_queued`, `claimed`, `running`, and `waiting_human`, using recovered task rows as repair hints. The service now preserves `waiting_human`, restores failed-restart approval checkpoints back to `waiting_human`, requeues stranded continuations as `resume_queued`, requeues plain stranded runs as `content_queued`, clears stale queued task ids when the referenced task is gone, emits `topic_run_recovered` events, and FastAPI lifespan auto-dispatches companies with recovered queueable work.",
+    "lesson": "Once `content_engine_topic_runs` owns scheduling, restart recovery must also start from topic-run scheduler state rather than only from task rows. Durable continuations are not truly reliable until startup reconciliation can repair stranded scheduler states and drain recoverable queues automatically. `waiting_human` should be treated as a stable terminal-for-now scheduler state across restarts, while `claimed` / `running` require explicit reconciliation against recovered task health.",
+    "files_affected": [
+      "api/app.py",
+      "core/db/repositories/content_engine_run_repo.py",
+      "core/services/content_engine_topic_runs.py",
+      "tests/content_engine/test_topic_run_service.py",
+      "tests/api/test_lifespan_task_store.py"
+    ]
+  },
+  {
+    "id": "F24",
+    "timestamp": "2026-04-10",
+    "what_broke": "Phase 5 durable continuations left two router-level correctness holes: TD approvals could become permanently un-retryable after a downstream queue failure, and TD start-production could return 202 even when no durable work was queued. Requeued topic runs could also leak stale task ids back to the frontend.",
+    "root_cause": "The Phase 5 router still treated the durable scheduler as a sidecar. `approve_brief` / `approve_content` called `submit_approval(... delivery_mode='record_only')` before `queue_topic_run_resume()`, so Redis `approval:flag:{task_id}` and approval history were consumed before the durable `waiting_human -> resume_queued` transition existed. `start_from_topics_production` moved cards to `content_queued` and swallowed durable queue/dispatch exceptions even though there was no longer a fallback launcher outside that block. Separately, `advance_topic_runs()` only updated `pipeline_task_id` when a non-null value was provided, so requeueing a failed/completed topic could keep the old task id while exposing a fresh `content_queued` state.",
+    "fix_applied": "Fixed on 2026-04-10. Added a task-store split between nonce validation and approval-history recording so TD approval routes can validate first, then CAS the durable topic run from `waiting_human` to `resume_queued`, and only then record the approval decision. `queue_topic_run_resume()` now rejects duplicate/late submissions unless the run is genuinely `waiting_human`. `start_from_topics_production` now requires durable queue success before returning 202 and mirrors `content_queued` to GA Redis only after the queue is real. `advance_topic_runs*()` now use explicit tri-state field updates so requeue paths can clear stale `pipeline_task_id`, `claimed_at`, and `waiting_for_human_at` values.",
+    "lesson": "Once the durable topic-run scheduler becomes the real execution path, router/task-store side effects must commit after the durable scheduler transition, not before it. For TD approvals, the durable scheduler state (`waiting_human -> resume_queued`) is the true duplicate guard, not a Redis approval flag. For TD start-production, a 202 is truthful only if at least one durable topic run was actually queued. Nullable scheduler fields need explicit clear semantics; overloading `None` to mean both 'leave unchanged' and 'clear' leaks stale runtime identity back to the frontend.",
+    "files_affected": [
+      "api/routers/content_v13.py",
+      "core/services/db_task_store.py",
+      "core/services/task_store.py",
+      "core/services/content_engine_topic_runs.py",
+      "tests/api/test_content_v13.py",
+      "tests/api/test_content_v13_ga_endpoints.py",
+      "tests/content_engine/test_topic_run_service.py",
+      "tests/services/test_approval_queue_redis.py"
+    ]
+  },
+  {
+    "id": "F22",
+    "timestamp": "2026-04-10",
+    "what_broke": "TD-entry `Start Production` for WE-177 was accepted multiple times, visually bounced between `briefing` and `gap_analysis_complete`, and only started much later after other runs progressed.",
+    "root_cause": "The HTTP start-production route returns 202 immediately and the frontend optimistically moves the clicked card to `briefing`, but the real production runner does not transition the assignment until after `task_store.pipeline_semaphore(task_id)` acquires a global Redis semaphore slot. In the 2026-04-10 Webflow run, three WE-177 start attempts (`72d2cad0-5bcd-47d1-ba08-df54954517de`, `e39aa205-92d7-4f38-8e90-197aa559c462`, `8c769404-1dbf-4e6b-98f6-661c7590fb8d`) all sat behind the global `max_concurrent=3` semaphore for 300 seconds and then failed with `Failed to acquire pipeline semaphore within 300s`, reverting the assignment back to `gap_analysis_complete`. Because the API response does not confirm that the clicked `topic_assignment_id` actually acquired capacity, repeated user clicks create duplicate queued tasks and misleading local UI starts.",
+    "fix_applied": "Fixed on 2026-04-10. Added an explicit TD `content_queued` state before semaphore acquisition, reject duplicate start-production requests for the same topic/GA run while that topic is already `content_queued` or `briefing`, and changed the frontend to move cards to `content_queued` rather than optimistic `briefing` on start-production acceptance. The broader throughput lesson remains: the global semaphore is still a hard bottleneck because each topic holds a slot for the full CE lifecycle.",
+    "lesson": "Do not report a TD-entry card as actively started unless the backend has actually claimed execution capacity for that exact `topic_assignment_id`. A global pipeline semaphore with a 300-second wait window is not a user-facing queue; without explicit claim/queue responses it creates false starts, duplicate queued tasks, and poor parallel behavior long before the product reaches the 20-30 topic goal.",
+    "files_affected": [
+      "api/routers/content_v13.py",
+      "api/tasks/runner.py",
+      "core/redis_semaphore.py",
+      "core/services/db_task_store.py",
+      "frontend/src/app/(dashboard)/content-studio/page.tsx",
+      "frontend/src/app/(dashboard)/content-studio/_hooks/useContentBriefs.ts"
+    ]
+  },
+  {
+    "id": "F23",
+    "timestamp": "2026-04-10",
+    "what_broke": "A TD-entry content card appeared to 'restart' after reaching final review, even though the backend had actually moved it to `pending_content_approval` and was waiting for HITL approval.",
+    "root_cause": "The backend logs for WE-177 show one real production run (`6a9c377b-7fc8-4a86-9878-e0f969e1334c`) that reached `pending_content_approval` and then stayed there until the user approved it. There is no second backend `pipeline.started` for WE-177 after that point. The misleading UI came from frontend merge recency: `/companies/{slug}/content/briefs` was still returning an older server `updatedAt` (`2026-04-10T08:25:53.074830+00:00`) while local state had a newer `updatedAt` from the live path, so `useContentBriefs` kept local `revising` over newer server `pending_content_approval` for several polls. This is the content-card analogue of the earlier GA-card recency bug, but on post-GA CE/HITL states.",
+    "fix_applied": "Fixed on 2026-04-10 by removing client-authored `updatedAt` bumps from `useContentBriefs` optimistic updates and coarse `state_changed` applications. The hook now relies on the separate optimistic grace timer for temporary protection, so stale local CE states no longer become permanently newer than durable topic-run updates or polled server payloads.",
+    "lesson": "If Content Studio uses `updatedAt` to arbitrate between local live state and poll reconciliation, every server-visible CE state transition must also advance an authoritative server timestamp. Otherwise the UI can display phantom regressions or apparent restarts even when the backend is correctly waiting in HITL.",
+    "files_affected": [
+      "core/services/db_content_data.py",
+      "frontend/src/app/(dashboard)/content-studio/_hooks/useContentBriefs.ts"
+    ]
+  },
+  {
+    "id": "F21",
+    "timestamp": "2026-04-10",
+    "what_broke": "TD GA cards stayed visually stuck in `Agent work` (`gap_analysis`) even after the backend finished and persisted `gap_analysis_complete` for the selected batch.",
+    "root_cause": "The mixed live/poll reconciliation contract was incomplete. Company SSE/state_changed updated GA cards locally and stamped a frontend `updatedAt`, but the Redis-backed `/companies/{slug}/content/briefs` serializer omitted `created_at`/`updated_at` for GA cards. Once the final `gap_analysis_complete` live event was missed or dropped, later polls always lost the merge because the server card had a blank timestamp while the local stale `gap_analysis` card had a newer local `updatedAt`.",
+    "fix_applied": "Patched `core/content_engine/state_redis.py` so GA card metadata always stores `created_at`/`updated_at` and refreshes `updated_at` on every phase transition, even for status-only writes. Patched `core/services/db_content_data.py` to surface those timestamps on `ContentBriefListItem` for GA cards. Added regression coverage in `tests/content_engine/test_state_redis_ga.py` and `tests/services/test_db_content_data_backend.py`.",
+    "lesson": "If polling is meant to repair missed live events, the server payload must carry its own recency fields. Frontend-local timestamps are not enough: they make stale optimistic/live state impossible to overwrite safely. Any future manual/prompt-entry card path that mixes live updates with polling must expose authoritative `created_at`/`updated_at` from the backend.",
+    "files_affected": ["core/content_engine/state_redis.py", "core/services/db_content_data.py"]
+  },
+  {
+    "id": "F20",
+    "timestamp": "2026-04-09",
+    "what_broke": "Pipeline semaphore timeout after server restart — new GA pipeline blocked for 300s then failed with TimeoutError. Stale entries in Redis Sorted Set semaphore:pipelines from previous session's crashed tasks.",
+    "root_cause": "When uvicorn reloads (file change detection) or crashes, running asyncio.create_task pipelines are cancelled. Their semaphore entries (ZADD with 2h TTL) persist in Redis. On restart, DbTaskStore.recover_tasks() calls _cleanup_semaphore_entries() for orphaned tasks — but only for tasks loaded into memory from DB. If the task completed/failed before startup recovery ran, the semaphore entry remains. Also: stale slug locks (SET NX EX 7200) from previous runs persist across restarts.",
+    "fix_applied": "Manual cleanup via redis-cli during testing. Production fix needed: (1) force_clear() at startup should also scan for entries whose holder task_id is not in _tasks, (2) Consider shorter semaphore member TTL or startup ZREMRANGEBYSCORE to purge entries older than server uptime.",
+    "lesson": "Background pipeline tasks tied to asyncio.create_task do not survive server restarts. All Redis state (locks, semaphore entries, pipeline_state hashes) needs cleanup on startup recovery. The 2h TTL is too long for dev where restarts are frequent.",
+    "files_affected": ["core/redis_semaphore.py", "core/services/db_task_store.py"]
+  },
+  {
+    "id": "F19",
+    "timestamp": "2026-04-08",
+    "what_broke": "Codex review of structured-output-layer1 found 5 schema/prompt/API contract mismatches that would cause runtime failures under constrained decoding (NOT YET HIT IN PRODUCTION — caught in code review).",
+    "root_cause": "Schema models were designed from domain models and test data, not verified field-by-field against LLM prompt output examples. Five specific mismatches: (1) Source B prompt says source_personas, schema says target_personas, parser reads source_personas → empty persona_ids. (2) require_parameters sent at top-level extra_body, should be nested under provider key per OpenRouter docs. (3) Hierarchy prompts use pillar_name/subdomains, schemas use name/children. (4) target_keywords prompt expects {primary, secondary[]}, schema enforces List[str]. (5) reading_hierarchy prompt uses H1/H2/H3, schema uses h1/h2/h3, to_domain_model() normalizes but is never called.",
+    "fix_applied": "NOT YET FIXED. All 5 findings documented in decisions.json D-STRUCTURED-OUTPUT-LAYER1 codex_findings CF-1 through CF-5.",
+    "lesson": "When creating schema models for constrained decoding, verify each schema field-by-field against: (1) the LLM prompt output example, (2) the downstream parser code that reads the output, (3) the API/frontend consumers. Schema models must be the single source of truth for LLM output shape — a mismatch between schema and prompt/parser causes silent data loss or crashes. Also: OpenRouter's provider routing parameters live under a nested 'provider' key, not at the extra_body root.",
+    "files_affected": ["core/topic_discovery/structured_schemas.py", "core/content_engine/structured_schemas.py", "core/content_engine/llm_client.py", "core/topic_discovery/agents.py"]
+  },
+  {
+    "id": "F15",
+    "timestamp": "2026-04-07",
+    "what_broke": "Brief builder failed 3/3 JSON parse retries — 'Expecting comma delimiter: line 107'. Zero blueprints produced, assignment reverted to gap_analysis_complete. Compounded by uvicorn --reload hot restart mid-pipeline (file save triggered WatchFiles) which invalidated JWT → user logged out.",
+    "root_cause": "Claude Sonnet via OpenRouter returned malformed JSON (missing comma between fields) in ContentBlueprint output. Hand-rolled _repair_json() regex couldn't fix the pattern. Separately, code changes saved while pipeline was running triggered uvicorn --reload.",
+    "fix_applied": "Replaced _repair_json() (32 lines of regex) with json_repair library (json_repair.loads()) in safe_parse() and all 3 evaluator judges. json_repair handles missing commas, unclosed brackets, trailing commas, truncated output out of the box.",
+    "lesson": "Never hand-roll JSON repair for LLM output — use a battle-tested library. Also: don't save code changes while pipelines are running in dev mode (--reload kills in-flight requests). PB-96 added for migrating remaining pipelines.",
+    "files_affected": ["core/content_engine/utils.py", "core/content_engine/evaluator/eeat_judge.py", "core/content_engine/evaluator/factual_judge.py", "core/content_engine/evaluator/style_judge.py", "pyproject.toml"]
+  },
+  {
     "id": "F1",
     "timestamp": "2026-02-15",
     "what_broke": "Carta company_embeddings.json was empty — BFS crawl returned nothing",
@@ -90,6 +254,51 @@
     "files_affected": ["tests/api/test_site_audit.py"]
   },
   {
+    "id": "F14",
+    "timestamp": "2026-04-05",
+    "what_broke": "Subdomain stuck in 'expanding' status after server hot-reload killed expansion task mid-flight. Subsequent expansion attempts got 'already claimed, skipping'.",
+    "root_cause": "db_claim_subdomain_for_expansion initially only allowed 'not_expanded' and 'failed' statuses. A node claimed as 'expanding' before the server restart stayed stuck because the stale threshold was 2 hours — too long for a ~4 minute task. Also, 'expanded' status was not claimable, blocking intentional re-expansion.",
+    "fix_applied": "1. Added 'expanded' to eligible statuses (allow_re_expand=True default). 2. Reduced stale threshold from 2 hours to 20 minutes. 3. Pipeline preflight calls db_reset_stale_expanding() to recover from crashes.",
+    "lesson": "Stale lock thresholds must be proportional to expected task duration (20min for a 4min task, not 2 hours). Always allow re-expansion of already-expanded nodes when user explicitly selects them.",
+    "files_affected": ["core/db/repositories/topic_discovery_repo.py", "core/topic_discovery/pipeline.py"]
+  },
+  {
+    "id": "F15",
+    "timestamp": "2026-04-05",
+    "what_broke": "Topic expansion produced scores=0 for all assignments. Frontend showed 0 in the Score column.",
+    "root_cause": "scoring_json column on topic_discoveries was NULL (never backfilled after migration 0029 added it). Pipeline B reads scores from db_read_scoring() → scoring_json. When NULL, score_lookup is empty and compute_topic_priority() never runs.",
+    "fix_applied": "Backfilled scoring_json from existing per-node priority_score/priority_factors columns. Also fixed db_write_matrix() and db_read_latest_matrix() to preserve persona_affinity_json through HITL-2 re-write cycle.",
+    "lesson": "When adding a new JSONB column to store data that previously lived in per-row columns, always backfill existing data in the migration or a post-migration script. The pipeline reads from the JSONB, not the per-row columns.",
+    "files_affected": ["core/topic_discovery/db_ops.py"]
+  },
+  {
+    "id": "F16",
+    "timestamp": "2026-04-06",
+    "what_broke": "Content card vanished from Content Studio after clicking 'Start Production'. Card completely disappeared — not in any Kanban column.",
+    "root_cause": "Three compounding issues: (1) pipeline_v13.py loads topic assignments from TopicDiscoveryStorage.get_latest_matrix() (filesystem), NOT the database. If the matrix version changed (re-expansion), old assignment IDs aren't found. (2) td_content_orchestrator cleaned up Redis GA-phase card BEFORE confirming content engine success — when CE failed (zero blueprints), the Redis card was already gone. (3) Orchestrator unconditionally marked DB status as content_produced even with zero pieces, and content_produced is not a recognized BriefPipelineStatus in the frontend.",
+    "fix_applied": "Partial fix: orchestrator now checks len(output.pieces) > 0 before Redis cleanup and status update. Zero pieces → revert to gap_analysis_complete. Root cause (filesystem matrix read in pipeline_v13.py) NOT YET FIXED — documented in .claude/sprints/pending/td-filesystem-db-disconnect-audit.md with 6 gaps identified.",
+    "lesson": "When the TD expansion was migrated to DB (b36b53a), only the write path was migrated. Multiple read paths in pipeline_v13.py and content_v13.py still use TopicDiscoveryStorage (filesystem). Always audit ALL read+write paths when migrating storage layer. Also: never clean up state (Redis cards) before confirming the operation that replaces that state has succeeded.",
+    "files_affected": ["core/orchestration/td_content_orchestrator.py", "core/content_engine/pipeline_v13.py", "api/routers/content_v13.py"]
+  },
+  {
+    "id": "F17",
+    "timestamp": "2026-04-07",
+    "what_broke": "_company_slug NameError crashes pipeline at runtime — all _emit_company() calls in _run_pipeline_stages() and _finalize_pipeline() fail with NameError because _company_slug is defined in run_content_generation_v13() (line 720) but these are separate functions, not closures.",
+    "root_cause": "Phase 3 (Company SSE) added _emit_company(_company_slug, ...) calls to _run_pipeline_stages (12 sites) and _finalize_pipeline (1 site). The variable _company_slug = slug.split('__')[0] was defined in the caller function run_content_generation_v13() but never passed as a parameter to _run_pipeline_stages or _finalize_pipeline. Python scoping rules mean separate function defs cannot access each other's locals.",
+    "fix_applied": "FIXED (2026-04-07). Added _company_slug = slug.split('__')[0] at top of _run_pipeline_stages() (line 798) and _finalize_pipeline() (line 599). Also centralized _emit_company inside _write_pipeline_state_async (2026-04-08, kanban-sync-lag-fix sprint) so all 20+ callers get automatic SSE emission without needing _company_slug at all.",
+    "lesson": "When adding a derived variable to an existing function call chain, verify each function that uses it is either (a) a closure of the defining scope, or (b) receives it as a parameter. Separate def functions cannot access each other's locals even if one calls the other.",
+    "files_affected": ["core/content_engine/pipeline_v13.py"]
+  },
+  {
+    "id": "F18",
+    "timestamp": "2026-04-07",
+    "what_broke": "Redis GA-phase state not reverted on CE failure — cards stuck in 'briefing' (Agent column) after pipeline error or zero-pieces output. DB reverts to gap_analysis_complete but Redis Hash still has the 'briefing' status.",
+    "root_cause": "Two failure paths in the TD→CE flow revert DB assignment statuses but don't revert Redis GA-phase state: (1) td_content_orchestrator.py:572-581 (zero pieces) reverts DB but not Redis, (2) runner.py:1881-1891 (unhandled exception) reverts DB but not Redis. The Redis state was set at orchestrator line 519 (_update_ga_phase_status → 'briefing') but neither failure path calls _update_ga_phase_status back to 'gap_analysis_complete'.",
+    "fix_applied": "NOT YET FIXED. Need to add _update_ga_phase_status(effective_slug, topic_assignment_ids, 'gap_analysis_complete', task_id=task_id) in both failure paths.",
+    "lesson": "When introducing a new state transition (GA cards → 'briefing'), every failure path that reverts the DB status must also revert the Redis status. Audit all except/else branches that touch the same state variable.",
+    "files_affected": ["core/orchestration/td_content_orchestrator.py", "api/tasks/runner.py"]
+  },
+  {
     "id": "F13",
     "timestamp": "2026-03-22",
     "what_broke": "test_revise_loops_back_to_agent (PB-39) — intermittent ~15% failure rate after langgraph-checkpoint-redis install",
@@ -97,5 +306,37 @@
     "fix_applied": "Converted test graph (test_hitl_interrupt_resume.py) and v1.0 production graph (core/content_engine/graph.py) from StateGraph(dict) to StateGraph(TypedDict). All production v1.3+ graphs already used TypedDict and were never affected.",
     "lesson": "Never use StateGraph(dict) with interrupt()/Command(resume=...) and a checkpointer. Always use StateGraph(TypedDict) so that __interrupt__ is correctly filtered as a special channel, not stored as state. This is a langgraph-checkpoint v4.0.0 behavioral change.",
     "files_affected": ["tests/api/test_hitl_interrupt_resume.py", "core/content_engine/graph.py"]
+  },
+  {
+    "id": "F31",
+    "timestamp": "2026-04-11",
+    "what_broke": "Content Performance showed 'Google Analytics not connected' even after GA4 property selection and successful sync.",
+    "root_cause": "api/routers/content_performance.py looked up GA4 readiness and cache entries with request.state.tenant_id, but AuthMiddleware only sets request.state.company_slug and never populates tenant_id. Analytics/CMS routes use tenant_id=company_slug, so Content Performance missed the live GA4 connection and fell back to a partial 'not_connected' response with zero GA4 counts.",
+    "fix_applied": "Added tenant resolution fallback in api/routers/content_performance.py so readiness/cache/detail routes use company_slug when tenant_id is absent. Added a regression test asserting the readiness route passes the authenticated company slug as tenant_id.",
+    "lesson": "Do not assume request.state.tenant_id exists on authenticated routes. In this codebase the auth middleware guarantees company_slug, so tenant-scoped lookups must either use company_slug directly or centralize a fallback helper.",
+    "files_affected": ["api/routers/content_performance.py", "tests/api/test_content_performance.py"]
+  },
+  {
+    "id": "F32",
+    "timestamp": "2026-04-11",
+    "what_broke": "Content Performance GA4 integration produced a structurally correct sync but zero article metrics because the traffic contract was based on `landingPage`.",
+    "root_cause": "The GA4 adapter requested the `landingPage` dimension and the service joined inventory against those values. That measures only session entry pages, not general page performance, so a content dashboard could show homepage `/` while article URLs remained unmatched even if the product intent was per-page traffic.",
+    "fix_applied": "Changed the GA4 traffic sync to request `pagePath` instead of `landingPage`, kept the existing storage field name for backward-compatible persistence, and updated readiness/service copy to refer to GA4 page paths.",
+    "lesson": "For per-page content analytics, do not use GA4 `landingPage` as the primary join key. Use `pagePath`/page-level dimensions for traffic and reserve landing-page data for session-entry metrics.",
+    "files_affected": ["core/analytics/adapters/ga4.py", "core/services/content_performance_service.py", "tests/analytics/test_adapter.py", "tests/services/test_content_performance_service.py"]
+  },
+  {
+    "id": "F33",
+    "timestamp": "2026-04-11",
+    "what_broke": "The Content Performance per-page drawer returned 500 for every detail request even though the service intended the cited-exemplar freshness lookup to be optional.",
+    "root_cause": "The local database was still on Alembic revision `0039`, so `url_enrichment_cache` did not yet have the additive `published_at` / `modified_at` columns introduced by migration `0040_url_enrichment_freshness_dates`. `GapAnalysisRepository.get_cited_exemplar_dates_for_inventory_url()` therefore raised `UndefinedColumnError` on `url_enrichment_cache.modified_at`. `ContentPerformanceService.get_content_detail()` caught that first SQLAlchemy error and logged a warning, but it reused the same request-scoped async SQLAlchemy session without rolling it back, so the subsequent citation-timeline query failed with `InFailedSQLTransactionError` and surfaced as a 500.",
+    "fix_applied": "Fixed on 2026-04-11. `ContentPerformanceService.get_content_detail()` now rolls back the repo-owned session after a handled cited-exemplar query failure before running follow-up drawer queries, so the endpoint degrades to heuristic freshness instead of crashing. Added a regression test asserting the rollback and confirming citation timeline/query coverage still return after the freshness lookup fails. The local schema is also confirmed to be on revision `0039`, so applying migration `0040` is still required to restore exemplar-date freshness benchmarking itself.",
+    "lesson": "If a request-scoped SQLAlchemy session hits a DB error, catching/logging the exception is not enough when more queries will run on that same session. Roll back immediately or every follow-up query will inherit an aborted transaction. Also, additive ORM fields backed by new migrations should be treated as optional in read paths until the environment is verified at the expected Alembic revision.",
+    "files_affected": [
+      "core/services/content_performance_service.py",
+      "tests/services/test_content_performance_service.py",
+      "core/db/repositories/gap_analysis_repo.py",
+      "core/db/migrations/versions/0040_url_enrichment_freshness_dates.py"
+    ]
   }
 ]

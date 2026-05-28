@@ -210,6 +210,12 @@ async def persist_daily_run_result(
         analyses = mention_analyses or []
         persisted_count = 0
 
+        # Fanout parent map: fanout_prompt_id → parent_prompt_id (str).
+        # Populated by orchestrator when fanout queries are included.
+        fanout_parent_map: dict[str, str] = getattr(
+            result, "_fanout_parent_map", {}
+        )
+
         if responses:
             try:
                 async with session_factory() as session:
@@ -228,6 +234,17 @@ async def persist_daily_run_result(
 
                         analysis = analyses[i] if i < len(analyses) else None
 
+                        # Denormalized parent_prompt_id for analytics.
+                        # Set when this response is from a fanout query.
+                        parent_pid_str = fanout_parent_map.get(
+                            response.prompt_id
+                        )
+                        parent_prompt_uuid = (
+                            _uuid.UUID(parent_pid_str)
+                            if parent_pid_str
+                            else None
+                        )
+
                         resp_row = DailyRunResponseModel(
                             id=_uuid.uuid4(),
                             run_id=run_uuid,
@@ -241,6 +258,7 @@ async def persist_daily_run_result(
                             competitor_mentions=analysis.competitor_mentions if analysis else {},
                             citations=analysis.citations if analysis else [],
                             citation_rank=analysis.citation_rank if analysis else None,
+                            parent_prompt_id=parent_prompt_uuid,
                         )
                         session.add(resp_row)
                         persisted_count += 1

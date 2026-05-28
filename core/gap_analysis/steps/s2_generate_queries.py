@@ -20,7 +20,6 @@ from core.gap_analysis.topic_cluster_map import (
     CLUSTER_INTENT_PATTERNS,
     get_cluster_brand_policy,
     get_cluster_mapping,
-    is_excluded_combo,
 )
 from core.shared_tools.async_embedding_client import async_embed_texts
 from core.shared_tools.tracing import log_generation
@@ -161,7 +160,8 @@ def _repair_truncated_json(raw: str) -> str:
     return raw
 
 
-async def _call_openai(prompt: str, model: str) -> str:
+async def _call_openai(prompt: str, model: str) -> tuple[str, tuple[int, int]]:
+    """Call OpenAI responses API and return ``(text, (prompt_tokens, completion_tokens))``."""
     api_key = settings.openai_api_key
     if not api_key:
         raise RuntimeError(
@@ -174,7 +174,11 @@ async def _call_openai(prompt: str, model: str) -> str:
         reasoning={"effort": "medium"},
         max_output_tokens=16384,
     )
-    return getattr(response, "output_text", None) or ""
+    from core.shared_tools.cost_tracker import extract_usage_openai_responses
+
+    text = getattr(response, "output_text", None) or ""
+    usage = extract_usage_openai_responses(response)
+    return text, usage
 
 
 # ---------------------------------------------------------------------------
@@ -509,11 +513,21 @@ Context:
 
     try:
         t0 = time.monotonic()
-        response_text = await _call_openai(fill_prompt, model)
+        response_text, _usage_tup = await _call_openai(fill_prompt, model)
         elapsed = time.monotonic() - t0
         logger.info("S2 fill-in LLM call: model=%s, elapsed=%.1fs", model, elapsed)
+        from core.shared_tools.cost_tracker import track_llm_cost
+
+        track_llm_cost(
+            model=model, provider="openai", pipeline="gap_analysis",
+            pipeline_step="s2_query_gen_fillin", prompt_tokens=_usage_tup[0],
+            completion_tokens=_usage_tup[1],
+            company_slug=getattr(input_data, "company_slug", "") or "",
+            call_site="core.gap_analysis.steps.s2_generate_queries",
+        )
         if trace_span:
-            log_generation(trace_span, "s2-fill-in-generation", model, fill_prompt[:500], response_text[:500], usage=None,
+            log_generation(trace_span, "s2-fill-in-generation", model, fill_prompt[:500], response_text[:500],
+                           usage={"prompt_tokens": _usage_tup[0], "completion_tokens": _usage_tup[1]},
                            metadata={"pipeline": "gap_analysis", "pipeline_step": "s2_query_gen_fillin", "provider": "openai", "model": model,
                                      "company_slug": getattr(input_data, "company_slug", "") or ""})
         payload = _extract_json(response_text)
@@ -577,11 +591,21 @@ async def generate_queries(
     )
 
     t0 = time.monotonic()
-    response_text = await _call_openai(prompt, model_name)
+    response_text, _usage_tup = await _call_openai(prompt, model_name)
     elapsed = time.monotonic() - t0
     logger.info("S2 seed LLM call: model=%s, elapsed=%.1fs", model_name, elapsed)
+    from core.shared_tools.cost_tracker import track_llm_cost
+
+    track_llm_cost(
+        model=model_name, provider="openai", pipeline="gap_analysis",
+        pipeline_step="s2_query_gen_seed", prompt_tokens=_usage_tup[0],
+        completion_tokens=_usage_tup[1],
+        company_slug=getattr(input_data, "company_slug", "") or "",
+        call_site="core.gap_analysis.steps.s2_generate_queries",
+    )
     if trace_span:
-        log_generation(trace_span, "s2-seed-generation", model_name, prompt[:500], response_text[:500], usage=None,
+        log_generation(trace_span, "s2-seed-generation", model_name, prompt[:500], response_text[:500],
+                       usage={"prompt_tokens": _usage_tup[0], "completion_tokens": _usage_tup[1]},
                        metadata={"pipeline": "gap_analysis", "pipeline_step": "s2_query_gen_seed", "provider": "openai", "model": model_name,
                                  "company_slug": getattr(input_data, "company_slug", "") or ""})
     payload = _extract_json(response_text)
@@ -885,13 +909,6 @@ async def generate_queries_from_topics(
         stage = topic.buyer_stage.value
         intent = topic.intent_type.value
 
-        if is_excluded_combo(stage, intent):
-            logger.info(
-                "Skipping excluded combo %s × %s for topic '%s'",
-                stage, intent, topic.topic_text[:50],
-            )
-            continue
-
         mapping = get_cluster_mapping(stage, intent)
         if mapping is None:
             continue
@@ -910,14 +927,23 @@ async def generate_queries_from_topics(
 
         try:
             t0 = time.monotonic()
-            response_text = await _call_openai(prompt, model_name)
+            response_text, _usage_tup = await _call_openai(prompt, model_name)
             elapsed = time.monotonic() - t0
             logger.info(
                 "S2 topic-scoped LLM call: model=%s, topic='%s', elapsed=%.1fs",
                 model_name, topic.topic_text[:50], elapsed,
             )
+            from core.shared_tools.cost_tracker import track_llm_cost
+
+            track_llm_cost(
+                model=model_name, provider="openai", pipeline="gap_analysis",
+                pipeline_step="s2_query_gen_topic", prompt_tokens=_usage_tup[0],
+                completion_tokens=_usage_tup[1], company_slug=company_slug,
+                call_site="core.gap_analysis.steps.s2_generate_queries",
+            )
             if trace_span:
-                log_generation(trace_span, "s2-topic-scoped-generation", model_name, prompt[:500], response_text[:500], usage=None,
+                log_generation(trace_span, "s2-topic-scoped-generation", model_name, prompt[:500], response_text[:500],
+                               usage={"prompt_tokens": _usage_tup[0], "completion_tokens": _usage_tup[1]},
                                metadata={"pipeline": "gap_analysis", "pipeline_step": "s2_query_gen_topic", "provider": "openai", "model": model_name,
                                          "company_slug": company_slug})
             payload = _extract_json(response_text)
