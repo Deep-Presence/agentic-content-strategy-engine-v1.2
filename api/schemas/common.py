@@ -116,6 +116,7 @@ class KnowledgeBaseStartRequest(BaseModel):
 
     company_name: str
     domain: str
+    workspace_slug: str = ""
     product_slug: Optional[str] = None
 
     @field_validator("product_slug")

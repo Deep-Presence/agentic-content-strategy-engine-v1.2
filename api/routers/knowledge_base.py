@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from api.auth.dependencies import require_auth, require_role
-from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_kb_data_service, get_task_store
+from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_kb_data_service, get_task_store, get_workspace_service
 from api.schemas.common import (
     ApprovalRequest,
     ApprovalResponse,
@@ -23,7 +23,12 @@ from api.schemas.common import (
 )
 from api.tasks.event_bus import EventBusProtocol
 from api.tasks.models import PipelineTask, TaskStatus
-from api.routers._helpers import create_task_durable
+from api.routers._helpers import (
+    assert_slug_workspace_access,
+    assert_task_workspace_access,
+    create_task_durable,
+    resolve_workspace_scope,
+)
 from api.tasks.runner import run_kb_pipeline_task
 from core.auth.service import AuthServiceProtocol
 from core.auth.utils.domain import derive_slug
@@ -32,6 +37,7 @@ from core.models.organization import UserProfile
 from core.research.knowledge_base.storage import KBStorage
 from core.audit import log_hitl_decision, log_pipeline_launch
 from core.services.task_store import ApprovalWindowError, TaskStoreProtocol
+from core.services.workspace_protocol import WorkspaceServiceProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -85,16 +91,19 @@ async def start_knowledge_base(
     event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> PipelineRunResponse:
-    # Tenant isolation
-    user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
-    slug = _derive_slug(body.company_name)
-    if not user_company_slug or slug != user_company_slug:
-        raise HTTPException(
-            status_code=403,
-            detail="Cannot start pipeline for another company",
-        )
-    effective_slug = f"{slug}__{body.product_slug}" if body.product_slug else slug
+    scope = await resolve_workspace_scope(
+        http_request,
+        _user,
+        workspace_service,
+        workspace_slug=body.workspace_slug,
+        company_name=body.company_name,
+        product_slug=body.product_slug,
+        min_roles=("owner", "admin", "member"),
+    )
+    slug = scope.workspace_slug
+    effective_slug = scope.effective_slug
 
     # Guard: skip if already completed and not force_rerun
     _sb = getattr(http_request.app.state, "storage_backend", None)
@@ -117,6 +126,7 @@ async def start_knowledge_base(
             run_id=last_task.task_id if last_task else f"existing-{effective_slug}",
             pipeline="knowledge_base",
             company_slug=slug,
+            workspace_id=scope.workspace_id,
             product_slug=body.product_slug,
             effective_slug=effective_slug,
             status="already_exists",
@@ -128,7 +138,13 @@ async def start_knowledge_base(
             ),
         )
 
-    task = await create_task_durable(task_store, "knowledge_base", slug, product_slug=body.product_slug)
+    task = await create_task_durable(
+        task_store,
+        "knowledge_base",
+        slug,
+        product_slug=body.product_slug,
+        workspace_id=scope.workspace_id,
+    )
 
     handle = asyncio.create_task(
         run_kb_pipeline_task(
@@ -158,6 +174,7 @@ async def start_knowledge_base(
         run_id=task.task_id,
         pipeline="knowledge_base",
         company_slug=task.company_slug,
+        workspace_id=scope.workspace_id,
         product_slug=task.product_slug,
         effective_slug=task.effective_slug,
         status=task.status.value,
@@ -172,11 +189,10 @@ async def get_knowledge_base_health(
     threshold_override: Optional[int] = Query(None, ge=1, le=365),
     _user: UserProfile = Depends(require_auth),
     kb_svc=Depends(get_kb_data_service),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> KBHealthResponse:
     """Get health report for a knowledge base — staleness, missing docs, score."""
-    user_company_slug: Optional[str] = getattr(request.state, "company_slug", None)
-    if not user_company_slug or slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_slug_workspace_access(slug, _user, workspace_service)
 
     report_dict = await kb_svc.get_health(slug, threshold_override=threshold_override)
     return KBHealthResponse.model_validate(report_dict)
@@ -197,11 +213,16 @@ async def refresh_stale_knowledge_base(
     event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> PipelineRunResponse:
     """Refresh only stale/missing KB docs. Returns 200 if everything is fresh."""
-    user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
-    if not user_company_slug or slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
+    _workspace, _membership = await assert_slug_workspace_access(
+        slug,
+        _user,
+        workspace_service,
+        min_roles=("owner", "admin", "member"),
+    )
+    workspace_id = str(_workspace.id)
 
     effective_slug = f"{slug}__{body.product_slug}" if body.product_slug else slug
     _sb = getattr(http_request.app.state, "storage_backend", None)
@@ -217,6 +238,7 @@ async def refresh_stale_knowledge_base(
             run_id=f"fresh-{effective_slug}",
             pipeline="knowledge_base",
             company_slug=slug,
+            workspace_id=workspace_id,
             product_slug=body.product_slug,
             effective_slug=effective_slug,
             status="already_exists",
@@ -228,7 +250,13 @@ async def refresh_stale_knowledge_base(
     # Topological sort stale docs using DAG
     sorted_stale = _topological_sort_stale(stale_types)
 
-    task = await create_task_durable(task_store, "knowledge_base", slug, product_slug=body.product_slug)
+    task = await create_task_durable(
+        task_store,
+        "knowledge_base",
+        slug,
+        product_slug=body.product_slug,
+        workspace_id=workspace_id,
+    )
 
     # Build a KnowledgeBaseStartRequest-compatible body for the runner
     from api.schemas.common import KnowledgeBaseStartRequest as KBStartReq
@@ -258,6 +286,7 @@ async def refresh_stale_knowledge_base(
         run_id=task.task_id,
         pipeline="knowledge_base",
         company_slug=task.company_slug,
+        workspace_id=workspace_id,
         product_slug=task.product_slug,
         effective_slug=task.effective_slug,
         status=task.status.value,
@@ -295,11 +324,10 @@ async def get_knowledge_base_status(
     request: Request,
     _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> TaskResponse:
     task = task_store.get_task(run_id)
-    user_company_slug = getattr(request.state, "company_slug", None)
-    if task.company_slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_task_workspace_access(task, _user, workspace_service)
     return TaskResponse(
         run_id=task.task_id,
         pipeline=task.pipeline,
@@ -322,11 +350,16 @@ async def approve_knowledge_base(
     http_request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     task_store: TaskStoreProtocol = Depends(get_task_store),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> ApprovalResponse:
     task = task_store.get_task(run_id)
-    user_company_slug = getattr(http_request.state, "company_slug", None)
-    if task.company_slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_task_workspace_access(
+        task,
+        _user,
+        workspace_service,
+        min_roles=("owner", "admin", "member"),
+    )
+    task_company_slug = task.company_slug
     if task.status != TaskStatus.PENDING_APPROVAL:
         raise HTTPException(
             status_code=409,
@@ -361,7 +394,7 @@ async def approve_knowledge_base(
             pipeline="knowledge_base",
             stage=stage,
             decision="rejected",
-            company_slug=user_company_slug,
+            company_slug=task_company_slug,
             detail={"reason": str(exc)},
         )
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -372,7 +405,7 @@ async def approve_knowledge_base(
         pipeline="knowledge_base",
         stage=stage,
         decision=body.decision,
-        company_slug=user_company_slug,
+        company_slug=task_company_slug,
         detail={"revision_note_provided": bool(body.revision_note)},
     )
 

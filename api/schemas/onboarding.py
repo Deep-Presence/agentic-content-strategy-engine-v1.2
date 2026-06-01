@@ -13,6 +13,11 @@ class OnboardingStartRequest(BaseModel):
     The user provides industry, seed_personas, and pipeline-level config.
     """
 
+    workspace_slug: str = Field(
+        default="",
+        description="Target workspace slug; falls back to auth context when omitted",
+    )
+
     # Onboarding-specific
     industry: Optional[str] = Field(
         default=None,

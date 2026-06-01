@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from api.auth.dependencies import require_auth, require_role
-from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_task_store, get_vsg_data_service
+from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_task_store, get_vsg_data_service, get_workspace_service
 from api.schemas.common import PipelineRunResponse, TaskResponse
 from api.schemas.voice_style_guide import (
     ApprovalResponseVSG,
@@ -20,7 +20,12 @@ from api.schemas.voice_style_guide import (
 )
 from api.tasks.event_bus import EventBusProtocol
 from api.tasks.models import PipelineTask, TaskStatus
-from api.routers._helpers import create_task_durable
+from api.routers._helpers import (
+    assert_slug_workspace_access,
+    assert_task_workspace_access,
+    create_task_durable,
+    resolve_workspace_scope,
+)
 from api.tasks.runner import run_voice_style_guide_pipeline_task
 from core.auth.service import AuthServiceProtocol
 from core.auth.utils.domain import derive_slug
@@ -28,6 +33,7 @@ from core.models.organization import UserProfile
 from core.research.voice_style_guide.storage import VoiceStyleGuideStorage
 from core.audit import log_hitl_decision, log_pipeline_launch
 from core.services.task_store import ApprovalWindowError, TaskStoreProtocol
+from core.services.workspace_protocol import WorkspaceServiceProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -100,16 +106,19 @@ async def start_voice_style_guide(
     event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> PipelineRunResponse:
-    # Tenant isolation
-    user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
-    slug = _derive_slug_local(body.company_name)
-    if not user_company_slug or slug != user_company_slug:
-        raise HTTPException(
-            status_code=403,
-            detail="Cannot start pipeline for another company",
-        )
-    effective_slug = f"{slug}__{body.product_slug}" if body.product_slug else slug
+    scope = await resolve_workspace_scope(
+        http_request,
+        _user,
+        workspace_service,
+        workspace_slug=body.workspace_slug,
+        company_name=body.company_name,
+        product_slug=body.product_slug,
+        min_roles=("owner", "admin", "member"),
+    )
+    slug = scope.workspace_slug
+    effective_slug = scope.effective_slug
 
     _sb = getattr(http_request.app.state, "storage_backend", None)
 
@@ -133,6 +142,7 @@ async def start_voice_style_guide(
                 run_id=f"existing-{effective_slug}",
                 pipeline="voice_style_guide",
                 company_slug=slug,
+                workspace_id=scope.workspace_id,
                 product_slug=body.product_slug,
                 effective_slug=effective_slug,
                 status="already_exists",
@@ -141,7 +151,13 @@ async def start_voice_style_guide(
                 message=message or "",
             )
 
-    task = await create_task_durable(task_store, "voice_style_guide", slug, product_slug=body.product_slug)
+    task = await create_task_durable(
+        task_store,
+        "voice_style_guide",
+        slug,
+        product_slug=body.product_slug,
+        workspace_id=scope.workspace_id,
+    )
 
     handle = asyncio.create_task(
         run_voice_style_guide_pipeline_task(
@@ -171,6 +187,7 @@ async def start_voice_style_guide(
         run_id=task.task_id,
         pipeline="voice_style_guide",
         company_slug=slug,
+        workspace_id=scope.workspace_id,
         product_slug=body.product_slug,
         effective_slug=effective_slug,
         status="started",
@@ -184,12 +201,15 @@ async def start_voice_style_guide(
 @router.get("/{run_id}/status")
 async def get_voice_style_guide_status(
     run_id: str,
+    request: Request,
     _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> TaskResponse:
     task = task_store.get_task(run_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    await assert_task_workspace_access(task, _user, workspace_service)
     return TaskResponse(
         run_id=task.task_id,
         pipeline=task.pipeline,
@@ -214,12 +234,20 @@ async def get_voice_style_guide_status(
 async def approve_authors(
     run_id: str,
     body: AuthorApprovalRequest,
+    request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     task_store: TaskStoreProtocol = Depends(get_task_store),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> ApprovalResponseVSG:
     task = task_store.get_task(run_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    await assert_task_workspace_access(
+        task,
+        _user,
+        workspace_service,
+        min_roles=("owner", "admin", "member"),
+    )
 
     _validate_approval_window(task, "vsg_author_review")
 
@@ -273,9 +301,12 @@ async def approve_authors(
 @router.get("/{slug}/guide")
 async def get_latest_guide(
     slug: str,
+    request: Request,
     _user: UserProfile = Depends(require_auth),
     vsg_svc=Depends(get_vsg_data_service),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> Dict[str, Any]:
+    await assert_slug_workspace_access(slug, _user, workspace_service)
     result = await vsg_svc.get_guide(slug)
     if result is None:
         raise HTTPException(status_code=404, detail="No voice style guide found")

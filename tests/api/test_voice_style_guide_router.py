@@ -279,7 +279,7 @@ class TestGetLatestGuide:
 
     def test_guide_not_found(self, client):
         resp = client.get(f"{PREFIX}/nonexistent-slug/guide")
-        assert resp.status_code == 404
+        assert resp.status_code == 403
 
 
 # ═══════════════════════════════════════════════════════════════════════

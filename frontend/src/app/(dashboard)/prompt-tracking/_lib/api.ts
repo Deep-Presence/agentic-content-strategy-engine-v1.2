@@ -4,6 +4,7 @@
  */
 
 import { api } from '@/lib/api-client';
+import { getActiveWorkspaceSlug } from '@/stores/workspace';
 import type {
   EnrichedPromptListResponseAPI,
   PromptAnalyticsResponseAPI,
@@ -29,7 +30,10 @@ export function fetchEnrichedPrompts(
 ): Promise<EnrichedPromptListResponseAPI> {
   return api.get<EnrichedPromptListResponseAPI>(
     '/api/v1/daily-tracker/prompts/enriched',
-    params as Record<string, string | number | boolean | undefined>,
+    {
+      ...params,
+      workspace_slug: getActiveWorkspaceSlug(),
+    } as Record<string, string | number | boolean | undefined>,
     signal,
   );
 }
@@ -49,7 +53,10 @@ export function fetchPromptAnalytics(
 ): Promise<PromptAnalyticsResponseAPI> {
   return api.get<PromptAnalyticsResponseAPI>(
     `/api/v1/daily-tracker/prompts/${promptId}/analytics`,
-    params as Record<string, string | number | boolean | undefined>,
+    {
+      ...params,
+      workspace_slug: getActiveWorkspaceSlug(),
+    } as Record<string, string | number | boolean | undefined>,
     signal,
   );
 }
@@ -62,7 +69,7 @@ export function fetchPromptFanouts(
 ): Promise<FanoutListResponseAPI> {
   return api.get<FanoutListResponseAPI>(
     `/api/v1/daily-tracker/prompts/${promptId}/fanouts`,
-    undefined,
+    { workspace_slug: getActiveWorkspaceSlug() },
     signal,
   );
 }
@@ -85,7 +92,10 @@ export function fetchPromptAnswers(
 ): Promise<AnswerHistoryResponseAPI> {
   return api.get<AnswerHistoryResponseAPI>(
     `/api/v1/daily-tracker/prompts/${promptId}/answers`,
-    params as Record<string, string | number | boolean | undefined>,
+    {
+      ...params,
+      workspace_slug: getActiveWorkspaceSlug(),
+    } as Record<string, string | number | boolean | undefined>,
     signal,
   );
 }
@@ -119,7 +129,10 @@ export function createPrompt(
 ): Promise<CreatePromptResponseAPI> {
   return api.post<CreatePromptResponseAPI>(
     '/api/v1/daily-tracker/prompts',
-    payload,
+    {
+      ...payload,
+      workspace_slug: getActiveWorkspaceSlug(),
+    },
   );
 }
 
@@ -146,7 +159,10 @@ export function triggerDailyRun(
 ): Promise<TriggerRunResponseAPI> {
   return api.post<TriggerRunResponseAPI>(
     '/api/v1/daily-tracker/runs',
-    payload,
+    {
+      ...payload,
+      workspace_slug: getActiveWorkspaceSlug(),
+    },
   );
 }
 
@@ -169,7 +185,7 @@ export function fetchRunStatus(
 ): Promise<RunStatusResponseAPI> {
   return api.get<RunStatusResponseAPI>(
     `/api/v1/daily-tracker/runs/${runId}`,
-    undefined,
+    { workspace_slug: getActiveWorkspaceSlug() },
     signal,
   );
 }

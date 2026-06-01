@@ -4,6 +4,7 @@
  */
 
 import { api, ApiError } from '@/lib/api-client';
+import { getActiveWorkspaceSlug } from '@/stores/workspace';
 import type {
   VoiceGuideResponse,
   PersonaListResponseAPI,
@@ -110,6 +111,7 @@ export function regenerateKnowledgeBase(
     {
       company_name: companyName,
       domain,
+      workspace_slug: getActiveWorkspaceSlug(),
       mode: 'full',
       force_rerun: true,
       auto_approve_checkpoints: [1, 2, 3],
@@ -126,6 +128,7 @@ export function regenerateAudiencePersonas(
     {
       company_name: companyName,
       domain,
+      workspace_slug: getActiveWorkspaceSlug(),
       force_rerun: true,
       auto_approve_checkpoints: [1, 2],
     },
@@ -141,6 +144,7 @@ export function regenerateResearchOrchestrator(
     {
       company_name: companyName,
       domain,
+      workspace_slug: getActiveWorkspaceSlug(),
       force_rerun: true,
       auto_approve: {
         kb: [1, 2, 3],
@@ -161,6 +165,7 @@ export function regenerateVoiceStyleGuide(
     {
       company_name: companyName,
       domain,
+      workspace_slug: getActiveWorkspaceSlug(),
       force_rerun: true,
       auto_approve_checkpoints: [1],
     },

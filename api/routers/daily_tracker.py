@@ -46,13 +46,16 @@ from api.dependencies import (
     get_event_bus,
     get_prompt_library_service,
     get_task_store,
+    get_workspace_service,
 )
+from api.routers._helpers import resolve_workspace_scope
 from api.schemas.common import PipelineRunResponse
 from api.tasks.event_bus import EventBusProtocol
 from core.daily_tracker.analytics_engine import AnalyticsService
 from core.daily_tracker.orchestrator import DailyTrackerOrchestrator
 from core.daily_tracker.prompt_library import PromptLibraryService
 from core.services.task_store import TaskStoreProtocol
+from core.services.workspace_protocol import WorkspaceServiceProtocol
 from core.models.daily_tracker import (
     CompetitorMetrics,
     PromptLibraryFilter,
@@ -75,6 +78,7 @@ class CreatePromptRequest(BaseModel):
     """Request body for creating a tracked prompt."""
 
     text: str
+    workspace_slug: str = ""
     category: str | None = None
     tags: list[str] = Field(default_factory=list)
     generate_fanout: bool = True
@@ -122,6 +126,7 @@ class BulkCreatePromptsRequest(BaseModel):
 class TriggerRunRequest(BaseModel):
     """Request body for triggering a daily run."""
 
+    workspace_slug: str = ""
     engines: list[str] | None = None
     prompt_ids: list[str] | None = None
     brand: str | None = None
@@ -156,6 +161,22 @@ class RunListResponse(BaseModel):
     total: int = 0
 
 
+async def get_tracker_company_id(
+    request: Request,
+    user: UserProfile = Depends(require_auth),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
+    workspace_slug: str | None = Query(None),
+) -> str:
+    """Resolve the active workspace slug for daily-tracker routes."""
+    scope = await resolve_workspace_scope(
+        request,
+        user,
+        workspace_service,
+        workspace_slug=workspace_slug,
+    )
+    return scope.workspace_slug
+
+
 # ── Prompt Library Endpoints ─────────────────────────────────────────
 
 
@@ -174,6 +195,7 @@ async def create_prompt(
     prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
     task_store: TaskStoreProtocol = Depends(get_task_store),
     event_bus: EventBusProtocol = Depends(get_event_bus),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> CreatePromptResponse:
     """Create a new tracked prompt for the authenticated company.
 
@@ -181,7 +203,14 @@ async def create_prompt(
     to generate query fanout variants via LLM.  Returns the parent prompt
     immediately with a ``fanout_task_id`` for tracking.
     """
-    company_id = _get_company_id(request)
+    scope = await resolve_workspace_scope(
+        request,
+        _user,
+        workspace_service,
+        workspace_slug=body.workspace_slug,
+        min_roles=("owner", "admin", "member"),
+    )
+    company_id = scope.workspace_slug
     try:
         prompt = await prompt_service.create_prompt(
             company_id=company_id,
@@ -209,8 +238,11 @@ async def create_prompt(
         from api.tasks.runner import run_fanout_generation_task
 
         task = await create_task_durable(
-            task_store, "fanout_generation", company_id,
+            task_store,
+            "fanout_generation",
+            company_id,
             allow_parallel=True,
+            workspace_id=scope.workspace_id,
         )
         fanout_task_id = task.task_id
 
@@ -236,6 +268,7 @@ async def list_prompts(
     request: Request,
     _user: UserProfile = Depends(require_auth),
     prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
+    company_id: str = Depends(get_tracker_company_id),
     category: str | None = Query(None),
     source: str | None = Query(None),
     active: bool | None = Query(None),
@@ -250,7 +283,6 @@ async def list_prompts(
     By default excludes fanout children (``include_fanouts=False``).
     The main prompt tracking list should only show parent prompts.
     """
-    company_id = _get_company_id(request)
 
     filters = PromptLibraryFilter(
         category=category,
@@ -277,6 +309,7 @@ async def list_prompts(
 async def get_enriched_prompts(
     request: Request,
     _user: UserProfile = Depends(require_auth),
+    company_id: str = Depends(get_tracker_company_id),
     days: int = Query(7, ge=1, le=90),
     start_date: str | None = Query(None, description="ISO date (YYYY-MM-DD). Overrides days when paired with end_date."),
     end_date: str | None = Query(None, description="ISO date (YYYY-MM-DD). Overrides days when paired with start_date."),
@@ -307,7 +340,6 @@ async def get_enriched_prompts(
 
     _rc = get_sync_redis_or_none()
 
-    company_id = _get_company_id(request)
 
     # Compute time windows — explicit dates take precedence over days
     today = date.today()
@@ -448,9 +480,9 @@ async def get_prompt(
     request: Request,
     _user: UserProfile = Depends(require_auth),
     prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
+    _company_id: str = Depends(get_tracker_company_id),
 ) -> TrackedPrompt:
     """Get a specific tracked prompt by ID."""
-    _get_company_id(request)  # tenant check
     prompt = await prompt_service.get_prompt(prompt_id)
     if prompt is None:
         raise HTTPException(status_code=404, detail="Prompt not found")
@@ -464,9 +496,9 @@ async def update_prompt(
     request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
+    _company_id: str = Depends(get_tracker_company_id),
 ) -> TrackedPrompt:
     """Update a tracked prompt's fields."""
-    _get_company_id(request)  # tenant check
     update_kwargs: dict[str, Any] = {}
     if body.text is not None:
         update_kwargs["text"] = body.text
@@ -492,9 +524,9 @@ async def delete_prompt(
     request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
+    _company_id: str = Depends(get_tracker_company_id),
 ) -> None:
     """Delete a tracked prompt."""
-    _get_company_id(request)  # tenant check
     deleted = await prompt_service.delete_prompt(prompt_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Prompt not found")
@@ -507,9 +539,9 @@ async def toggle_prompt(
     request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
+    _company_id: str = Depends(get_tracker_company_id),
 ) -> TrackedPrompt:
     """Toggle a prompt's active/inactive status."""
-    _get_company_id(request)  # tenant check
     try:
         return await prompt_service.toggle_prompt(prompt_id, body.active)
     except ValueError as exc:
@@ -522,9 +554,9 @@ async def import_prompts(
     request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
+    company_id: str = Depends(get_tracker_company_id),
 ) -> list[TrackedPrompt]:
     """Import prompts from a gap analysis run's queries.json."""
-    company_id = _get_company_id(request)
     try:
         return await prompt_service.import_from_gap_analysis(
             company_id=company_id,
@@ -540,9 +572,9 @@ async def bulk_create_prompts(
     request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
+    company_id: str = Depends(get_tracker_company_id),
 ) -> list[TrackedPrompt]:
     """Bulk create tracked prompts (duplicates are skipped)."""
-    company_id = _get_company_id(request)
     prompt_dicts = [p.model_dump(mode="json") for p in body.prompts]
     return await prompt_service.bulk_create(company_id, prompt_dicts)
 
@@ -620,10 +652,9 @@ async def list_fanouts(
     request: Request,
     _user: UserProfile = Depends(require_auth),
     prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
+    company_id: str = Depends(get_tracker_company_id),
 ) -> FanoutListResponse:
     """List fanout queries for a parent prompt with observation counts."""
-    _get_company_id(request)
-
     parent = await prompt_service.get_prompt(prompt_id)
     if parent is None:
         raise HTTPException(status_code=404, detail="Prompt not found")
@@ -676,9 +707,9 @@ async def add_fanout(
     request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
+    company_id: str = Depends(get_tracker_company_id),
 ) -> TrackedPrompt:
     """Manually add a fanout query to a parent prompt."""
-    company_id = _get_company_id(request)
 
     parent = await prompt_service.get_prompt(prompt_id)
     if parent is None:
@@ -713,13 +744,13 @@ async def regenerate_fanouts(
     task_store: TaskStoreProtocol = Depends(get_task_store),
     event_bus: EventBusProtocol = Depends(get_event_bus),
     prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
+    company_id: str = Depends(get_tracker_company_id),
 ) -> dict[str, str]:
     """Regenerate fanout queries for a parent prompt (background task).
 
     Deletes non-pinned fanouts, generates fresh ones via LLM.
     Pinned fanouts are preserved.
     """
-    company_id = _get_company_id(request)
 
     parent = await prompt_service.get_prompt(prompt_id)
     if parent is None:
@@ -762,9 +793,9 @@ async def delete_fanout(
     request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
+    company_id: str = Depends(get_tracker_company_id),
 ) -> None:
     """Delete a specific fanout query."""
-    _get_company_id(request)
     deleted = await prompt_service.delete_prompt(fanout_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Fanout not found")
@@ -777,9 +808,9 @@ async def toggle_pin(
     request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
+    company_id: str = Depends(get_tracker_company_id),
 ) -> TrackedPrompt:
     """Toggle the pinned status of a fanout query."""
-    _get_company_id(request)
     fanout = await prompt_service.get_prompt(fanout_id)
     if fanout is None:
         raise HTTPException(status_code=404, detail="Fanout not found")
@@ -797,9 +828,9 @@ async def toggle_fanout_active(
     request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
+    company_id: str = Depends(get_tracker_company_id),
 ) -> TrackedPrompt:
     """Toggle the active status of a fanout query."""
-    _get_company_id(request)
     try:
         return await prompt_service.toggle_prompt(fanout_id, body.active)
     except ValueError as exc:
@@ -814,6 +845,7 @@ async def get_answer_history(
     prompt_id: str,
     request: Request,
     _user: UserProfile = Depends(require_auth),
+    company_id: str = Depends(get_tracker_company_id),
     engine: str | None = Query(None),
     days: int = Query(30, ge=1, le=365),
     start_date: str | None = Query(None, description="ISO date (YYYY-MM-DD). Overrides days when paired with end_date."),
@@ -826,8 +858,6 @@ async def get_answer_history(
     Returns only the parent prompt's own AI responses with mention
     analysis data, ordered by date descending.
     """
-    _get_company_id(request)
-
     sf = getattr(request.app.state, "db_session_factory", None)
     if sf is None:
         return AnswerHistoryResponse(prompt_id=prompt_id, responses=[], total=0)
@@ -938,7 +968,6 @@ async def get_prompt_analytics(
         PromptAnalyticsResponse,
     )
 
-    company_id = _get_company_id(request)
 
     sf = getattr(request.app.state, "db_session_factory", None)
     if sf is None:
@@ -1113,24 +1142,37 @@ async def trigger_daily_run(
     task_store: TaskStoreProtocol = Depends(get_task_store),
     event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> PipelineRunResponse:
     """Trigger a daily tracking run as an async background task.
 
     Returns 202 with a task_id immediately.  The run executes in the
     background and emits SSE events via ``GET /tasks/{task_id}/events``.
     """
-    company_slug = _get_company_id(request)
+    scope = await resolve_workspace_scope(
+        request,
+        _user,
+        workspace_service,
+        workspace_slug=body.workspace_slug,
+        min_roles=("owner", "admin", "member"),
+    )
+    company_id = scope.workspace_slug
 
     from api.routers._helpers import create_task_durable
     from api.tasks.runner import run_daily_tracker_task
 
-    task = await create_task_durable(task_store, "daily_tracker", company_slug)
+    task = await create_task_durable(
+        task_store,
+        "daily_tracker",
+        company_id,
+        workspace_id=scope.workspace_id,
+    )
 
     handle = asyncio.create_task(
         run_daily_tracker_task(
             task_id=task.task_id,
             request=body,
-            company_slug=company_slug,
+            company_slug=company_id,
             artifacts_root=artifacts_root,
             task_store=task_store,
             event_bus=event_bus,
@@ -1142,6 +1184,7 @@ async def trigger_daily_run(
         run_id=task.task_id,
         pipeline=task.pipeline,
         company_slug=task.company_slug,
+        workspace_id=scope.workspace_id,
         status="running",
         created_at=task.created_at,
     )
@@ -1152,9 +1195,9 @@ async def get_run_status(
     run_id: str,
     request: Request,
     _user: UserProfile = Depends(require_auth),
+    company_id: str = Depends(get_tracker_company_id),
 ) -> RunStatusResponse:
     """Get the status of a daily run from the database."""
-    company_slug = _get_company_id(request)
 
     sf = getattr(request.app.state, "db_session_factory", None)
     if sf is None:
@@ -1166,7 +1209,7 @@ async def get_run_status(
         async with sf() as session:
             run_uuid = _uuid.UUID(run_id)
             row = await session.get(DailyRunModel, run_uuid)
-            if row is None or row.company_id != company_slug:
+            if row is None or row.company_id != company_id:
                 raise HTTPException(status_code=404, detail="Run not found")
 
             return RunStatusResponse(
@@ -1192,11 +1235,11 @@ async def get_run_status(
 async def list_runs(
     request: Request,
     _user: UserProfile = Depends(require_auth),
+    company_id: str = Depends(get_tracker_company_id),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ) -> RunListResponse:
     """List daily runs for the authenticated company from the database."""
-    company_slug = _get_company_id(request)
 
     sf = getattr(request.app.state, "db_session_factory", None)
     if sf is None:
@@ -1211,14 +1254,14 @@ async def list_runs(
             count_q = (
                 select(func.count())
                 .select_from(DailyRunModel)
-                .where(DailyRunModel.company_id == company_slug)
+                .where(DailyRunModel.company_id == company_id)
             )
             total = (await session.execute(count_q)).scalar() or 0
 
             # Fetch page
             q = (
                 select(DailyRunModel)
-                .where(DailyRunModel.company_id == company_slug)
+                .where(DailyRunModel.company_id == company_id)
                 .order_by(DailyRunModel.created_at.desc())
                 .offset(offset)
                 .limit(limit)
@@ -1241,7 +1284,7 @@ async def list_runs(
 
             return RunListResponse(runs=runs, total=total)
     except Exception:
-        logger.warning("list_runs failed for %s", company_slug, exc_info=True)
+        logger.warning("list_runs failed for %s", company_id, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to fetch runs")
 
 
@@ -1253,10 +1296,10 @@ async def get_visibility_metrics(
     request: Request,
     _user: UserProfile = Depends(require_auth),
     analytics: AnalyticsService = Depends(get_analytics_service),
+    company_id: str = Depends(get_tracker_company_id),
     run_id: str | None = Query(None),
 ) -> VisibilityMetrics:
     """Get comprehensive visibility metrics for the company."""
-    company_id = _get_company_id(request)
     return await analytics.compute_visibility_metrics(company_id, run_id=run_id)
 
 
@@ -1265,10 +1308,10 @@ async def get_mention_trend(
     request: Request,
     _user: UserProfile = Depends(require_auth),
     analytics: AnalyticsService = Depends(get_analytics_service),
+    company_id: str = Depends(get_tracker_company_id),
     days: int = Query(30, ge=1, le=365),
 ) -> list[TrendDataPoint]:
     """Get mention rate trend over time."""
-    company_id = _get_company_id(request)
     return await analytics.compute_mention_rate_trend(company_id, days=days)
 
 
@@ -1277,10 +1320,10 @@ async def get_share_of_voice(
     request: Request,
     _user: UserProfile = Depends(require_auth),
     analytics: AnalyticsService = Depends(get_analytics_service),
+    company_id: str = Depends(get_tracker_company_id),
     run_id: str | None = Query(None),
 ) -> dict[str, float]:
     """Get share of voice vs competitors."""
-    company_id = _get_company_id(request)
     return await analytics.compute_share_of_voice(company_id, run_id=run_id)
 
 
@@ -1289,10 +1332,10 @@ async def get_citation_rates(
     request: Request,
     _user: UserProfile = Depends(require_auth),
     analytics: AnalyticsService = Depends(get_analytics_service),
+    company_id: str = Depends(get_tracker_company_id),
     run_id: str | None = Query(None),
 ) -> dict[str, object]:
     """Get citation rates with domain breakdown."""
-    company_id = _get_company_id(request)
     return await analytics.compute_citation_rate(company_id, run_id=run_id)
 
 
@@ -1301,33 +1344,9 @@ async def get_competitor_metrics(
     request: Request,
     _user: UserProfile = Depends(require_auth),
     analytics: AnalyticsService = Depends(get_analytics_service),
+    company_id: str = Depends(get_tracker_company_id),
     run_id: str | None = Query(None),
 ) -> list[CompetitorMetrics]:
     """Get per-competitor visibility metrics."""
-    company_id = _get_company_id(request)
     return await analytics.get_competitor_metrics(company_id, run_id=run_id)
 
-
-# ── Private helpers ──────────────────────────────────────────────────
-
-
-def _get_company_id(request: Request) -> str:
-    """Extract the company slug from the authenticated request state.
-
-    Why company_slug as company_id: the daily tracker uses string-based
-    company_id (not UUID FK) so it can work standalone before company
-    onboarding.  The auth middleware sets company_slug on request.state.
-
-    Args:
-        request: The incoming FastAPI request.
-
-    Returns:
-        The authenticated user's company_slug.
-
-    Raises:
-        HTTPException: If no company_slug is found in request state.
-    """
-    company_slug = getattr(request.state, "company_slug", None)
-    if not company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
-    return company_slug

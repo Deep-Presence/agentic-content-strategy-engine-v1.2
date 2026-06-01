@@ -20,15 +20,20 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from api.auth.dependencies import require_auth, require_role
-from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_task_store
+from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_task_store, get_workspace_service
 from api.schemas.common import PipelineRunResponse, TaskResponse
 from api.schemas.research_orchestrator import ResearchOrchestratorStartRequest
 from api.tasks.event_bus import EventBusProtocol
-from api.routers._helpers import create_task_durable
+from api.routers._helpers import (
+    assert_task_workspace_access,
+    create_task_durable,
+    resolve_workspace_scope,
+)
 from api.tasks.runner import run_research_orchestrator_task
 from core.audit import log_pipeline_launch
 from core.auth.utils.domain import derive_slug
 from core.services.task_store import TaskStoreProtocol
+from core.services.workspace_protocol import WorkspaceServiceProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -49,23 +54,30 @@ async def start_research_orchestrator(
     event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
     auth_service=Depends(get_auth_service),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> PipelineRunResponse:
     """Launch the Research Orchestrator (KB → AP → VSG).
 
     Returns a task_id (run_id) for SSE streaming and HITL approval.
     """
-    # Tenant isolation
-    user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
-    slug = _derive_slug(body.company_name)
-    if not user_company_slug or slug != user_company_slug:
-        raise HTTPException(
-            status_code=403,
-            detail="Cannot start pipeline for another company",
-        )
-    effective_slug = f"{slug}__{body.product_slug}" if body.product_slug else slug
+    scope = await resolve_workspace_scope(
+        http_request,
+        _user,
+        workspace_service,
+        workspace_slug=body.workspace_slug,
+        company_name=body.company_name,
+        product_slug=body.product_slug,
+        min_roles=("owner", "admin", "member"),
+    )
+    slug = scope.workspace_slug
+    effective_slug = scope.effective_slug
 
     task = await create_task_durable(
-        task_store, "research_orchestrator", slug, product_slug=body.product_slug,
+        task_store,
+        "research_orchestrator",
+        slug,
+        product_slug=body.product_slug,
+        workspace_id=scope.workspace_id,
     )
 
     handle = asyncio.create_task(
@@ -95,6 +107,7 @@ async def start_research_orchestrator(
         run_id=task.task_id,
         pipeline="research_orchestrator",
         company_slug=task.company_slug,
+        workspace_id=scope.workspace_id,
         product_slug=task.product_slug,
         effective_slug=task.effective_slug,
         status=task.status.value,
@@ -103,19 +116,16 @@ async def start_research_orchestrator(
 
 
 @router.get("/{run_id}/status")
-def get_research_orchestrator_status(
+async def get_research_orchestrator_status(
     run_id: str,
     request: Request,
     _user=Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> TaskResponse:
     """Get the status of a research orchestrator run."""
     task = task_store.get_task(run_id)
-
-    # Tenant isolation — prevent cross-tenant status reads
-    user_company_slug: Optional[str] = getattr(request.state, "company_slug", None)
-    if not user_company_slug or task.company_slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_task_workspace_access(task, _user, workspace_service)
 
     return TaskResponse(
         run_id=task.task_id,

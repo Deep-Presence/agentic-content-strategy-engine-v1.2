@@ -155,9 +155,10 @@ async def require_company_member(
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
     workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> Tuple[UserProfile, Company]:
-    """Like ``require_company_access`` but also requires member+ role.
+    """Like ``require_company_access`` but also requires workspace write access.
 
-    Combines legacy role check and workspace membership for write endpoints.
+    Authorizes via workspace membership roles (owner, admin, member). Legacy
+    JWT ``user.role`` is not used when an active membership row exists.
     """
     try:
         _workspace, membership = await workspace_service.assert_workspace_access(
