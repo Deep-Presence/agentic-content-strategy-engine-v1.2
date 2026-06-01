@@ -56,6 +56,15 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _workspace_role_from_user_role(role: str | UserRole) -> str:
+    value = role.value if isinstance(role, UserRole) else str(role)
+    if value == "superuser":
+        return "owner"
+    if value == "viewer":
+        return "viewer"
+    return "member"
+
+
 class DbAuthService:
     """Database-backed auth service implementing AuthServiceProtocol."""
 
@@ -329,6 +338,15 @@ class DbAuthService:
             role=UserRole(role),
             is_active=True,
         )
+        company = await self._company_repo.get_by_id(company_id)
+        if company is not None:
+            company_profile = self._orm_to_company(company)
+            await self._workspace_service.ensure_workspace_for_company(company_profile)
+            await self._workspace_service.ensure_workspace_membership(
+                company_profile.slug,
+                str(model.id),
+                role=_workspace_role_from_user_role(role),
+            )
         return self._orm_to_user_profile(model)
 
     async def update_user(
@@ -475,8 +493,15 @@ class DbAuthService:
         )
 
         await self._invite_repo.mark_redeemed(invite.id, user_model.id)
+        company_profile = self._orm_to_company(company)
+        await self._workspace_service.ensure_workspace_for_company(company_profile)
+        await self._workspace_service.ensure_workspace_membership(
+            company_profile.slug,
+            str(user_model.id),
+            role=_workspace_role_from_user_role(invite.role),
+        )
 
-        return self._orm_to_user_profile(user_model), self._orm_to_company(company)
+        return self._orm_to_user_profile(user_model), company_profile
 
     # ── Pipeline defaults ──────────────────────────────────────
 

@@ -1,7 +1,7 @@
 """Pydantic models for workspace tenants and memberships."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -11,12 +11,16 @@ WorkspaceRoleLiteral = Literal["owner", "admin", "member", "viewer"]
 MembershipStatusLiteral = Literal["active", "invited", "suspended"]
 
 
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 class WorkspaceSummary(BaseModel):
     """Lightweight workspace for list/selector views."""
 
-    id: str
-    slug: str
-    name: str
+    id: str = ""
+    slug: str = ""
+    name: str = ""
     primary_domain: str = ""
     color: str = "#5BA4C4"
     logo_url: Optional[str] = None
@@ -27,11 +31,11 @@ class WorkspaceSummary(BaseModel):
 class Workspace(BaseModel):
     """Full workspace metadata."""
 
-    id: str
-    company_id: str
-    slug: str
-    name: str
-    primary_domain: str
+    id: str = ""
+    company_id: str = ""
+    slug: str = ""
+    name: str = ""
+    primary_domain: str = ""
     additional_domains: List[str] = Field(default_factory=list)
     industry: Optional[str] = None
     color: str = "#5BA4C4"
@@ -41,28 +45,28 @@ class Workspace(BaseModel):
     settings_json: Dict[str, Any] = Field(default_factory=dict)
     created_by: Optional[str] = None
     is_archived: bool = False
-    created_at: datetime
-    updated_at: datetime
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class WorkspaceMembership(BaseModel):
     """User membership in a workspace."""
 
-    id: str
-    workspace_id: str
-    user_id: str
+    id: str = ""
+    workspace_id: str = ""
+    user_id: str = ""
     role: WorkspaceRoleLiteral = "member"
     status: MembershipStatusLiteral = "active"
     invited_at: Optional[datetime] = None
     joined_at: Optional[datetime] = None
-    created_at: datetime
-    updated_at: datetime
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class WorkspaceMemberSummary(BaseModel):
     """Member row for workspace member listings."""
 
-    user_id: str
+    user_id: str = ""
     email: str = ""
     first_name: str = ""
     last_name: str = ""
@@ -91,8 +95,8 @@ class WorkspaceArtifactStatus(BaseModel):
 class WorkspaceProductSummary(BaseModel):
     """Product/project row within a workspace profile."""
 
-    slug: str
-    name: str
+    slug: str = ""
+    name: str = ""
     domain: Optional[str] = None
     description: Optional[str] = None
     has_research: bool = False
@@ -113,9 +117,9 @@ class WorkspaceResearchSummary(BaseModel):
 class WorkspaceLatestRunSummary(BaseModel):
     """Summary of the most recent pipeline run."""
 
-    run_id: str
-    status: str
-    created_at: datetime
+    run_id: str = ""
+    status: str = ""
+    created_at: datetime = Field(default_factory=_utcnow)
     completed_at: Optional[datetime] = None
     summary: Optional[Dict[str, Any]] = None
 
@@ -123,10 +127,10 @@ class WorkspaceLatestRunSummary(BaseModel):
 class WorkspaceRunningTaskSummary(BaseModel):
     """In-flight pipeline task for workspace profile."""
 
-    task_id: str
-    pipeline: str
-    status: str
-    created_at: datetime
+    task_id: str = ""
+    pipeline: str = ""
+    status: str = ""
+    created_at: datetime = Field(default_factory=_utcnow)
     current_step: Optional[str] = None
 
 
@@ -160,10 +164,10 @@ class WorkspaceContentStudioSummary(BaseModel):
 class WorkspaceProfile(BaseModel):
     """Broad workspace profile for selector + dashboard shell."""
 
-    id: str
-    slug: str
-    name: str
-    primary_domain: str
+    id: str = ""
+    slug: str = ""
+    name: str = ""
+    primary_domain: str = ""
     additional_domains: List[str] = Field(default_factory=list)
     industry: Optional[str] = None
     color: str = "#5BA4C4"

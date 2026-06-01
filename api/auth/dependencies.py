@@ -151,7 +151,7 @@ async def require_company_access(
 
 async def require_company_member(
     slug: str,
-    user: UserProfile = Depends(require_role("member", "superuser")),
+    user: UserProfile = Depends(require_auth),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
     workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> Tuple[UserProfile, Company]:
@@ -161,15 +161,12 @@ async def require_company_member(
     """
     try:
         _workspace, membership = await workspace_service.assert_workspace_access(
-            slug, user
+            slug, user, min_roles=tuple(_WRITE_MEMBERSHIP_ROLES)
         )
     except ValueError as exc:
         code = str(exc)
         if code == "workspace_not_found":
             raise HTTPException(status_code=404, detail=f"Company '{slug}' not found")
-        raise HTTPException(status_code=403, detail="Access denied")
-
-    if membership.role not in _WRITE_MEMBERSHIP_ROLES and user.role == "viewer":
         raise HTTPException(status_code=403, detail="Access denied")
 
     company = await auth_service.get_company_by_slug(slug)

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from core.models.workspace import (
     WorkspaceArtifactStatus,
@@ -19,11 +19,19 @@ class WorkspaceListResponse(BaseModel):
 
 
 class WorkspaceCreateRequest(BaseModel):
-    name: str
-    primary_domain: str
+    name: str = ""
+    primary_domain: str = ""
     slug: Optional[str] = None
     industry: Optional[str] = None
     color: str = "#5BA4C4"
+
+    @model_validator(mode="after")
+    def _require_identity(self) -> "WorkspaceCreateRequest":
+        if not self.name.strip():
+            raise ValueError("Workspace name is required")
+        if not self.primary_domain.strip():
+            raise ValueError("Primary domain is required")
+        return self
 
 
 class WorkspaceUpdateRequest(BaseModel):
@@ -39,10 +47,10 @@ class WorkspaceUpdateRequest(BaseModel):
 
 
 class WorkspaceDetailResponse(BaseModel):
-    id: str
-    slug: str
-    name: str
-    primary_domain: str
+    id: str = ""
+    slug: str = ""
+    name: str = ""
+    primary_domain: str = ""
     additional_domains: List[str] = Field(default_factory=list)
     industry: Optional[str] = None
     color: str = "#5BA4C4"

@@ -36,6 +36,7 @@ class ContentInventoryRepository(SQLAlchemyRepository[ContentInventoryModel]):
         url: str,
         title: str,
         ingestion_source: ContentIngestionSource,
+        workspace_id: _uuid.UUID | None = None,
         ingestion_run_id: _uuid.UUID | None = None,
         h1_text: str = "",
         meta_description: str = "",
@@ -65,6 +66,7 @@ class ContentInventoryRepository(SQLAlchemyRepository[ContentInventoryModel]):
         values = {
             "id": new_id,
             "company_id": company_id,
+            "workspace_id": workspace_id,
             "effective_slug": effective_slug,
             "url": url,
             "url_normalized": url_norm,
@@ -109,6 +111,10 @@ class ContentInventoryRepository(SQLAlchemyRepository[ContentInventoryModel]):
             "last_crawled_at": stmt.excluded.last_crawled_at,
             "ingestion_source": stmt.excluded.ingestion_source,
             "ingestion_run_id": stmt.excluded.ingestion_run_id,
+            "workspace_id": func.coalesce(
+                stmt.excluded.workspace_id,
+                ContentInventoryModel.workspace_id,
+            ),
             "has_faq_section": stmt.excluded.has_faq_section,
             "has_schema_markup": stmt.excluded.has_schema_markup,
             "heading_count": stmt.excluded.heading_count,
@@ -146,6 +152,7 @@ class ContentInventoryRepository(SQLAlchemyRepository[ContentInventoryModel]):
         ingestion_run_id: _uuid.UUID,
         pages: list[Any],
         ingestion_source: ContentIngestionSource = ContentIngestionSource.site_audit_crawl,
+        workspace_id: _uuid.UUID | None = None,
     ) -> int:
         """Batch upsert from site audit crawl. Returns upsert count.
 
@@ -177,6 +184,7 @@ class ContentInventoryRepository(SQLAlchemyRepository[ContentInventoryModel]):
                 {
                     "id": _uuid.uuid4(),
                     "company_id": company_id,
+                    "workspace_id": workspace_id,
                     "effective_slug": effective_slug,
                     "url": page.url,
                     "url_normalized": url_norm,
@@ -218,6 +226,10 @@ class ContentInventoryRepository(SQLAlchemyRepository[ContentInventoryModel]):
                 "structural_signals": stmt.excluded.structural_signals,
                 "ingestion_source": stmt.excluded.ingestion_source,
                 "ingestion_run_id": stmt.excluded.ingestion_run_id,
+                "workspace_id": func.coalesce(
+                    stmt.excluded.workspace_id,
+                    ContentInventoryModel.workspace_id,
+                ),
                 "last_crawled_at": stmt.excluded.last_crawled_at,
                 "content_modified_at": stmt.excluded.content_modified_at,
                 "effective_slug": stmt.excluded.effective_slug,

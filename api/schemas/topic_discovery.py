@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from api.schemas.common import _check_product_slug
 from core.models.topic_discovery import BuyerStage, IntentType
@@ -22,14 +22,23 @@ class TopicDiscoveryStartRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    company_name: str
-    domain: str
+    company_name: str = ""
+    domain: str = ""
+    workspace_slug: str = ""
     product_slug: Optional[str] = None
 
     @field_validator("product_slug")
     @classmethod
     def _validate_product_slug(cls, v: Optional[str]) -> Optional[str]:
         return _check_product_slug(v)
+
+    @model_validator(mode="after")
+    def _require_company_identity(self) -> "TopicDiscoveryStartRequest":
+        if not self.company_name.strip():
+            raise ValueError("company_name is required")
+        if not self.domain.strip():
+            raise ValueError("domain is required")
+        return self
 
     auto_approve_checkpoints: List[int] = Field(
         default_factory=list,
@@ -203,14 +212,23 @@ class TopicExpansionStartRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    company_name: str
-    domain: str
+    company_name: str = ""
+    domain: str = ""
+    workspace_slug: str = ""
     product_slug: Optional[str] = None
 
     @field_validator("product_slug")
     @classmethod
     def _validate_product_slug(cls, v: Optional[str]) -> Optional[str]:
         return _check_product_slug(v)
+
+    @model_validator(mode="after")
+    def _require_company_identity(self) -> "TopicExpansionStartRequest":
+        if not self.company_name.strip():
+            raise ValueError("company_name is required")
+        if not self.domain.strip():
+            raise ValueError("domain is required")
+        return self
 
     subdomain_ids: List[str] = Field(
         min_length=1,

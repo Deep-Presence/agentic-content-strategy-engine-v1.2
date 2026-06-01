@@ -77,3 +77,11 @@ class WorkspaceServiceProtocol(Protocol):
         owner_user_id: Optional[str] = None,
         owner_role: str = "owner",
     ) -> Workspace: ...
+
+    async def ensure_workspace_membership(
+        self,
+        workspace_slug: str,
+        user_id: str,
+        *,
+        role: str = "member",
+    ) -> WorkspaceMembership: ...

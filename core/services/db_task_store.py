@@ -415,6 +415,7 @@ end
         company_slug: str,
         product_slug: Optional[str] = None,
         allow_parallel: bool = False,
+        workspace_id: Optional[str] = None,
     ) -> PipelineTask:
         """Create a new task, optionally acquire slug lock, write to DB.
 
@@ -441,6 +442,7 @@ end
             task_id=task_id,
             pipeline=pipeline,
             company_slug=company_slug,
+            workspace_id=workspace_id,
             product_slug=product_slug,
             effective_slug=effective,
             created_at=now,
@@ -1103,6 +1105,7 @@ end
                 pipeline=task.pipeline,
                 status=task.status.value,
                 company_slug=task.company_slug,
+                workspace_id=_uuid.UUID(task.workspace_id) if task.workspace_id else None,
                 product_slug=task.product_slug,
                 effective_slug=task.effective_slug,
                 current_step=task.current_step,
@@ -1142,6 +1145,7 @@ end
             pipeline=row.pipeline,
             status=TaskStatus(row.status),
             company_slug=row.company_slug or "",
+            workspace_id=str(row.workspace_id) if row.workspace_id else None,
             product_slug=row.product_slug,
             effective_slug=row.effective_slug,
             current_step=row.current_step,

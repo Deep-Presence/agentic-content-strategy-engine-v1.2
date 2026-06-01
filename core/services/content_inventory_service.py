@@ -110,6 +110,7 @@ class ContentInventoryService:
         discovery_output: Any,
         page_results: list[Any],
         html_map: dict[str, str] | None = None,
+        workspace_id: _uuid.UUID | None = None,
     ) -> dict[str, int]:
         """Extract page metadata from site audit results, bulk upsert.
 
@@ -202,6 +203,7 @@ class ContentInventoryService:
             effective_slug=effective_slug,
             ingestion_run_id=pipeline_run_id,
             pages=crawled,
+            workspace_id=workspace_id,
         )
 
         _logger.info(

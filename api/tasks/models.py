@@ -29,6 +29,7 @@ class PipelineTask(BaseModel):
     pipeline: Literal["research", "gap_analysis", "content", "content_v13", "site_audit", "knowledge_base", "audience_persona", "voice_style_guide", "topic_discovery", "topic_expansion", "research_orchestrator", "td_content", "td_gap_analysis", "td_cannibalization", "onboarding", "daily_tracker", "cms_sync", "ga4_sync", "fanout_generation"]
     status: TaskStatus = TaskStatus.RUNNING
     company_slug: str = ""
+    workspace_id: Optional[str] = None
     product_slug: Optional[str] = None
     effective_slug: Optional[str] = None
     current_step: Optional[str] = None

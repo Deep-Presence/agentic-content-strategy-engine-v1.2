@@ -6,6 +6,7 @@
  */
 
 import { api } from '@/lib/api-client';
+import { getActiveWorkspaceSlug } from '@/stores/workspace';
 import type {
   ContentBriefListResponseAPI,
   ContentBriefDetailResponseAPI,
@@ -100,6 +101,7 @@ export function startPipeline(
   return api.post<PipelineRunResponseAPI>('/api/v1/content/v13/start', {
     company_name: companyName,
     domain,
+    workspace_slug: getActiveWorkspaceSlug(),
     ...options,
   });
 }
@@ -230,9 +232,11 @@ export function startFromTopics(
     platforms?: string[];
   },
 ): Promise<PipelineRunResponseAPI> {
+  const workspaceSlug = getActiveWorkspaceSlug(effectiveSlug.split('__')[0] ?? '');
   return api.post<PipelineRunResponseAPI>('/api/v1/content/v13/from-topics/gap-analysis', {
     company_name: companyName,
     domain,
+    workspace_slug: workspaceSlug,
     effective_slug: effectiveSlug,
     topic_assignment_ids: topicAssignmentIds,
     product_slug: options?.productSlug,
@@ -259,9 +263,11 @@ export function startProduction(
     autoApprove?: boolean;
   },
 ): Promise<PipelineRunResponseAPI> {
+  const workspaceSlug = getActiveWorkspaceSlug(effectiveSlug.split('__')[0] ?? '');
   return api.post<PipelineRunResponseAPI>('/api/v1/content/v13/from-topics/start-production', {
     company_name: companyName,
     domain,
+    workspace_slug: workspaceSlug,
     effective_slug: effectiveSlug,
     topic_assignment_ids: topicAssignmentIds,
     ga_run_id: gaRunId,

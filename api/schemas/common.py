@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
@@ -24,13 +24,14 @@ def _check_product_slug(v: Optional[str]) -> Optional[str]:
 class PipelineRunResponse(BaseModel):
     """Returned when a pipeline is launched."""
 
-    run_id: str
-    pipeline: str
-    company_slug: str
+    run_id: str = ""
+    pipeline: str = ""
+    company_slug: str = ""
+    workspace_id: Optional[str] = None
     product_slug: Optional[str] = None
     effective_slug: Optional[str] = None
-    status: str
-    created_at: datetime
+    status: str = ""
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     already_exists: bool = False
     message: Optional[str] = None
 
@@ -38,16 +39,17 @@ class PipelineRunResponse(BaseModel):
 class TaskResponse(BaseModel):
     """Detailed task status response."""
 
-    run_id: str
-    pipeline: str
-    company_slug: str
+    run_id: str = ""
+    pipeline: str = ""
+    company_slug: str = ""
+    workspace_id: Optional[str] = None
     product_slug: Optional[str] = None
     effective_slug: Optional[str] = None
-    status: str
+    status: str = ""
     current_step: Optional[str] = None
     progress_pct: Optional[float] = None
-    created_at: datetime
-    updated_at: datetime
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
     approval_payload: Optional[Dict[str, Any]] = None
@@ -71,8 +73,9 @@ class GapAnalysisStartRequest(BaseModel):
     filesystem based on the company slug.
     """
 
-    company_name: str
-    domain: str
+    company_name: str = ""
+    domain: str = ""
+    workspace_slug: str = ""
     product_slug: Optional[str] = None
     seed_urls: List[HttpUrl] = Field(default_factory=list)
 
@@ -80,6 +83,15 @@ class GapAnalysisStartRequest(BaseModel):
     @classmethod
     def _validate_product_slug(cls, v: Optional[str]) -> Optional[str]:
         return _check_product_slug(v)
+
+    @model_validator(mode="after")
+    def _require_company_identity(self) -> "GapAnalysisStartRequest":
+        if not self.company_name.strip():
+            raise ValueError("company_name is required")
+        if not self.domain.strip():
+            raise ValueError("domain is required")
+        return self
+
     force_rerun: bool = False
     skip_steps: List[int] = Field(default_factory=list)
     max_queries: int = Field(default=150, ge=10, le=500)
@@ -175,8 +187,9 @@ class ApprovalRequest(BaseModel):
 class ContentStartRequest(BaseModel):
     """Request body for starting a content generation pipeline."""
 
-    company_name: str
-    domain: str
+    company_name: str = ""
+    domain: str = ""
+    workspace_slug: str = ""
     product_slug: Optional[str] = None
     max_briefs: int = Field(default=5, ge=1, le=20)
 
@@ -184,6 +197,15 @@ class ContentStartRequest(BaseModel):
     @classmethod
     def _validate_product_slug(cls, v: Optional[str]) -> Optional[str]:
         return _check_product_slug(v)
+
+    @model_validator(mode="after")
+    def _require_company_identity(self) -> "ContentStartRequest":
+        if not self.company_name.strip():
+            raise ValueError("company_name is required")
+        if not self.domain.strip():
+            raise ValueError("domain is required")
+        return self
+
     auto_approve: bool = False
     gap_slug: Optional[str] = None
     max_concurrent_workers: int = Field(default=3, ge=1, le=10)

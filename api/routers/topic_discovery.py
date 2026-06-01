@@ -9,8 +9,8 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
-from api.auth.dependencies import require_auth, require_role
-from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_task_store, get_td_data_service
+from api.auth.dependencies import require_auth
+from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_task_store, get_td_data_service, get_workspace_service
 from api.schemas.common import PipelineRunResponse, TaskResponse
 from api.schemas.topic_discovery import (
     ApprovalResponseTD,
@@ -35,13 +35,18 @@ from api.schemas.topic_discovery import (
 )
 from api.tasks.event_bus import EventBusProtocol
 from api.tasks.models import PipelineTask, TaskStatus
-from api.routers._helpers import create_task_durable
+from api.routers._helpers import (
+    assert_slug_workspace_access,
+    assert_task_workspace_access,
+    create_task_durable,
+    resolve_workspace_scope,
+)
 from api.tasks.runner import run_topic_discovery_pipeline_task, run_topic_expansion_pipeline_task
 from core.auth.service import AuthServiceProtocol
-from core.auth.utils.domain import derive_slug
 from core.models.organization import UserProfile
 from core.audit import log_hitl_decision, log_pipeline_launch
 from core.services.task_store import ApprovalWindowError, TaskStoreProtocol
+from core.services.workspace_protocol import WorkspaceServiceProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +54,6 @@ router = APIRouter(prefix="/api/v1/topic-discovery", tags=["topic-discovery"])
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
-
-
-def _derive_slug_local(company_name: str) -> str:
-    return derive_slug(company_name)
 
 
 def _validate_approval_window(
@@ -106,21 +107,24 @@ async def start_topic_discovery(
     body: TopicDiscoveryStartRequest,
     response: Response,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
     event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> PipelineRunResponse:
-    # Tenant isolation
-    user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
-    slug = _derive_slug_local(body.company_name)
-    if not user_company_slug or slug != user_company_slug:
-        raise HTTPException(
-            status_code=403,
-            detail="Cannot start pipeline for another company",
-        )
-    effective_slug = f"{slug}__{body.product_slug}" if body.product_slug else slug
+    workspace_scope = await resolve_workspace_scope(
+        http_request,
+        _user,
+        workspace_service,
+        workspace_slug=body.workspace_slug,
+        company_name=body.company_name,
+        product_slug=body.product_slug,
+        min_roles=("owner", "admin", "member"),
+    )
+    slug = workspace_scope.workspace_slug
+    effective_slug = workspace_scope.effective_slug
 
     # Guard: check if discovery already exists
     if not body.force_rerun:
@@ -145,6 +149,7 @@ async def start_topic_discovery(
                 run_id=f"existing-{effective_slug}",
                 pipeline="topic_discovery",
                 company_slug=slug,
+                workspace_id=workspace_scope.workspace_id,
                 product_slug=body.product_slug,
                 effective_slug=effective_slug,
                 status="already_exists",
@@ -153,7 +158,13 @@ async def start_topic_discovery(
                 message=message or "",
             )
 
-    task = await create_task_durable(task_store, "topic_discovery", slug, product_slug=body.product_slug)
+    task = await create_task_durable(
+        task_store,
+        "topic_discovery",
+        slug,
+        product_slug=body.product_slug,
+        workspace_id=workspace_scope.workspace_id,
+    )
 
     handle = asyncio.create_task(
         run_topic_discovery_pipeline_task(
@@ -183,6 +194,7 @@ async def start_topic_discovery(
         run_id=task.task_id,
         pipeline="topic_discovery",
         company_slug=slug,
+        workspace_id=task.workspace_id,
         product_slug=body.product_slug,
         effective_slug=effective_slug,
         status="started",
@@ -199,15 +211,15 @@ async def get_topic_discovery_status(
     http_request: Request,
     _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> TaskResponse:
     task = task_store.get_task(run_id)
-    user_company_slug = getattr(http_request.state, "company_slug", None)
-    if task.company_slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_task_workspace_access(task, _user, workspace_service)
     return TaskResponse(
         run_id=task.task_id,
         pipeline=task.pipeline,
         company_slug=task.company_slug,
+        workspace_id=task.workspace_id,
         product_slug=task.product_slug,
         effective_slug=task.effective_slug,
         status=task.status.value,
@@ -229,13 +241,18 @@ async def approve_taxonomy(
     run_id: str,
     body: TaxonomyApprovalRequest,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> ApprovalResponseTD:
     task = task_store.get_task(run_id)
-    user_company_slug = getattr(http_request.state, "company_slug", None)
-    if task.company_slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_task_workspace_access(
+        task,
+        _user,
+        workspace_service,
+        min_roles=("owner", "admin", "member"),
+    )
+    user_company_slug = task.company_slug
 
     _validate_approval_window(task, "td_taxonomy_review")
 
@@ -296,13 +313,18 @@ async def approve_subdomains(
     run_id: str,
     body: SubdomainSelectionRequest,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> ApprovalResponseTD:
     task = task_store.get_task(run_id)
-    user_company_slug = getattr(http_request.state, "company_slug", None)
-    if task.company_slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_task_workspace_access(
+        task,
+        _user,
+        workspace_service,
+        min_roles=("owner", "admin", "member"),
+    )
+    user_company_slug = task.company_slug
 
     _validate_approval_window(task, "td_subdomain_selection")
 
@@ -364,13 +386,18 @@ async def approve_matrix(
     run_id: str,
     body: MatrixApprovalRequest,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> ApprovalResponseTD:
     task = task_store.get_task(run_id)
-    user_company_slug = getattr(http_request.state, "company_slug", None)
-    if task.company_slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_task_workspace_access(
+        task,
+        _user,
+        workspace_service,
+        min_roles=("owner", "admin", "member"),
+    )
+    user_company_slug = task.company_slug
 
     _validate_approval_window(task, "td_matrix_review")
 
@@ -430,14 +457,10 @@ async def get_latest_taxonomy(
     slug: str,
     http_request: Request,
     _user: UserProfile = Depends(require_auth),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
     td_svc=Depends(get_td_data_service),
 ) -> TaxonomyReadResponse:
-    user_company_slug = getattr(http_request.state, "company_slug", None)
-    if not user_company_slug or (
-        slug != user_company_slug
-        and not slug.startswith(f"{user_company_slug}__")
-    ):
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_slug_workspace_access(slug, _user, workspace_service)
 
     taxonomy = await td_svc.get_taxonomy(slug)
     if taxonomy is None:
@@ -460,14 +483,10 @@ async def get_latest_matrix(
     slug: str,
     http_request: Request,
     _user: UserProfile = Depends(require_auth),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
     td_svc=Depends(get_td_data_service),
 ) -> MatrixReadResponse:
-    user_company_slug = getattr(http_request.state, "company_slug", None)
-    if not user_company_slug or (
-        slug != user_company_slug
-        and not slug.startswith(f"{user_company_slug}__")
-    ):
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_slug_workspace_access(slug, _user, workspace_service)
 
     matrix = await td_svc.get_matrix(slug)
     if matrix is None:
@@ -489,14 +508,10 @@ async def get_scored_subdomains(
     slug: str,
     http_request: Request,
     _user: UserProfile = Depends(require_auth),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
     td_svc=Depends(get_td_data_service),
 ) -> ScoredSubdomainsResponse:
-    user_company_slug = getattr(http_request.state, "company_slug", None)
-    if not user_company_slug or (
-        slug != user_company_slug
-        and not slug.startswith(f"{user_company_slug}__")
-    ):
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_slug_workspace_access(slug, _user, workspace_service)
 
     scored = await td_svc.get_scored_subdomains(slug)
     if scored is None:
@@ -520,14 +535,10 @@ async def get_persona_affinity(
     http_request: Request,
     persona_id: Optional[str] = None,
     _user: UserProfile = Depends(require_auth),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
     td_svc=Depends(get_td_data_service),
 ) -> PersonaAffinityResponse:
-    user_company_slug = getattr(http_request.state, "company_slug", None)
-    if not user_company_slug or (
-        slug != user_company_slug
-        and not slug.startswith(f"{user_company_slug}__")
-    ):
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_slug_workspace_access(slug, _user, workspace_service)
 
     affinity = await td_svc.get_persona_affinity(slug, persona_id=persona_id)
     if affinity is None:
@@ -552,20 +563,23 @@ async def get_persona_affinity(
 async def start_topic_expansion(
     body: TopicExpansionStartRequest,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
     event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> PipelineRunResponse:
-    # Tenant isolation
-    user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
-    slug = _derive_slug_local(body.company_name)
-    if not user_company_slug or slug != user_company_slug:
-        raise HTTPException(
-            status_code=403,
-            detail="Cannot start pipeline for another company",
-        )
+    workspace_scope = await resolve_workspace_scope(
+        http_request,
+        _user,
+        workspace_service,
+        workspace_slug=body.workspace_slug,
+        company_name=body.company_name,
+        product_slug=body.product_slug,
+        min_roles=("owner", "admin", "member"),
+    )
+    slug = workspace_scope.workspace_slug
     effective_slug = f"{slug}__{body.product_slug}" if body.product_slug else slug
 
     # Pre-check: discovery must have completed
@@ -585,7 +599,9 @@ async def start_topic_expansion(
     # (optimistic DB lock), not by the Redis slug lock.
     task = await create_task_durable(
         task_store, "topic_expansion", slug,
-        product_slug=body.product_slug, allow_parallel=True,
+        product_slug=body.product_slug,
+        allow_parallel=True,
+        workspace_id=workspace_scope.workspace_id,
     )
 
     handle = asyncio.create_task(
@@ -615,6 +631,7 @@ async def start_topic_expansion(
         run_id=task.task_id,
         pipeline="topic_expansion",
         company_slug=slug,
+        workspace_id=task.workspace_id,
         product_slug=body.product_slug,
         effective_slug=effective_slug,
         status="started",
@@ -642,13 +659,9 @@ async def get_expansion_status(
     slug: str,
     http_request: Request,
     _user: UserProfile = Depends(require_auth),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> ExpansionStatusResponse:
-    user_company_slug = getattr(http_request.state, "company_slug", None)
-    if not user_company_slug or (
-        slug != user_company_slug
-        and not slug.startswith(f"{user_company_slug}__")
-    ):
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_slug_workspace_access(slug, _user, workspace_service)
 
     sf = getattr(http_request.app.state, "db_session_factory", None)
     if sf is None:
@@ -696,14 +709,10 @@ async def get_discovery_summary(
     slug: str,
     http_request: Request,
     _user: UserProfile = Depends(require_auth),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
     td_svc=Depends(get_td_data_service),
 ) -> DiscoverySummaryResponse:
-    user_company_slug = getattr(http_request.state, "company_slug", None)
-    if not user_company_slug or (
-        slug != user_company_slug
-        and not slug.startswith(f"{user_company_slug}__")
-    ):
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_slug_workspace_access(slug, _user, workspace_service)
 
     summary = await td_svc.get_discovery_summary(slug)
     if summary is None:
@@ -726,14 +735,10 @@ async def list_assignments(
     page: int = 1,
     page_size: int = 50,
     _user: UserProfile = Depends(require_auth),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
     td_svc=Depends(get_td_data_service),
 ) -> AssignmentListResponse:
-    user_company_slug = getattr(http_request.state, "company_slug", None)
-    if not user_company_slug or (
-        slug != user_company_slug
-        and not slug.startswith(f"{user_company_slug}__")
-    ):
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_slug_workspace_access(slug, _user, workspace_service)
 
     result = await td_svc.list_assignments(
         slug,
@@ -757,15 +762,16 @@ async def update_assignment_status(
     assignment_id: str,
     body: AssignmentStatusUpdateRequest,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
     td_svc=Depends(get_td_data_service),
 ) -> AssignmentStatusUpdateResponse:
-    user_company_slug = getattr(http_request.state, "company_slug", None)
-    if not user_company_slug or (
-        slug != user_company_slug
-        and not slug.startswith(f"{user_company_slug}__")
-    ):
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_slug_workspace_access(
+        slug,
+        _user,
+        workspace_service,
+        min_roles=("owner", "admin", "member"),
+    )
 
     result = await td_svc.update_assignment_status(slug, assignment_id, body.status)
     if result is None:
@@ -786,15 +792,16 @@ async def create_custom_assignment(
     slug: str,
     body: CreateCustomAssignmentRequest,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
     td_svc=Depends(get_td_data_service),
 ) -> Dict[str, Any]:
-    user_company_slug = getattr(http_request.state, "company_slug", None)
-    if not user_company_slug or (
-        slug != user_company_slug
-        and not slug.startswith(f"{user_company_slug}__")
-    ):
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_slug_workspace_access(
+        slug,
+        _user,
+        workspace_service,
+        min_roles=("owner", "admin", "member"),
+    )
 
     try:
         result = await td_svc.create_assignment(
@@ -830,16 +837,17 @@ async def update_node(
     node_id: str,
     body: UpdateNodeRequest,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
     td_svc=Depends(get_td_data_service),
 ) -> NodeResponse:
     """Update a single taxonomy node's attributes (name, description, parent_id)."""
-    user_company_slug = getattr(http_request.state, "company_slug", None)
-    if not user_company_slug or (
-        slug != user_company_slug
-        and not slug.startswith(f"{user_company_slug}__")
-    ):
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_slug_workspace_access(
+        slug,
+        _user,
+        workspace_service,
+        min_roles=("owner", "admin", "member"),
+    )
 
     kwargs = {}
     if body.name is not None:
@@ -880,16 +888,17 @@ async def delete_node(
     node_id: str,
     http_request: Request,
     reparent_children: bool = True,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
     td_svc=Depends(get_td_data_service),
 ) -> NodeResponse:
     """Delete a single taxonomy node. Children are reparented by default."""
-    user_company_slug = getattr(http_request.state, "company_slug", None)
-    if not user_company_slug or (
-        slug != user_company_slug
-        and not slug.startswith(f"{user_company_slug}__")
-    ):
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_slug_workspace_access(
+        slug,
+        _user,
+        workspace_service,
+        min_roles=("owner", "admin", "member"),
+    )
 
     deleted = await td_svc.delete_node(slug, node_id, reparent_children=reparent_children)
     if not deleted:
@@ -910,16 +919,17 @@ async def create_node(
     slug: str,
     body: CreateNodeRequest,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
     td_svc=Depends(get_td_data_service),
 ) -> NodeResponse:
     """Add a new taxonomy node (manual addition)."""
-    user_company_slug = getattr(http_request.state, "company_slug", None)
-    if not user_company_slug or (
-        slug != user_company_slug
-        and not slug.startswith(f"{user_company_slug}__")
-    ):
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_slug_workspace_access(
+        slug,
+        _user,
+        workspace_service,
+        min_roles=("owner", "admin", "member"),
+    )
 
     result = await td_svc.create_node(
         slug,

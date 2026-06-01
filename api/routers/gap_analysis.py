@@ -6,27 +6,23 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, Request, Response
 
-from api.auth.dependencies import require_auth, require_role
-from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_storage_backend as get_storage_dep, get_task_store
+from api.auth.dependencies import require_auth
+from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_storage_backend as get_storage_dep, get_task_store, get_workspace_service
 from core.auth.service import AuthServiceProtocol
-from core.auth.utils.domain import derive_slug
 from api.schemas.common import GapAnalysisStartRequest, PipelineRunResponse, TaskResponse
 from api.tasks.event_bus import EventBusProtocol
 from api.tasks.models import PipelineTask
-from api.routers._helpers import create_task_durable
+from api.routers._helpers import assert_task_workspace_access, create_task_durable, resolve_workspace_scope
 from api.tasks.runner import run_gap_pipeline_task
 from core.services.task_store import TaskStoreProtocol
 from core.storage.backends.base import StorageBackend
 from core.audit import log_pipeline_launch
 from core.models.organization import UserProfile
+from core.services.workspace_protocol import WorkspaceServiceProtocol
 
 router = APIRouter(prefix="/api/v1/gap-analysis", tags=["gap-analysis"])
-
-
-def _derive_slug(company_name: str) -> str:
-    return derive_slug(company_name)
 
 
 def _gap_analysis_artifacts_exist(storage: "StorageBackend", effective_slug: str) -> bool:
@@ -59,22 +55,25 @@ async def start_gap_analysis(
     body: GapAnalysisStartRequest,
     response: Response,
     request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
     event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
     storage_backend: StorageBackend = Depends(get_storage_dep),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> PipelineRunResponse:
-    # Tenant isolation: slug must match authenticated user's company
-    user_company_slug: Optional[str] = getattr(request.state, "company_slug", None)
-    slug = _derive_slug(body.company_name)
-    if not user_company_slug or slug != user_company_slug:
-        raise HTTPException(
-            status_code=403,
-            detail="Cannot start pipeline for another company",
-        )
-    effective_slug = f"{slug}__{body.product_slug}" if body.product_slug else slug
+    scope = await resolve_workspace_scope(
+        request,
+        _user,
+        workspace_service,
+        workspace_slug=body.workspace_slug,
+        company_name=body.company_name,
+        product_slug=body.product_slug,
+        min_roles=("owner", "admin", "member"),
+    )
+    slug = scope.workspace_slug
+    effective_slug = scope.effective_slug
 
     if not body.force_rerun and _gap_analysis_artifacts_exist(storage_backend, effective_slug):
         last_task = _get_latest_gap_run(task_store, slug, body.product_slug)
@@ -94,6 +93,7 @@ async def start_gap_analysis(
             run_id=last_task.task_id if last_task else f"existing-{effective_slug}",
             pipeline="gap_analysis",
             company_slug=slug,
+            workspace_id=scope.workspace_id,
             product_slug=body.product_slug,
             effective_slug=effective_slug,
             status="already_exists",
@@ -102,7 +102,13 @@ async def start_gap_analysis(
             message="Artifacts already exist. Pass force_rerun=true to re-run.",
         )
 
-    task = await create_task_durable(task_store, "gap_analysis", slug, product_slug=body.product_slug)
+    task = await create_task_durable(
+        task_store,
+        "gap_analysis",
+        slug,
+        product_slug=body.product_slug,
+        workspace_id=scope.workspace_id,
+    )
 
     handle = asyncio.create_task(
         run_gap_pipeline_task(
@@ -132,6 +138,7 @@ async def start_gap_analysis(
         run_id=task.task_id,
         pipeline=task.pipeline,
         company_slug=task.company_slug,
+        workspace_id=task.workspace_id,
         product_slug=task.product_slug,
         effective_slug=task.effective_slug,
         status=task.status.value,
@@ -145,16 +152,15 @@ async def get_gap_analysis_status(
     request: Request,
     _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> TaskResponse:
     task = task_store.get_task(run_id)
-    # Task ownership check
-    user_company_slug = getattr(request.state, "company_slug", None)
-    if task.company_slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_task_workspace_access(task, _user, workspace_service)
     return TaskResponse(
         run_id=task.task_id,
         pipeline=task.pipeline,
         company_slug=task.company_slug,
+        workspace_id=task.workspace_id,
         status=task.status.value,
         current_step=task.current_step,
         progress_pct=task.progress_pct,

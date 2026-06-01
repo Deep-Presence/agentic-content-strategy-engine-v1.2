@@ -38,6 +38,7 @@ async def hydrate_content_inventory_from_site_audit(
     pipeline_run_id: Optional[_uuid.UUID],
     audit_result: Any,
     html_map: Optional[dict[str, str]] = None,
+    workspace_id: Optional[_uuid.UUID] = None,
 ) -> dict[str, int] | None:
     """Upsert crawled pages from a Site Audit into the content inventory.
 
@@ -97,6 +98,7 @@ async def hydrate_content_inventory_from_site_audit(
                 discovery_output=discovery_proxy,
                 page_results=page_results,
                 html_map=html_map,
+                workspace_id=workspace_id,
             )
 
             await session.commit()
@@ -131,6 +133,7 @@ async def hydrate_content_inventory_from_gap_analysis(
     pipeline_run_id: Optional[_uuid.UUID],
     storage: Any,
     ga_prefix: str,
+    workspace_id: Optional[_uuid.UUID] = None,
 ) -> dict[str, int] | None:
     """Upsert crawled pages from Gap Analysis S1 into the content inventory.
 
@@ -243,6 +246,7 @@ async def hydrate_content_inventory_from_gap_analysis(
                 ingestion_run_id=pipeline_run_id,
                 pages=crawled,
                 ingestion_source=ContentIngestionSource.gap_analysis_crawl,
+                workspace_id=workspace_id,
             )
             await session.commit()
 

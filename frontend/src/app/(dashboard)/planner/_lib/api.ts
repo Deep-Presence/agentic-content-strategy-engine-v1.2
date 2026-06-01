@@ -4,6 +4,7 @@
  */
 
 import { api } from '@/lib/api-client';
+import { getActiveWorkspaceSlug } from '@/stores/workspace';
 import type {
   AssignmentListResponseAPI,
   AssignmentStatusUpdateResponseAPI,
@@ -116,11 +117,13 @@ export function expandSubdomain(
     taxonomy_version?: number;
   },
 ): Promise<PipelineRunResponseAPI> {
+  const workspaceSlug = getActiveWorkspaceSlug();
   return api.post<PipelineRunResponseAPI>(
     '/api/v1/topic-discovery/expand',
     {
       company_name: companyName,
       domain,
+      workspace_slug: workspaceSlug,
       subdomain_ids: subdomainIds,
       auto_approve_checkpoints: options?.auto_approve_checkpoints ?? [2],
       taxonomy_version: options?.taxonomy_version,
@@ -137,9 +140,11 @@ export function startFromTopicsPipeline(
   effectiveSlug: string,
   topicAssignmentIds: string[],
 ): Promise<PipelineRunResponseAPI> {
+  const workspaceSlug = getActiveWorkspaceSlug(effectiveSlug.split('__')[0] ?? '');
   return api.post<PipelineRunResponseAPI>('/api/v1/content/v13/from-topics/gap-analysis', {
     company_name: companyName,
     domain,
+    workspace_slug: workspaceSlug,
     effective_slug: effectiveSlug,
     topic_assignment_ids: topicAssignmentIds,
   });

@@ -1,7 +1,10 @@
 """Phase 4–7 workspace tenant tests."""
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 
@@ -98,6 +101,64 @@ class TestWorkspacePipelineAuthorization:
     ) -> None:
         resp = viewer_client.post(
             "/api/v1/gap-analysis/start",
-            json={"company_name": "Test Co", "company_slug": "test-co"},
+            json={
+                "company_name": "Test Co",
+                "domain": "testco.com",
+                "workspace_slug": "test-co",
+            },
         )
         assert resp.status_code == 403
+
+    def test_workspace_viewer_role_overrides_legacy_member_role(
+        self,
+        app: FastAPI,
+        client: TestClient,
+        test_user,
+    ) -> None:
+        workspace_service = app.state.workspace_service
+        workspace_service._membership_roles.setdefault(test_user.id, {})["test-co"] = "viewer"
+
+        resp = client.post(
+            "/api/v1/companies/test-co/products",
+            json={"slug": "blocked-product", "name": "Blocked Product", "domain": "testco.com"},
+        )
+        assert resp.status_code == 403
+
+    def test_gap_analysis_can_start_for_selected_second_workspace(
+        self,
+        client: TestClient,
+        task_store,
+    ) -> None:
+        create_resp = client.post(
+            "/api/v1/workspaces",
+            json={
+                "name": "Second Brand",
+                "primary_domain": "secondbrand.com",
+                "slug": "second-brand",
+            },
+        )
+        assert create_resp.status_code == 201
+        workspace = create_resp.json()
+
+        def _fake_create_task(coro):
+            coro.close()
+            return MagicMock()
+
+        with patch("api.routers.gap_analysis.asyncio.create_task", side_effect=_fake_create_task):
+            resp = client.post(
+                "/api/v1/gap-analysis/start",
+                json={
+                    "company_name": "Second Brand",
+                    "domain": "secondbrand.com",
+                    "workspace_slug": "second-brand",
+                },
+            )
+
+        assert resp.status_code == 202
+        body = resp.json()
+        assert body["company_slug"] == "second-brand"
+        assert body["workspace_id"] == workspace["id"]
+
+        task = task_store.get_task(body["run_id"])
+        assert task.company_slug == "second-brand"
+        assert task.workspace_id == workspace["id"]

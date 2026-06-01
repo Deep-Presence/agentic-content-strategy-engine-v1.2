@@ -17,8 +17,8 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from api.auth.dependencies import require_auth, require_role
-from api.dependencies import get_auth_service, get_event_bus, get_task_store
+from api.auth.dependencies import require_auth
+from api.dependencies import get_auth_service, get_event_bus, get_task_store, get_workspace_service
 from api.schemas.content_v13 import (
     ApprovalResponseV13,
     BriefApprovalRequest,
@@ -41,20 +41,25 @@ from api.schemas.content_v13 import (
 from api.tasks.event_bus import EventBusProtocol
 from api.tasks.models import PipelineTask, TaskStatus
 from api.tasks.runner import (
-    _derive_slug,
     _resolve_scope_async,
     dispatch_queued_td_content_runs,
     run_content_v13_pipeline_task,
     run_td_content_pipeline_task,
     run_td_gap_analysis_task,
 )
-from api.routers._helpers import create_task_durable
+from api.routers._helpers import (
+    assert_slug_workspace_access,
+    assert_task_workspace_access,
+    create_task_durable,
+    resolve_workspace_scope,
+)
 from core.auth.service import AuthServiceProtocol
 from core.content_engine.utils import truncate_to_token_limit
 from core.models.content_generation_v13 import ContentGenerationInputV13, EntryMode
 from core.models.organization import UserProfile
 from core.audit import log_hitl_decision, log_pipeline_launch
 from core.services.task_store import ApprovalWindowError, TaskStoreProtocol
+from core.services.workspace_protocol import WorkspaceServiceProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +79,7 @@ async def _try_create_td_batch_records(
     *,
     company_slug: str,
     effective_slug: str,
+    workspace_id: str | None,
     topic_assignment_ids: list[str],
     pipeline_task_id: str,
     product_slug: str | None,
@@ -94,6 +100,7 @@ async def _try_create_td_batch_records(
         batch, snapshots = await service.create_td_batch(
             company_slug=company_slug,
             effective_slug=effective_slug,
+            workspace_id=workspace_id,
             topic_assignment_ids=topic_assignment_ids,
             pipeline_task_id=pipeline_task_id,
             product_slug=product_slug,
@@ -225,17 +232,23 @@ async def _save_review_draft_content(
 async def start_content_v13(
     body: ContentStartRequestV13,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
     event_bus: EventBusProtocol = Depends(get_event_bus),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> PipelineRunResponseV13:
     """Launch the v1.3 content generation pipeline."""
-    # Tenant isolation
-    user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
-    company_slug = _derive_slug(body.company_name)
-    if not user_company_slug or company_slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Cannot start pipeline for another company")
+    workspace_scope = await resolve_workspace_scope(
+        http_request,
+        _user,
+        workspace_service,
+        workspace_slug=body.workspace_slug,
+        company_name=body.company_name,
+        product_slug=body.product_slug,
+        min_roles=("owner", "admin", "member"),
+    )
+    company_slug = workspace_scope.workspace_slug
 
     scope = await _resolve_scope_async(company_slug, body.product_slug, auth_service)
 
@@ -283,6 +296,7 @@ async def start_content_v13(
         company_slug=company_slug,
         product_slug=body.product_slug,
         allow_parallel=is_manual,
+        workspace_id=workspace_scope.workspace_id,
     )
 
     # H2: Route through runner to enforce semaphore, handle registration, and slug lock cleanup
@@ -309,6 +323,7 @@ async def start_content_v13(
 
     return PipelineRunResponseV13(
         run_id=task.task_id,
+        workspace_id=workspace_scope.workspace_id,
         status="started",
         entry_mode=body.entry_mode,
     )
@@ -325,14 +340,13 @@ async def get_status_v13(
     http_request: Request,
     _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> dict:
     """Get v1.3 pipeline status."""
     task = task_store.get_task(run_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    user_company_slug = getattr(http_request.state, "company_slug", None)
-    if task.company_slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_task_workspace_access(task, _user, workspace_service)
     return {
         "task_id": task.task_id,
         "status": task.status,
@@ -354,16 +368,21 @@ async def approve_topics(
     run_id: str,
     body: TopicApprovalRequest,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> ApprovalResponseV13:
     """Submit topic approval decision for HITL Checkpoint 1."""
     task = task_store.get_task(run_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    user_company_slug = getattr(http_request.state, "company_slug", None)
-    if task.company_slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_task_workspace_access(
+        task,
+        _user,
+        workspace_service,
+        min_roles=("owner", "admin", "member"),
+    )
+    user_company_slug = task.company_slug
 
     # C2 FIX: Stage-aware validation (fast-fail guard)
     _validate_approval_window(task, "topic_approval")
@@ -424,16 +443,21 @@ async def approve_brief(
     run_id: str,
     body: BriefApprovalRequest,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> ApprovalResponseV13:
     """Submit brief approval decision for HITL Checkpoint 2."""
     task = task_store.get_task(run_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    user_company_slug = getattr(http_request.state, "company_slug", None)
-    if task.company_slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_task_workspace_access(
+        task,
+        _user,
+        workspace_service,
+        min_roles=("owner", "admin", "member"),
+    )
+    user_company_slug = task.company_slug
 
     # C2 FIX: Stage-aware validation with brief_id match (fast-fail guard)
     _validate_approval_window(task, "brief_approval", body.brief_id)
@@ -568,16 +592,21 @@ async def approve_content(
     run_id: str,
     body: ContentApprovalRequestV13,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> ApprovalResponseV13:
     """Submit content approval decision for HITL Checkpoint 3."""
     task = task_store.get_task(run_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    user_company_slug = getattr(http_request.state, "company_slug", None)
-    if task.company_slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_task_workspace_access(
+        task,
+        _user,
+        workspace_service,
+        min_roles=("owner", "admin", "member"),
+    )
+    user_company_slug = task.company_slug
 
     # C2 FIX: Stage-aware validation with brief_id match (fast-fail guard)
     _validate_approval_window(task, "content_review", body.brief_id)
@@ -734,15 +763,15 @@ async def get_review_draft_content(
     run_id: str,
     brief_id: str,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> ContentDraftResponseV13:
     task = task_store.get_task(run_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"Task not found: {run_id}")
-    user_company_slug = getattr(http_request.state, "company_slug", None)
-    if task.company_slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_task_workspace_access(task, _user, workspace_service)
+    user_company_slug = task.company_slug
 
     content_markdown = await _load_review_draft_content(
         app=http_request.app,
@@ -763,15 +792,20 @@ async def save_review_draft_content(
     run_id: str,
     body: ContentDraftRequestV13,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> ContentDraftSaveResponseV13:
     task = task_store.get_task(run_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"Task not found: {run_id}")
-    user_company_slug = getattr(http_request.state, "company_slug", None)
-    if task.company_slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_task_workspace_access(
+        task,
+        _user,
+        workspace_service,
+        min_roles=("owner", "admin", "member"),
+    )
+    user_company_slug = task.company_slug
 
     try:
         storage_key = await _save_review_draft_content(
@@ -804,21 +838,27 @@ async def save_review_draft_content(
 async def start_from_topics(
     body: TopicContentStartRequest,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
     event_bus: EventBusProtocol = Depends(get_event_bus),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> PipelineRunResponseV13:
     """Launch the TD → GA → CE pipeline for approved topic assignments."""
-    # Tenant isolation
-    user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
-    company_slug = _derive_slug(body.company_name)
-    if not user_company_slug or company_slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Cannot start pipeline for another company")
-
     # Validate effective_slug format
     if not _SLUG_PATTERN.match(body.effective_slug):
         raise HTTPException(status_code=400, detail="Invalid effective_slug format")
+    workspace_scope = await resolve_workspace_scope(
+        http_request,
+        _user,
+        workspace_service,
+        workspace_slug=body.workspace_slug,
+        company_name=body.company_name,
+        effective_slug=body.effective_slug,
+        product_slug=body.product_slug,
+        min_roles=("owner", "admin", "member"),
+    )
+    company_slug = workspace_scope.workspace_slug
 
     # Create task
     task = await create_task_durable(
@@ -826,6 +866,7 @@ async def start_from_topics(
         pipeline="td_content",
         company_slug=company_slug,
         product_slug=body.product_slug,
+        workspace_id=workspace_scope.workspace_id,
     )
 
     handle = asyncio.create_task(
@@ -859,6 +900,7 @@ async def start_from_topics(
 
     return PipelineRunResponseV13(
         run_id=task.task_id,
+        workspace_id=workspace_scope.workspace_id,
         status="started",
         entry_mode="topic_discovery",
         message=f"TD→Content pipeline started for {len(body.topic_assignment_ids)} topics",
@@ -874,25 +916,31 @@ async def start_from_topics(
 async def start_from_topics_gap_analysis(
     body: TopicContentStartRequest,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
     event_bus: EventBusProtocol = Depends(get_event_bus),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> PipelineRunResponseV13:
     """Launch the TD → GA-only pipeline (Phase 1) for approved topic assignments.
 
     Runs topic-scoped Gap Analysis without starting Content Engine.
     The user can review GA results and then launch production (Phase 2).
     """
-    # Tenant isolation
-    user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
-    company_slug = _derive_slug(body.company_name)
-    if not user_company_slug or company_slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Cannot start pipeline for another company")
-
     # Validate effective_slug format
     if not _SLUG_PATTERN.match(body.effective_slug):
         raise HTTPException(status_code=400, detail="Invalid effective_slug format")
+    workspace_scope = await resolve_workspace_scope(
+        http_request,
+        _user,
+        workspace_service,
+        workspace_slug=body.workspace_slug,
+        company_name=body.company_name,
+        effective_slug=body.effective_slug,
+        product_slug=body.product_slug,
+        min_roles=("owner", "admin", "member"),
+    )
+    company_slug = workspace_scope.workspace_slug
 
     # Create task
     task = await create_task_durable(
@@ -901,12 +949,14 @@ async def start_from_topics_gap_analysis(
         company_slug=company_slug,
         product_slug=body.product_slug,
         allow_parallel=True,
+        workspace_id=workspace_scope.workspace_id,
     )
 
     batch_run_id, topic_runs = await _try_create_td_batch_records(
         http_request,
         company_slug=company_slug,
         effective_slug=body.effective_slug,
+        workspace_id=workspace_scope.workspace_id,
         topic_assignment_ids=body.topic_assignment_ids,
         pipeline_task_id=task.task_id,
         product_slug=body.product_slug,
@@ -946,6 +996,7 @@ async def start_from_topics_gap_analysis(
 
     return PipelineRunResponseV13(
         run_id=task.task_id,
+        workspace_id=workspace_scope.workspace_id,
         status="started",
         entry_mode="topic_discovery_ga",
         message=f"TD→GA pipeline started for {len(body.topic_assignment_ids)} topics",
@@ -963,24 +1014,30 @@ async def start_from_topics_gap_analysis(
 async def start_from_topics_production(
     body: TopicContentProductionRequest,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
     event_bus: EventBusProtocol = Depends(get_event_bus),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> PipelineRunResponseV13:
     """Launch Content Engine production from pre-computed GA results (Phase 2).
 
     Validates that the GA run's analysis.json exists before starting.
     """
-    # Tenant isolation
-    user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
-    company_slug = _derive_slug(body.company_name)
-    if not user_company_slug or company_slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Cannot start pipeline for another company")
-
     # Validate effective_slug format
     if not _SLUG_PATTERN.match(body.effective_slug):
         raise HTTPException(status_code=400, detail="Invalid effective_slug format")
+    workspace_scope = await resolve_workspace_scope(
+        http_request,
+        _user,
+        workspace_service,
+        workspace_slug=body.workspace_slug,
+        company_name=body.company_name,
+        effective_slug=body.effective_slug,
+        product_slug=body.product_slug,
+        min_roles=("owner", "admin", "member"),
+    )
+    company_slug = workspace_scope.workspace_slug
 
     # Validate that the GA run analysis.json exists
     from core.storage import get_storage_backend
@@ -1160,6 +1217,7 @@ async def start_from_topics_production(
 
     return PipelineRunResponseV13(
         run_id=(topic_run_items[0].pipeline_task_id if topic_run_items else None) or "",
+        workspace_id=workspace_scope.workspace_id,
         status="started",
         entry_mode="topic_discovery",
         message=f"TD→Content production queued for {len(body.topic_assignment_ids)} topics (GA: {body.ga_run_id[:8]}...)",
@@ -1177,15 +1235,13 @@ async def get_topic_content_status(
     effective_slug: str,
     http_request: Request,
     _user: UserProfile = Depends(require_auth),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> TopicContentStatusResponse:
     """Get per-assignment content status for a TD-driven content run."""
     if not _SLUG_PATTERN.match(effective_slug):
         raise HTTPException(status_code=400, detail="Invalid effective_slug format")
 
-    # Tenant isolation: effective_slug must start with the user's company slug
-    user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
-    if not user_company_slug or not effective_slug.startswith(user_company_slug):
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_slug_workspace_access(effective_slug, _user, workspace_service)
 
     from core.topic_discovery.db_ops import db_read_latest_matrix
 
@@ -1222,17 +1278,13 @@ async def get_topic_runs(
     effective_slug: str,
     http_request: Request,
     _user: UserProfile = Depends(require_auth),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> TopicRunListResponseV13:
     """List durable TD-entry topic runs for Content Studio hydration."""
     if not _SLUG_PATTERN.match(effective_slug):
         raise HTTPException(status_code=400, detail="Invalid effective_slug format")
 
-    user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
-    if not user_company_slug or (
-        effective_slug != user_company_slug
-        and not effective_slug.startswith(f"{user_company_slug}__")
-    ):
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_slug_workspace_access(effective_slug, _user, workspace_service)
 
     session_factory = getattr(http_request.app.state, "db_session_factory", None)
     if session_factory is None:
@@ -1278,6 +1330,7 @@ async def get_topic_run_events(
     topic_run_id: str,
     http_request: Request,
     _user: UserProfile = Depends(require_auth),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> TopicRunEventListResponseV13:
     """List durable append-only execution events for one TD-entry topic run."""
     if not _SLUG_PATTERN.match(effective_slug):
@@ -1287,12 +1340,7 @@ async def get_topic_run_events(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid topic_run_id format") from exc
 
-    user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
-    if not user_company_slug or (
-        effective_slug != user_company_slug
-        and not effective_slug.startswith(f"{user_company_slug}__")
-    ):
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_slug_workspace_access(effective_slug, _user, workspace_service)
 
     session_factory = getattr(http_request.app.state, "db_session_factory", None)
     if session_factory is None:

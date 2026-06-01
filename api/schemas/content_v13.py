@@ -17,8 +17,9 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 class ContentStartRequestV13(BaseModel):
     """Launch the v1.3 content pipeline."""
 
-    company_name: str
-    domain: str
+    company_name: str = ""
+    domain: str = ""
+    workspace_slug: str = ""
     entry_mode: Literal["autonomous", "manual"] = "autonomous"
 
     # Autonomous mode
@@ -48,6 +49,10 @@ class ContentStartRequestV13(BaseModel):
     @model_validator(mode="after")
     def _validate_manual_fields(self) -> "ContentStartRequestV13":
         """Ensure manual mode has a non-empty prompt and valid skip_stages."""
+        if not self.company_name.strip():
+            raise ValueError("company_name is required")
+        if not self.domain.strip():
+            raise ValueError("domain is required")
         if self.entry_mode == "manual":
             if not self.manual_prompt or not self.manual_prompt.strip():
                 raise ValueError(
@@ -186,7 +191,8 @@ class TopicRunSummaryV13(BaseModel):
 class PipelineRunResponseV13(BaseModel):
     """Response after starting the v1.3 pipeline."""
 
-    run_id: str
+    run_id: str = ""
+    workspace_id: Optional[str] = None
     status: str = "started"
     entry_mode: str = "autonomous"
     message: Optional[str] = None
@@ -214,9 +220,10 @@ SUPPORTED_SEARCH_PLATFORMS: set[str] = {"perplexity", "openai", "gemini", "claud
 class TopicContentStartRequest(BaseModel):
     """Launch the TD → GA → CE pipeline for approved topic assignments."""
 
-    company_name: str
-    domain: str
-    effective_slug: str
+    company_name: str = ""
+    domain: str = ""
+    workspace_slug: str = ""
+    effective_slug: str = ""
     topic_assignment_ids: List[str] = Field(min_length=1, max_length=20)
 
     @field_validator("topic_assignment_ids")
@@ -263,9 +270,10 @@ class TopicContentProductionRequest(BaseModel):
     the GA results and clicked "Start Production" in the Content Studio.
     """
 
-    company_name: str
-    domain: str
-    effective_slug: str
+    company_name: str = ""
+    domain: str = ""
+    workspace_slug: str = ""
+    effective_slug: str = ""
     topic_assignment_ids: List[str] = Field(min_length=1, max_length=20)
     ga_run_id: str  # UUID of the completed topic-scoped GA run
 

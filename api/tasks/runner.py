@@ -214,6 +214,7 @@ async def _create_pipeline_run(
     company_id: uuid.UUID,
     effective_slug: str,
     pipeline_type_str: str,
+    workspace_id: Optional[str] = None,
 ) -> None:
     """Create a PipelineRunModel record in the DB."""
     try:
@@ -225,6 +226,7 @@ async def _create_pipeline_run(
             run = PipelineRunModel(
                 id=run_id,
                 company_id=company_id,
+                workspace_id=uuid.UUID(workspace_id) if workspace_id else None,
                 effective_slug=effective_slug,
                 pipeline_type=pipeline_type,
                 status=PipelineStatus.running,
@@ -234,6 +236,13 @@ async def _create_pipeline_run(
             await session.commit()
     except Exception:
         logger.warning("Failed to create PipelineRunModel — continuing", exc_info=True)
+
+
+def _task_or_none(task_store: TaskStoreProtocol, task_id: str) -> PipelineTask | None:
+    try:
+        return task_store.get_task(task_id)
+    except Exception:
+        return None
 
 
 async def _mark_pipeline_run_complete(
@@ -337,8 +346,18 @@ async def run_gap_pipeline_task(
     Accepts the simplified GapAnalysisStartRequest, auto-resolves research
     artifact paths from disk, and constructs GapAnalysisInput internally.
     """
-    company_slug = _derive_slug(request.company_name)
-    product_slug = getattr(request, "product_slug", None)
+    _task = _task_or_none(task_store, task_id)
+    company_slug = (
+        _task.company_slug
+        if _task and _task.company_slug
+        else _derive_slug(request.company_name)
+    )
+    product_slug = (
+        _task.product_slug
+        if _task and _task.product_slug
+        else getattr(request, "product_slug", None)
+    )
+    workspace_id = _task.workspace_id if _task else None
     scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
 
     # Resolve DB context for Phase 4 persistence
@@ -349,6 +368,7 @@ async def run_gap_pipeline_task(
         await _create_pipeline_run(
             session_factory, run_id, company_id,
             scope.effective_slug, "gap_analysis",
+            workspace_id=workspace_id,
         )
 
     bind_context(task_id=task_id, pipeline_name="gap_analysis", company_slug=scope.company_slug, run_id=str(run_id) if run_id else None)
@@ -436,6 +456,7 @@ async def run_gap_pipeline_task(
                         scope.effective_slug, run_id,
                         storage=_storage,
                         ga_prefix=ga_prefix,
+                        workspace_id=uuid.UUID(workspace_id) if workspace_id else None,
                     )
                     if inventory_result:
                         logger.info(
@@ -517,8 +538,18 @@ async def run_site_audit_task(
         event_bus: SSE event bus for real-time progress streaming.
         auth_service: Optional auth service for product lookups.
     """
-    company_slug = _derive_slug(request.company_name)
-    product_slug = getattr(request, "product_slug", None)
+    _task = _task_or_none(task_store, task_id)
+    company_slug = (
+        _task.company_slug
+        if _task and _task.company_slug
+        else _derive_slug(request.company_name)
+    )
+    product_slug = (
+        _task.product_slug
+        if _task and _task.product_slug
+        else getattr(request, "product_slug", None)
+    )
+    workspace_id = _task.workspace_id if _task else None
     scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
 
     # Initialise DB vars before try so they're always available in finally
@@ -536,6 +567,7 @@ async def run_site_audit_task(
             await _create_pipeline_run(
                 session_factory, run_id, company_id,
                 scope.effective_slug, "site_audit",
+                workspace_id=workspace_id,
             )
         if run_id:
             bind_context(run_id=str(run_id))
@@ -592,6 +624,7 @@ async def run_site_audit_task(
                     session_factory, company_id,
                     scope.effective_slug, run_id, audit_result,
                     html_map=html_map,
+                    workspace_id=uuid.UUID(workspace_id) if workspace_id else None,
                 )
                 del html_map  # Free ~20MB of raw HTML
                 if inventory_result:
@@ -694,6 +727,7 @@ async def run_content_pipeline_task(
         await _create_pipeline_run(
             session_factory, run_id, company_id,
             effective, "content",
+            workspace_id=_task.workspace_id,
         )
 
     bind_context(task_id=task_id, pipeline_name="content", company_slug=company_slug, run_id=str(run_id) if run_id else None)
@@ -797,7 +831,8 @@ async def run_content_v13_pipeline_task(
     session_factory, run_id, company_id = await _resolve_db_context(company_slug, effective)
     if session_factory and run_id and company_id:
         await _create_pipeline_run(
-            session_factory, run_id, company_id, effective, "content"
+            session_factory, run_id, company_id, effective, "content",
+            workspace_id=_task.workspace_id,
         )
 
     bind_context(task_id=task_id, pipeline_name="content_v13", company_slug=company_slug, run_id=str(run_id) if run_id else None)
@@ -893,8 +928,18 @@ async def run_kb_pipeline_task(
     from core.models.knowledge_base import KnowledgeBaseInput
     from core.research.knowledge_base.pipeline import run_knowledge_base_pipeline
 
-    company_slug = _derive_slug(request.company_name)
-    product_slug = getattr(request, "product_slug", None)
+    _task = _task_or_none(task_store, task_id)
+    company_slug = (
+        _task.company_slug
+        if _task and _task.company_slug
+        else _derive_slug(request.company_name)
+    )
+    product_slug = (
+        _task.product_slug
+        if _task and _task.product_slug
+        else getattr(request, "product_slug", None)
+    )
+    workspace_id = _task.workspace_id if _task else None
     scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
 
     # Resolve DB context for research artifact persistence
@@ -905,6 +950,7 @@ async def run_kb_pipeline_task(
         await _create_pipeline_run(
             session_factory, run_id, company_id,
             scope.effective_slug, "knowledge_base",
+            workspace_id=workspace_id,
         )
 
     bind_context(task_id=task_id, pipeline_name="knowledge_base", company_slug=scope.company_slug, run_id=str(run_id) if run_id else None)
@@ -1441,8 +1487,18 @@ async def run_topic_discovery_pipeline_task(
     from core.models.topic_discovery import TopicDiscoveryInput
     from core.topic_discovery.pipeline import run_topic_discovery_pipeline
 
-    company_slug = _derive_slug(request.company_name)
-    product_slug = getattr(request, "product_slug", None)
+    _task = _task_or_none(task_store, task_id)
+    company_slug = (
+        _task.company_slug
+        if _task and _task.company_slug
+        else _derive_slug(request.company_name)
+    )
+    product_slug = (
+        _task.product_slug
+        if _task and _task.product_slug
+        else getattr(request, "product_slug", None)
+    )
+    workspace_id = _task.workspace_id if _task else None
     scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
 
     # Resolve DB context for pipeline run tracking
@@ -1453,6 +1509,7 @@ async def run_topic_discovery_pipeline_task(
         await _create_pipeline_run(
             session_factory, run_id, company_id,
             scope.effective_slug, "topic_discovery",
+            workspace_id=workspace_id,
         )
 
     bind_context(task_id=task_id, pipeline_name="topic_discovery", company_slug=scope.company_slug, run_id=str(run_id) if run_id else None)
@@ -1532,8 +1589,18 @@ async def run_topic_expansion_pipeline_task(
     from core.models.topic_discovery import TopicExpansionInput
     from core.topic_discovery.pipeline import run_topic_expansion_pipeline
 
-    company_slug = _derive_slug(request.company_name)
-    product_slug = getattr(request, "product_slug", None)
+    _task = _task_or_none(task_store, task_id)
+    company_slug = (
+        _task.company_slug
+        if _task and _task.company_slug
+        else _derive_slug(request.company_name)
+    )
+    product_slug = (
+        _task.product_slug
+        if _task and _task.product_slug
+        else getattr(request, "product_slug", None)
+    )
+    workspace_id = _task.workspace_id if _task else None
     scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
 
     session_factory, run_id, company_id = await _resolve_db_context(
@@ -1543,6 +1610,7 @@ async def run_topic_expansion_pipeline_task(
         await _create_pipeline_run(
             session_factory, run_id, company_id,
             scope.effective_slug, "topic_expansion",
+            workspace_id=workspace_id,
         )
 
     bind_context(task_id=task_id, pipeline_name="topic_expansion", company_slug=scope.company_slug, run_id=str(run_id) if run_id else None)
@@ -1633,7 +1701,13 @@ async def run_td_content_pipeline_task(
         run_td_to_content_pipeline,
     )
 
-    company_slug = _derive_slug(company_name)
+    _task = _task_or_none(task_store, task_id)
+    company_slug = (
+        _task.company_slug
+        if _task and _task.company_slug
+        else _derive_slug(company_name)
+    )
+    workspace_id = _task.workspace_id if _task else None
 
     session_factory, run_id, company_id = await _resolve_db_context(
         company_slug, effective_slug,
@@ -1642,6 +1716,7 @@ async def run_td_content_pipeline_task(
         await _create_pipeline_run(
             session_factory, run_id, company_id,
             effective_slug, "content",
+            workspace_id=workspace_id,
         )
 
     bind_context(task_id=task_id, pipeline_name="td_content", company_slug=company_slug, run_id=str(run_id) if run_id else None)
@@ -1730,7 +1805,13 @@ async def run_td_gap_analysis_task(
     from core.models.topic_discovery import TopicAssignmentStatus
     from core.services.content_engine_topic_runs import ContentEngineTopicRunService
 
-    company_slug = _derive_slug(company_name)
+    _task = _task_or_none(task_store, task_id)
+    company_slug = (
+        _task.company_slug
+        if _task and _task.company_slug
+        else _derive_slug(company_name)
+    )
+    workspace_id = _task.workspace_id if _task else None
 
     session_factory, run_id, company_id = await _resolve_db_context(
         company_slug, effective_slug,
@@ -1739,6 +1820,7 @@ async def run_td_gap_analysis_task(
         await _create_pipeline_run(
             session_factory, run_id, company_id,
             effective_slug, "td_gap_analysis",
+            workspace_id=workspace_id,
         )
     topic_run_service = (
         ContentEngineTopicRunService(session_factory)
@@ -1897,12 +1979,14 @@ async def _create_td_content_dispatch_task(
     task_store: TaskStoreProtocol,
     company_slug: str,
     product_slug: str | None,
+    workspace_id: str | None = None,
 ) -> PipelineTask | None:
     task = task_store.create_task(
         "td_content",
         company_slug,
         product_slug,
         allow_parallel=True,
+        workspace_id=workspace_id,
     )
     try:
         await task_store.ensure_created(task.task_id)
@@ -1990,6 +2074,7 @@ async def dispatch_queued_td_content_runs(
                 task_store=task_store,
                 company_slug=company_slug,
                 product_slug=launch_context.get("product_slug"),
+                workspace_id=getattr(claim, "workspace_id", None),
             )
         if task is None:
             undispatched_claim_ids.append(claim.topic_run_id)
@@ -2100,7 +2185,13 @@ async def run_td_content_production_task(
     from core.models.topic_discovery import TopicAssignmentStatus
     from core.services.content_engine_topic_runs import ContentEngineTopicRunService
 
-    company_slug = _derive_slug(company_name)
+    _task = _task_or_none(task_store, task_id)
+    company_slug = (
+        _task.company_slug
+        if _task and _task.company_slug
+        else _derive_slug(company_name)
+    )
+    workspace_id = _task.workspace_id if _task else None
 
     session_factory, run_id, company_id = await _resolve_db_context(
         company_slug, effective_slug,
@@ -2109,6 +2200,7 @@ async def run_td_content_production_task(
         await _create_pipeline_run(
             session_factory, run_id, company_id,
             effective_slug, "content",
+            workspace_id=workspace_id,
         )
     topic_run_service = (
         ContentEngineTopicRunService(session_factory)

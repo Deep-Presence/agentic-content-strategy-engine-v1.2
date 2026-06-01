@@ -155,6 +155,8 @@ class WorkspaceService:
             # Legacy fallback during transition: single-company users table
             if str(user.company_id) == str(workspace_model.company_id):
                 legacy_role = _user_role_to_workspace_role(user.role)
+                if min_roles and legacy_role.value not in min_roles:
+                    raise ValueError("insufficient_role")
                 return (
                     self._orm_to_workspace(workspace_model),
                     WorkspaceMembership(
@@ -209,6 +211,39 @@ class WorkspaceService:
                 joined_at=_utcnow(),
             )
         return self._orm_to_workspace(workspace_model)
+
+    async def ensure_workspace_membership(
+        self,
+        workspace_slug: str,
+        user_id: str,
+        *,
+        role: str = "member",
+    ) -> WorkspaceMembership:
+        workspace_model = await self._workspace_repo.get_by_slug(workspace_slug)
+        if workspace_model is None:
+            raise ValueError("workspace_not_found")
+
+        user_uuid = _uuid.UUID(user_id)
+        membership = await self._membership_repo.get_membership(
+            workspace_model.id,
+            user_uuid,
+        )
+        if membership is not None:
+            membership.role = WorkspaceRole(role)
+            membership.status = MembershipStatus.active
+            if membership.joined_at is None:
+                membership.joined_at = _utcnow()
+            await self._membership_repo._session.flush()
+            return self._orm_to_membership(membership)
+
+        created = await self._membership_repo.create(
+            workspace_id=workspace_model.id,
+            user_id=user_uuid,
+            role=WorkspaceRole(role),
+            status=MembershipStatus.active,
+            joined_at=_utcnow(),
+        )
+        return self._orm_to_membership(created)
 
     async def create_workspace(
         self,

@@ -90,6 +90,7 @@ class QueuedTopicRunClaimSnapshot:
     pipeline_task_id: str | None
     effective_slug: str
     company_slug: str
+    workspace_id: str | None
     scheduler_state: str
     launch_context: dict[str, Any]
     continuation_payload: dict[str, Any]
@@ -130,6 +131,7 @@ class ContentEngineTopicRunService:
         effective_slug: str,
         topic_assignment_ids: Sequence[str],
         pipeline_task_id: str | None,
+        workspace_id: str | None = None,
         product_slug: str | None = None,
         source: str = "topic_discovery_pipeline_b",
         source_mode: str = "td_entry_mode",
@@ -140,6 +142,7 @@ class ContentEngineTopicRunService:
         metadata_json: dict | None = None,
     ) -> tuple[ContentEngineBatchRunModel, list[TopicRunSnapshot]]:
         assignment_uuids = [_uuid.UUID(str(tid)) for tid in topic_assignment_ids]
+        workspace_uuid = _uuid.UUID(workspace_id) if workspace_id else None
         ga_run_uuid = _uuid.UUID(ga_run_id) if ga_run_id else None
         async with self._session_factory() as session:
             company_repo = CompanyRepository(session)
@@ -183,6 +186,7 @@ class ContentEngineTopicRunService:
                     ContentEngineTopicRunModel(
                         batch_run_id=batch.id,
                         company_id=company.id,
+                        workspace_id=workspace_uuid,
                         product_id=product.id if product else None,
                         effective_slug=effective_slug,
                         topic_assignment_id=assignment.id,
@@ -892,6 +896,7 @@ class ContentEngineTopicRunService:
             pipeline_task_id=run.pipeline_task_id,
             effective_slug=run.effective_slug,
             company_slug=company_slug,
+            workspace_id=str(run.workspace_id) if run.workspace_id else None,
             scheduler_state=run.scheduler_state,
             launch_context=launch_context,
             continuation_payload=dict(run.continuation_payload_json or {}),

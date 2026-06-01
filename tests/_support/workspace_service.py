@@ -156,6 +156,22 @@ class TestWorkspaceService:
         del created_by_user_id, owner_user_id, owner_role
         return self._workspace_from_company(company, role="owner")
 
+    async def ensure_workspace_membership(
+        self,
+        workspace_slug: str,
+        user_id: str,
+        *,
+        role: str = "member",
+    ) -> WorkspaceMembership:
+        company = self._company_for_slug(workspace_slug)
+        if company is None:
+            raise ValueError("workspace_not_found")
+        self._extra_memberships.setdefault(user_id, set()).add(company.slug)
+        self._membership_roles.setdefault(user_id, {})[company.slug] = role
+        membership = await self.get_active_membership(workspace_slug, user_id)
+        assert membership is not None
+        return membership
+
     async def create_workspace(
         self,
         *,

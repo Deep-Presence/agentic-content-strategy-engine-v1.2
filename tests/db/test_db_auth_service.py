@@ -144,6 +144,13 @@ class TestInviteFlow:
         )
         assert new_user.role == "member"
         assert new_user.company_id == company.id
+        assert same_company.slug == company.slug
+
+        workspaces = await db_auth_service._workspace_service.list_workspaces_for_user(
+            new_user.id
+        )
+        membership = next(item for item in workspaces if item.slug == company.slug)
+        assert membership.role == "member"
 
     @pytest.mark.asyncio
     async def test_double_use_prevention(self, db_auth_service):
