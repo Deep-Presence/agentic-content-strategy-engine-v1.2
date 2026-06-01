@@ -4,19 +4,19 @@
 > **Owner:** Core
 > **Dependencies:** httpx (async HTTP), Fernet encryption, Redis (cache), StorageBackend
 > **Dependents:** `api/routers/cms.py`, Content-to-Prompt pipeline, Content Inventory service
-> **Last Updated:** 2026-04-24
+> **Last Updated:** 2026-06-01
 
 ## Overview
 
-The CMS module provides an adapter pattern for integrating with Content Management Systems. Currently supports WordPress via its REST API, with the architecture designed for future Webflow, Strapi, Ghost, and HubSpot adapters. Credentials are encrypted at rest with Fernet. The module handles the full lifecycle: connection validation, content sync (including content inventory hydration and prompt generation), SEO-enriched publishing (Yoast meta fields), content refresh, stale content detection, and Redis-backed caching with explicit invalidation.
+The CMS module provides an adapter pattern for integrating with Content Management Systems. Supports **WordPress** (REST API + Application Passwords) and **Webflow** (Data API v2 + Site API Token), with the architecture designed for future Strapi, Ghost, and HubSpot adapters. Credentials are encrypted at rest with Fernet. Provider-specific non-secret configuration (Webflow collection mappings, OAuth refs) lives in `cms_connections.provider_config` JSONB. The module handles the full lifecycle: connection validation, content sync (including content inventory hydration and prompt generation), SEO-enriched publishing, content refresh, stale content detection, and Redis-backed caching with explicit invalidation.
 
 ## Architecture
 
 ```
 CMSAdapterProtocol (runtime-checkable)
         |
-        v
-WordPressAdapter (concrete)
+        +-- WordPressAdapter (concrete)
+        +-- WebflowAdapter (concrete — multi-collection)
     +-- validate_connection()
     +-- list_posts() / list_all_posts() / get_post()
     +-- publish_post() / update_post()
@@ -49,12 +49,49 @@ CMS Cache Layer (core/services/cms_cache.py)
 | `core/cms/models.py` | Pydantic domain models (CMSPost, CMSPostCreate, CMSPostUpdate, CMSConnectionConfig, CMSPublishMetadata, etc.) |
 | `core/cms/factory.py` | `create_cms_adapter()` -- adapter factory with provider registry |
 | `core/cms/adapters/wordpress.py` | WordPress REST API implementation |
+| `core/cms/adapters/webflow/` | Webflow Data API v2 — adapter, client, auth, field mapper |
+| `core/cms/webflow_models.py` | `WebflowProviderConfig`, collection configs, field mappings |
 | `core/cms/exceptions.py` | Exception hierarchy: `CMSError` -> `CMSAuthError`, `CMSAPIError`, `CMSNotFoundError`, `CMSRateLimitError`, `CMSConnectionError` |
 | `core/services/cms_service.py` | `CMSService` orchestrator -- connection, sync, publish, refresh |
 | `core/services/cms_cache.py` | Redis cache helpers -- get/set/invalidate per cache domain |
-| `api/routers/cms.py` | 11 REST endpoints with tenant isolation and RBAC |
+| `api/routers/cms.py` | 14 REST endpoints with tenant isolation and RBAC |
 
-## Detailed Reference
+### Webflow Adapter (`core/cms/adapters/webflow/`)
+
+**Auth v1:** Site API Token (Bearer). Credentials stored in Fernet envelope with `auth_type: site_token`. OAuth-ready envelope for future WF-5.
+
+**Provider config (`provider_config` JSONB):**
+
+| Field | Purpose |
+|-------|---------|
+| `site_id` | Webflow site ID (auto-resolved from `site_url` on connect if omitted) |
+| `collections[]` | Enabled CMS collections with per-collection field mappings |
+| `default_collection_id` | Default publish target when UI does not specify one |
+| `publish_mode` | `live_direct` (default) or `staged_then_publish` |
+
+**Connection validation (`validate_connection()`):**
+
+1. `GET /token/authorized_by` — verifies token, returns account email.
+2. Resolve site by `site_id` or match `site_url` host against site domains.
+3. Returns `CMSConnectionStatus` with `cms_version=webflow-v2`.
+
+**Multi-collection sync:** `list_all_posts()` aggregates live items from every `enabled` collection in `provider_config.collections`. Each normalized `CMSPost` carries `raw_metadata.collection_id` for traceability.
+
+**Field mapping:** User-configured slugs map normalized publish fields → Webflow `fieldData` keys (`title_field`, `slug_field`, `body_field`, SEO fields, etc.). `suggest_field_mapping()` heuristics power the Settings UI wizard.
+
+**Publish:** `publish_post()` resolves target collection via `CMSPostCreate.collection_id` or default. `live_direct` creates live items; `staged_then_publish` creates staged items then calls publish endpoint.
+
+**Refresh (multi-collection):** `update_post()` and `get_post()` call `_resolve_collection_for_item()` — probes each enabled collection until the item is found (no DB migration required).
+
+**Media:** `upload_media()` not implemented in v1 — publish without featured image.
+
+**Webflow-specific API (WF-2):**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/cms/webflow/collections` | List CMS collections for connected site |
+| `GET` | `/api/v1/cms/webflow/collections/{id}/fields` | Collection schema + suggested field mapping |
+| `POST` | `/api/v1/cms/webflow/configure` | Save `provider_config`, optional `trigger_sync` |
 
 ### WordPress Adapter (`core/cms/adapters/wordpress.py`)
 
@@ -117,7 +154,7 @@ All fields have defaults for backward compatibility.
 
 | Model | Purpose |
 |-------|---------|
-| `CMSConnectionConfig` | Credentials: provider, site_url, api_key, username, extra |
+| `CMSConnectionConfig` | Credentials: provider, site_url, api_key, username, extra, **provider_config** |
 | `CMSConnectionStatus` | Validation result: connected, site_name, capabilities, error |
 | `CMSPost` | Normalized post: cms_id, title, slug, content_html, seo_title, seo_description, word_count, raw_metadata |
 | `CMSPostCreate` | Publish payload: title, content_html, seo_title, seo_description, canonical_url, categories, tags, published_at |
@@ -234,21 +271,24 @@ All cache operations run via `asyncio.to_thread()` (sync Redis calls from async 
 
 **Prefix:** `/api/v1/cms`
 
-11 endpoints with tenant isolation (company_slug from auth state) and RBAC:
+14 endpoints with tenant isolation (company_slug from auth state) and RBAC:
 
 | # | Method | Path | Auth | Description |
 |---|--------|------|------|-------------|
-| 1 | `POST` | `/connect` | member/superuser | Connect CMS + auto-sync on first connect |
-| 2 | `GET` | `/connection` | any auth | Get connection info (Redis-cached) |
+| 1 | `POST` | `/connect` | member/superuser | Connect CMS (+ optional `provider_config`) + auto-sync on first connect |
+| 2 | `GET` | `/connection` | any auth | Get connection info incl. `provider_config` (Redis-cached) |
 | 3 | `DELETE` | `/connection` | member/superuser | Soft-deactivate connection |
 | 4 | `POST` | `/sync` | member/superuser | Re-sync content (background task, 202) |
 | 5 | `GET` | `/synced-posts` | any auth | List synced posts (paginated, Redis-cached) |
 | 6 | `GET` | `/stale-actions` | any auth | Stale content cards for Home dashboard |
 | 7 | `POST` | `/stale-to-triage` | member/superuser | Queue stale post for refresh |
-| 8 | `POST` | `/publish` | member/superuser | Publish brief to CMS |
+| 8 | `POST` | `/publish` | member/superuser | Publish brief to CMS (+ optional `collection_id` for Webflow) |
 | 9 | `POST` | `/refresh/{cms_post_id}` | member/superuser | Update existing CMS post |
 | 10 | `GET` | `/publish-history` | any auth | Publish/refresh audit trail |
 | 11 | `GET` | `/categories` | any auth | CMS categories (Redis-cached) |
+| 12 | `GET` | `/webflow/collections` | member/superuser | Webflow: list CMS collections |
+| 13 | `GET` | `/webflow/collections/{id}/fields` | member/superuser | Webflow: schema + suggested mapping |
+| 14 | `POST` | `/webflow/configure` | member/superuser | Webflow: save config + optional sync |
 
 **Error mapping (`_handle_cms_error()`):**
 

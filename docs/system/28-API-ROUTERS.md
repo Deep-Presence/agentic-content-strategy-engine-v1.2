@@ -60,7 +60,7 @@ Topic-level parallelism flow:
 | content_data | Briefs list/detail/stage, add brief, save publish metadata (5) |
 | content_performance | Readiness, table, velocity, similar, detail (5) |
 | content_to_prompt | Generate, list by page, metrics, pending, approve (7) |
-| cms | Connect, sync, publish, refresh, stale actions, categories (11) |
+| cms | Connect, sync, publish, refresh, stale actions, categories, **Webflow configure** (14) |
 | analytics | OAuth flow, connection, properties, sync (8) |
 
 ## `content_v13.py` — Deep Dive
@@ -149,10 +149,11 @@ Append-only execution event log for single topic run. Returns `TopicRunEventList
 
 ## `cms.py`
 
-11 endpoints under `/api/v1/cms`.
+14 endpoints under `/api/v1/cms`.
 
-- `POST /connect` auto-launches `cms_sync` on first connect, returns `sync_task_id`.
-- `POST /publish` accepts `CMSPublishMetadata` (meta_title, meta_description, canonical_url, schema_markup). Invalidates GA4 caches after publish.
+- `POST /connect` accepts optional `provider_config` (Webflow collections). Auto-launches `cms_sync` on first connect, returns `sync_task_id`.
+- `POST /publish` accepts `CMSPublishMetadata` and optional `collection_id` (Webflow multi-collection publish). Invalidates GA4 caches after publish.
+- Webflow-only: `GET /webflow/collections`, `GET /webflow/collections/{id}/fields`, `POST /webflow/configure` (optional `trigger_sync`).
 - Both `POST /publish` and `POST /refresh/{cms_post_id}` invalidate GA4 caches.
 - `GET /categories` — CMS categories for publish UI.
 - `POST /stale-to-triage` — queue stale post for refresh.

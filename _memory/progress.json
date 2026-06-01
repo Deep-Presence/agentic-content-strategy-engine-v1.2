@@ -1,6 +1,6 @@
 {
   "current_sprint": "feat/workspace-backend",
-  "last_updated": "2026-06-01T12:00:00Z",
+  "last_updated": "2026-06-01T18:30:00Z",
   "test_count": 2159,
   "completed_sprints_summary": {
     "total_tasks_completed": 51,
@@ -2006,6 +2006,24 @@
         "tests/topic_discovery/test_cannibalization_persistence.py"
       ],
       "codex_review": "Refactored cannibalization orchestration around delta-scoped async recomputation instead of full synchronous rescans on evidence changes. `recalculate_assignment_cannibalization_records()` now accepts explicit assignment IDs, Topic Discovery repos expose planner-open delta candidate selection plus durable top-match lookups by changed inventory page, and `resolve_impacted_assignment_scope_for_inventory_changes()` resolves a narrow recompute slice from the latest discovery. Added a durable `td_cannibalization` background task in `api/tasks/runner.py`, then wired CMS auto-prompt completion and Daily Tracker fanout completion to enqueue that task with changed inventory IDs. The new runner resolves impacted assignments at execution time and recomputes only that assignment slice. Validation: `venv/bin/pytest tests/topic_discovery/test_cannibalization_service.py tests/topic_discovery/test_expansion_td.py tests/topic_discovery/test_td_persistence.py tests/topic_discovery/test_db_ops_additive.py tests/topic_discovery/test_cannibalization_persistence.py tests/services/test_content_inventory_service.py tests/api/test_cms_sync_prompt_chain.py tests/api/test_td_cannibalization_runner.py -q` (145 passed) and `venv/bin/python -m py_compile api/tasks/runner.py core/topic_discovery/cannibalization_service.py core/db/repositories/topic_discovery_repo.py core/db/repositories/content_inventory_prompt_repo.py api/tasks/models.py`."
+    },
+    {
+      "id": "T-webflow-wf4-e2e-docs",
+      "task": "WF-4 Webflow E2E validation + docs sync (ENG-98)",
+      "sprint": "webflow-cms",
+      "status": "done",
+      "completed_at": "2026-06-01",
+      "tests_added": 6,
+      "files_modified": [
+        "core/cms/adapters/webflow/adapter.py",
+        "tests/integration/test_webflow_cms_e2e.py",
+        "tests/cms/test_webflow_adapter.py",
+        "docs/system/22-CORE-CMS.md",
+        "docs/system/28-API-ROUTERS.md",
+        "docs/system/33-FRONTEND-DASHBOARD-PAGES.md",
+        "docs/FRONTEND_BACKEND_INTEGRATION_MAP.md"
+      ],
+      "validation": "pytest tests/cms/ tests/api/test_cms.py tests/services/test_cms_service.py tests/integration/test_webflow_cms_e2e.py -q (203 passed); multi-collection refresh via _resolve_collection_for_item"
     }
   ],
   "pending": [

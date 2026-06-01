@@ -192,6 +192,7 @@ planner/
 
 ### Recent Changes
 
+- **Webflow CMS integration (WF-1–WF-4)** — Settings → Integrations: 3-step connect wizard (token → collections → field map). `WebflowCard` shows Disconnected / Finish Setup / Connected states. Content Studio: `useCMSConnection` hook, **Publish to CMS** in header + Export tab, Webflow collection picker when multiple collections enabled.
 - **GA4 Connect Flow** — 3-state component (`not_connected`, `property_required`, `connected`). OAuth round-trip, property selection, disconnect with `purgeData` toggle.
 - **Integrations hook** — `buildBackfillRequest(days)` for GA4, `waitForTaskCompletion(taskId)` poll, OAuth callback handling (`?ga4=connected`).
 - **New types**: `GA4ConnectionResponseAPI`, `GA4PropertyItemAPI`, `GA4SyncRequestAPI`, `TaskStatusAPI`.

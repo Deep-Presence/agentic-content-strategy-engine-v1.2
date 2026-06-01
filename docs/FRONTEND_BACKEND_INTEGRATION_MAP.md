@@ -305,7 +305,8 @@
 | Approve article | `/api/v1/content/v13/{run_id}/approve/content` | POST | `{ brief_id, decision: "approve" }` |
 | Send back for revision | `/api/v1/content/v13/{run_id}/approve/content` | POST | `{ brief_id, decision: "edit", editor_notes }` |
 | CPS prediction scores | `/api/v1/cps/score` | POST | Score content before publish |
-| Publish to CMS | `/api/v1/cms/publish` | POST | `{ brief_id, status: "publish" }` → `{ cms_post_id, url }` |
+| Publish to CMS | `/api/v1/cms/publish` | POST | `{ brief_id, status: "publish", collection_id? }` → `{ cms_post_id, url }` (Webflow: pass `collection_id` when multiple collections enabled) |
+| CMS connection (Content Studio) | `/api/v1/cms/connection` | GET | `{ provider, provider_config, sync_post_count, ... }` |
 | Article metadata (slug, meta, tags) | `/api/v1/companies/{slug}/content/briefs/{brief_id}` | GET | Brief detail includes content metadata |
 
 **Column ↔ Status mapping:**
@@ -388,8 +389,12 @@
 
 | Mock Data | Backend Endpoint | Method | Response |
 |---|---|---|---|
-| 7 integrations (all disconnected) | `/api/v1/cms/connection` | GET | `CMSConnectionInfoResponse` (WordPress only currently) |
-| Connect WordPress | `/api/v1/cms/connect` | POST | `{ provider: "wordpress", site_url, api_key }` |
+| 7 integrations (CMS + GA4) | `/api/v1/cms/connection` | GET | `CMSConnectionInfoResponse` (WordPress or Webflow) |
+| Connect WordPress | `/api/v1/cms/connect` | POST | `{ provider: "wordpress", site_url, username, api_key }` |
+| Connect Webflow (step 1) | `/api/v1/cms/connect` | POST | `{ provider: "webflow", site_url, api_key }` (Site API Token) |
+| Webflow collections | `/api/v1/cms/webflow/collections` | GET | Collection list for configure wizard |
+| Webflow field schema | `/api/v1/cms/webflow/collections/{id}/fields` | GET | Fields + `suggested_mapping` |
+| Webflow configure + sync | `/api/v1/cms/webflow/configure` | POST | `{ site_id, collections[], default_collection_id, trigger_sync: true }` |
 | GA4 connection | **GA4 integration (in progress)** | — | DB layer done, endpoints pending |
 
 ### Billing Tab
