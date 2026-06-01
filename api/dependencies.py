@@ -29,6 +29,7 @@ from core.services.site_audit_data import SiteAuditDataServiceProtocol
 from core.services.task_store import TaskStoreProtocol
 from core.services.topic_discovery_data import TopicDiscoveryDataServiceProtocol
 from core.services.vsg_data import VSGDataServiceProtocol
+from core.services.workspace_protocol import WorkspaceServiceProtocol
 
 _logger = logging.getLogger(__name__)
 
@@ -84,10 +85,21 @@ def _build_db_auth_service(request: Request, session: Any) -> AuthServiceProtoco
         from core.db.repositories.invite_repo import InviteRepository
         from core.db.repositories.pipeline_defaults_repo import PipelineDefaultsRepository
         from core.db.repositories.product_repo import ProductRepository
+        from core.db.repositories.workspace_repo import (
+            WorkspaceMembershipRepository,
+            WorkspaceRepository,
+        )
+        from core.services.workspace_service import WorkspaceService
 
         secret_key = getattr(request.app.state, "secret_key", None)
         if secret_key is None:
             return None
+        workspace_service = WorkspaceService(
+            workspace_repo=WorkspaceRepository(session),
+            membership_repo=WorkspaceMembershipRepository(session),
+            company_repo=CompanyRepository(session),
+            auth_repo=AuthRepository(session),
+        )
         return DbAuthService(
             company_repo=CompanyRepository(session),
             auth_repo=AuthRepository(session),
@@ -95,6 +107,7 @@ def _build_db_auth_service(request: Request, session: Any) -> AuthServiceProtoco
             product_repo=ProductRepository(session),
             defaults_repo=PipelineDefaultsRepository(session),
             secret_key=secret_key,
+            workspace_service=workspace_service,
         )
     except Exception:
         _logger.debug("Failed to build DbAuthService", exc_info=True)
@@ -127,6 +140,58 @@ async def get_auth_service(
         if db_service is None:
             raise RuntimeError(
                 "Failed to construct DbAuthService — check DATABASE_URL and secret_key."
+            )
+        yield db_service
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+
+
+def _build_db_workspace_service(request: Request, session: Any) -> WorkspaceServiceProtocol | None:
+    try:
+        from core.db.repositories.auth_repo import AuthRepository
+        from core.db.repositories.company_repo import CompanyRepository
+        from core.db.repositories.workspace_repo import (
+            WorkspaceMembershipRepository,
+            WorkspaceRepository,
+        )
+        from core.services.workspace_service import WorkspaceService
+
+        return WorkspaceService(
+            workspace_repo=WorkspaceRepository(session),
+            membership_repo=WorkspaceMembershipRepository(session),
+            company_repo=CompanyRepository(session),
+            auth_repo=AuthRepository(session),
+        )
+    except Exception:
+        _logger.debug("Failed to build WorkspaceService", exc_info=True)
+        return None
+
+
+async def get_workspace_service(
+    request: Request,
+) -> AsyncGenerator[WorkspaceServiceProtocol, None]:
+    """Return the workspace service with proper DB session lifecycle."""
+    service = getattr(request.app.state, "workspace_service", None)
+    if service is not None:
+        yield service
+        return
+
+    sf = getattr(request.app.state, "db_session_factory", None)
+    if sf is None:
+        raise RuntimeError(
+            "DATABASE_URL is required for workspace service. "
+            "Set it in your environment or .env file."
+        )
+    session = sf()
+    try:
+        db_service = _build_db_workspace_service(request, session)
+        if db_service is None:
+            raise RuntimeError(
+                "Failed to construct WorkspaceService — check DATABASE_URL."
             )
         yield db_service
         await session.commit()

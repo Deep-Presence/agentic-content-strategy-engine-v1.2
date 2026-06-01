@@ -49,9 +49,10 @@
     "TD `start-production` now queues durable topic runs and dispatches one `td_content` task per claimed topic. Scheduler state now lives in dedicated `content_engine_topic_runs` columns (`scheduler_state`, `claim_token`, queue/claim/wait timestamps, `continuation_payload_json`) rather than `metadata_json.dispatch_state`",
     "TD HITL-2 / HITL-3 approvals now externalize into durable continuations: the runner records `waiting_human` on the topic run, approval routes must durably queue `resume_queued` before recording approval history, and the dispatcher reuses the existing `td_content` task id to resume the LangGraph checkpoint from the stored `thread_id` and continuation payload",
     "TD durable scheduler transitions are now the router commit point: `start-production` must fail closed unless durable topic runs were actually queued, and nullable scheduler fields like `pipeline_task_id` / `claimed_at` / `waiting_for_human_at` require explicit clear semantics on requeue",
-    "After the 2026-04-10 resume-loop incident, stale Redis brief-card task mappings (`WE-*` / `__tid:WE-*`) were proven to outlive the authoritative durable `content_engine_topic_runs.pipeline_task_id` after a poisoned run. Fresh TD retests should start from cleaned runtime state, and the remaining hardening gap is to repair or bypass stale Redis brief-card task ids in favor of durable topic-run identity on `/content/briefs`."
+    "After the 2026-04-10 resume-loop incident, stale Redis brief-card task mappings (`WE-*` / `__tid:WE-*`) were proven to outlive the authoritative durable `content_engine_topic_runs.pipeline_task_id` after a poisoned run. Fresh TD retests should start from cleaned runtime state, and the remaining hardening gap is to repair or bypass stale Redis brief-card task ids in favor of durable topic-run identity on `/content/briefs`.",
+    "Workspace tenant (feat/workspace-backend, branched from codex-td-entry-parallelism-plan): authorization via workspace_memberships, not token company_slug alone; migration 0042_workspaces backfills companies→workspaces; /api/v1/companies/{slug} remains legacy alias; frontend workspace store still mock until Phase 6"
   ],
-  "active_branches": ["integration/front-back-2", "codex-td-entry-parallelism-plan"],
+  "active_branches": ["feat/workspace-backend", "integration/front-back-2", "codex-td-entry-parallelism-plan"],
   "environment_notes": [
     "Python 3.12", "async-first", "VS Code + Claude Code extension",
     "Key deps: LangGraph >=0.2, langsmith >=0.2, litellm >=1.50 (VSG-1 only), openai >=2.0 (OpenRouter + native), sqlalchemy[asyncio] >=2.0.30, structlog >=24.1, redis[hiredis] >=5.2.0, perplexityai >=0.2 (GA engine only)"
@@ -77,11 +78,18 @@
     "frontend/src/app/(dashboard)/content-studio/_lib/card-activity.ts (NEW — generic card-activity adapter + formatter helpers)",
     "frontend/src/app/(dashboard)/content-studio/_components/RightSidebar.tsx (MODIFIED — Activity tab renders generic card-activity items)",
     "frontend/src/app/(dashboard)/content-studio/_components/FullPageView.tsx (MODIFIED — wires generic card activity into the card detail view)",
-    "frontend/src/app/(dashboard)/content-studio/page.tsx (MODIFIED — consume authoritative topic_run_changed instead of blanket refetch)"
+    "frontend/src/app/(dashboard)/content-studio/page.tsx (MODIFIED — consume authoritative topic_run_changed instead of blanket refetch)",
+    "core/db/migrations/versions/0042_workspaces.py (NEW — workspaces + workspace_memberships, revises 0041)",
+    "core/db/models/workspace.py (NEW — WorkspaceModel, WorkspaceMembershipModel)",
+    "core/services/workspace_service.py (NEW — membership auth + profile aggregation shell)",
+    "api/routers/workspaces.py (NEW — /api/v1/workspaces CRUD + profile + members)",
+    "api/auth/dependencies.py (MODIFIED — membership-based tenant checks)",
+    "frontend/src/stores/workspace.ts (NOT YET migrated — still mock; Phase 6 pending)"
   ],
   "test_count": 2102,
   "phases_completed_count": 85,
   "recent_phases": [
+    "workspace-backend-phase1-3 — Workspace tenant foundation on feat/workspace-backend (based on codex-td-entry-parallelism-plan). Migration 0042_workspaces, membership auth, /api/v1/workspaces routes, register creates owner membership. 8 new tests. Run `alembic upgrade head` after 0041.",
     "td-entry-parallel-execution-phase17 — Codex implemented the Phase 6 startup-recovery slice. FastAPI lifespan now reconciles TD topic runs in `queued`, `resume_queued`, `claimed`, `running`, and `waiting_human` against recovered task rows on boot, clears stale queued task ids, restores failed-restart approval checkpoints back to `waiting_human`, requeues stranded continuations as `resume_queued`, requeues plain stranded runs as `content_queued`, emits `topic_run_recovered` events, and auto-dispatches companies with recovered queued work. Validation: `venv/bin/pytest tests/content_engine/test_topic_run_service.py tests/api/test_lifespan_task_store.py -q` (10 passed), `venv/bin/pytest tests/content_engine/test_topic_run_service.py tests/api/test_lifespan_task_store.py tests/api/test_content_v13_ga_endpoints.py -q` (44 passed, 2 pre-existing warnings), and `venv/bin/pytest tests/api/test_lifespan_task_store.py tests/services/test_db_task_store.py tests/services/test_approval_queue_redis.py tests/api/test_content_v13.py tests/api/test_content_v13_ga_endpoints.py tests/content_engine/test_topic_run_service.py -q` (174 passed, 35 pre-existing warnings).",
     "td-entry-parallel-execution-phase16 — Codex implemented the Phase 5 TD scheduler hardening slice. Scheduler/claim state moved into dedicated `content_engine_topic_runs` columns via migration 0039, TD brief/content approvals now pause the worker with `ApprovalPauseRequested` and persist a continuation payload, approval routes queue the topic run as `resume_queued`, and dispatcher resume claims reuse the existing `td_content` task id while resuming the LangGraph checkpoint from the stored `thread_id`. This phase also corrected a regression so singleton runners like `gap_analysis` and `site_audit` stay on the shared semaphore pool instead of the CE company pool. Validation: `venv/bin/pytest tests/api/test_content_v13.py tests/api/test_content_v13_ga_endpoints.py tests/content_engine/test_graph_v13.py tests/services/test_approval_queue_redis.py -q` (179 passed, pre-existing warnings) and `venv/bin/pytest tests/content_engine/test_pipeline_v13.py -k 'test_td_worker_failure_writes_explicit_failed_state or test_td_rebrief_preserves_brief_id_and_threads_session_factory' -q` (2 passed, 1 pre-existing AsyncMock warning).",
     "td-entry-parallel-execution-phase14 — Codex implemented the first Phase 3 dispatcher slice. TD `start-production` now queues existing durable topic runs with persisted launch context, claims company-scoped `content_queued` rows via `FOR UPDATE SKIP LOCKED`, creates one `td_content` task per claimed topic, and returns additive `topic_runs` snapshots so the frontend can read the per-topic `pipeline_task_id`. Runner completion triggers another dispatch pass so queued topics drain automatically as CE slots free up. Validation: `venv/bin/pytest tests/api/test_content_v13_ga_endpoints.py -q` (28 passed, 2 pre-existing warnings), `venv/bin/pytest tests/content_engine/test_topic_run_service.py tests/services/test_redis_semaphore.py tests/services/test_heartbeat_renewal.py tests/api/test_content_v13_ga_endpoints.py -q` (61 passed, 2 pre-existing warnings), `npx tsc --noEmit` (clean).",
@@ -115,6 +123,9 @@
     "td-additive-upsert — Refactor Pipeline B to additive per-subdomain DB upserts. 5 new db_ops functions, retry/backoff, circuit breaker, per-assignment persona affinity. Migration 0031. 18 new tests."
   ],
   "phases_remaining": [
+    "workspace-phase4 — WorkspaceProfileService full aggregation (CMS, GA4, tasks)",
+    "workspace-phase5 — workspace_id columns on pipeline/runtime tables",
+    "workspace-phase6 — Frontend workspace selector wired to GET /api/v1/workspaces",
     "openrouter-phase3 — Embeddings: Point embedding clients at OpenRouter",
     "openrouter-phase4 — Cost tracking for native calls: track_llm_cost() wrapper for ~16 non-migrated sites",
     "openrouter-phase5 (optional) — LangChain adapter: KB Synthesis + Reddit HIL via ChatOpenAI(base_url=openrouter)"

@@ -44,7 +44,12 @@ from core.db.repositories.company_repo import CompanyRepository
 from core.db.repositories.invite_repo import InviteRepository
 from core.db.repositories.pipeline_defaults_repo import PipelineDefaultsRepository
 from core.db.repositories.product_repo import ProductRepository
+from core.db.repositories.workspace_repo import (
+    WorkspaceMembershipRepository,
+    WorkspaceRepository,
+)
 from core.models.organization import Company, CompanyPipelineDefaults, Product, UserProfile
+from core.services.workspace_service import WorkspaceService
 
 
 def _utcnow() -> datetime:
@@ -62,6 +67,7 @@ class DbAuthService:
         product_repo: ProductRepository,
         defaults_repo: PipelineDefaultsRepository,
         secret_key: str,
+        workspace_service: WorkspaceService | None = None,
     ) -> None:
         self._company_repo = company_repo
         self._auth_repo = auth_repo
@@ -69,6 +75,12 @@ class DbAuthService:
         self._product_repo = product_repo
         self._defaults_repo = defaults_repo
         self._secret_key = secret_key
+        self._workspace_service = workspace_service or WorkspaceService(
+            workspace_repo=WorkspaceRepository(auth_repo._session),
+            membership_repo=WorkspaceMembershipRepository(auth_repo._session),
+            company_repo=company_repo,
+            auth_repo=auth_repo,
+        )
 
     # ── ORM → Pydantic conversion ─────────────────────────────
 
@@ -405,7 +417,15 @@ class DbAuthService:
         # Eagerly load products relationship to avoid lazy-load in async context
         await self._company_repo._session.refresh(company_model, ["products"])
 
-        return self._orm_to_user_profile(user_model), self._orm_to_company(company_model)
+        company = self._orm_to_company(company_model)
+        await self._workspace_service.ensure_workspace_for_company(
+            company,
+            created_by_user_id=str(user_model.id),
+            owner_user_id=str(user_model.id),
+            owner_role="owner",
+        )
+
+        return self._orm_to_user_profile(user_model), company
 
     # ── Invite flow ────────────────────────────────────────────
 

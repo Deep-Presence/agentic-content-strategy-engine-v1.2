@@ -1,7 +1,7 @@
 """FastAPI auth dependencies — authentication, role, and tenant authorization.
 
 Dependency chain (Codex I1):
-  require_auth → require_role → require_company_access
+  require_auth → require_role → require_company_access / require_workspace_access
 
 Middleware handles authentication (identity extraction + default-deny).
 Dependencies handle authorization (permissions + tenant scoping).
@@ -12,9 +12,13 @@ from typing import Callable, Optional, Tuple
 
 from fastapi import Depends, HTTPException, Request
 
-from api.dependencies import get_auth_service
+from api.dependencies import get_auth_service, get_workspace_service
 from core.auth.service import AuthServiceProtocol
 from core.models.organization import Company, UserProfile
+from core.models.workspace import Workspace, WorkspaceMembership
+from core.services.workspace_protocol import WorkspaceServiceProtocol
+
+_WRITE_MEMBERSHIP_ROLES = frozenset({"owner", "admin", "member"})
 
 
 async def require_auth(
@@ -82,38 +86,65 @@ def require_role(*allowed_roles: str) -> Callable[..., UserProfile]:
 async def require_tenant(
     slug: str,
     request: Request,
-    _user: UserProfile = Depends(require_auth),
+    user: UserProfile = Depends(require_auth),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> UserProfile:
     """Lightweight tenant check for data-read endpoints.
 
-    Compares the URL ``slug`` against the authenticated user's
-    ``company_slug`` from the token (set by middleware).
-    No store lookup needed — suitable for high-volume read endpoints.
-    Returns the authenticated user profile.
+    Verifies active workspace membership for the URL slug. Legacy
+    single-company users still pass via company_id fallback in the service.
     """
-    company_slug: Optional[str] = getattr(request.state, "company_slug", None)
-    if not company_slug or slug != company_slug:
+    try:
+        await workspace_service.assert_workspace_access(slug, user)
+    except ValueError as exc:
+        if str(exc) == "workspace_not_found":
+            raise HTTPException(status_code=404, detail=f"Workspace '{slug}' not found")
         raise HTTPException(status_code=403, detail="Access denied")
-    return _user
+    return user
+
+
+async def require_workspace_member(
+    workspace_slug: str,
+    user: UserProfile = Depends(require_auth),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
+) -> Tuple[UserProfile, Workspace, WorkspaceMembership]:
+    """Verify the user has active membership in the requested workspace."""
+    try:
+        workspace, membership = await workspace_service.assert_workspace_access(
+            workspace_slug, user
+        )
+    except ValueError as exc:
+        code = str(exc)
+        if code == "workspace_not_found":
+            raise HTTPException(
+                status_code=404, detail=f"Workspace '{workspace_slug}' not found"
+            )
+        raise HTTPException(status_code=403, detail="Access denied")
+    return user, workspace, membership
 
 
 async def require_company_access(
     slug: str,
     user: UserProfile = Depends(require_auth),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> Tuple[UserProfile, Company]:
     """Verify the authenticated user belongs to the company identified by *slug*.
 
-    Uses ``company_id`` (UUID) for comparison, not slug strings (Codex I2).
-    Returns ``(user, company)`` for convenience.
-    Suitable for endpoints that need the Company object (write operations).
+    Uses workspace membership as the authorization boundary while still
+    returning the legacy Company object for existing write endpoints.
     """
+    try:
+        await workspace_service.assert_workspace_access(slug, user)
+    except ValueError as exc:
+        code = str(exc)
+        if code == "workspace_not_found":
+            raise HTTPException(status_code=404, detail=f"Company '{slug}' not found")
+        raise HTTPException(status_code=403, detail="Access denied")
+
     company = await auth_service.get_company_by_slug(slug)
     if not company:
         raise HTTPException(status_code=404, detail=f"Company '{slug}' not found")
-
-    if user.company_id != company.id:
-        raise HTTPException(status_code=403, detail="Access denied")
 
     return user, company
 
@@ -122,16 +153,27 @@ async def require_company_member(
     slug: str,
     user: UserProfile = Depends(require_role("member", "superuser")),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> Tuple[UserProfile, Company]:
     """Like ``require_company_access`` but also requires member+ role.
 
-    Combines role check and tenant check in one dependency for write endpoints.
+    Combines legacy role check and workspace membership for write endpoints.
     """
+    try:
+        _workspace, membership = await workspace_service.assert_workspace_access(
+            slug, user
+        )
+    except ValueError as exc:
+        code = str(exc)
+        if code == "workspace_not_found":
+            raise HTTPException(status_code=404, detail=f"Company '{slug}' not found")
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    if membership.role not in _WRITE_MEMBERSHIP_ROLES and user.role == "viewer":
+        raise HTTPException(status_code=403, detail="Access denied")
+
     company = await auth_service.get_company_by_slug(slug)
     if not company:
         raise HTTPException(status_code=404, detail=f"Company '{slug}' not found")
-
-    if user.company_id != company.id:
-        raise HTTPException(status_code=403, detail="Access denied")
 
     return user, company

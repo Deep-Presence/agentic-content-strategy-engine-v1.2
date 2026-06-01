@@ -25,6 +25,7 @@ from core.models.organization import Company, UserProfile
 from core.storage.backends.local import LocalStorageBackend
 from tests._support.auth_service import TestAuthService
 from tests._support.event_bus import InMemoryEventBus
+from tests._support.workspace_service import TestWorkspaceService
 
 
 # ── Infrastructure fixtures ────────────────────────────────
@@ -157,6 +158,7 @@ def app(
     application.state.secret_key = auth_store._secret_key
     # Pre-build auth service for test isolation (bypasses DB-backed get_auth_service() DI)
     application.state.auth_service = TestAuthService(auth_store)
+    application.state.workspace_service = TestWorkspaceService(auth_store)
     return application
 
 

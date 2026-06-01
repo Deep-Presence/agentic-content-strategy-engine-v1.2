@@ -17,6 +17,19 @@ class UserRole(str, Enum):
     viewer = "viewer"
 
 
+class WorkspaceRole(str, Enum):
+    owner = "owner"
+    admin = "admin"
+    member = "member"
+    viewer = "viewer"
+
+
+class MembershipStatus(str, Enum):
+    active = "active"
+    invited = "invited"
+    suspended = "suspended"
+
+
 # ── Pipeline Infrastructure ───────────────────────────────────────────
 class PipelineType(str, Enum):
     research = "research"

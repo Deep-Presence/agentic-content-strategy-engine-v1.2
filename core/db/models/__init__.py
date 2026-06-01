@@ -22,4 +22,5 @@ from core.db.models import (  # noqa: F401
     topic_discovery,
     tracking,
     voice_style_guide,
+    workspace,
 )

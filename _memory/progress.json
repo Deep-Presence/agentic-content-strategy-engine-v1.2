@@ -1,7 +1,7 @@
 {
-  "current_sprint": "td-entry-parallel-execution",
-  "last_updated": "2026-04-11",
-  "test_count": 2121,
+  "current_sprint": "feat/workspace-backend",
+  "last_updated": "2026-06-01",
+  "test_count": 2129,
   "completed_sprints_summary": {
     "total_tasks_completed": 48,
     "sprints": [
@@ -298,6 +298,38 @@
     ]
   },
   "completed": [
+    {
+      "id": "T-workspace-backend-phase1-3",
+      "task": "Workspace Backend Phases 1–3 — tenant tables (migration 0042_workspaces revises 0041), membership auth, /api/v1/workspaces API, register creates workspace + owner membership. Branch feat/workspace-backend rebased onto codex-td-entry-parallelism-plan.",
+      "sprint": "feat/workspace-backend",
+      "status": "done",
+      "completed_at": "2026-06-01",
+      "branch_base": "codex-td-entry-parallelism-plan",
+      "tests_added": 8,
+      "files_created": [
+        "core/db/migrations/versions/0042_workspaces.py",
+        "core/db/models/workspace.py",
+        "core/db/repositories/workspace_repo.py",
+        "core/models/workspace.py",
+        "core/services/workspace_service.py",
+        "core/services/workspace_protocol.py",
+        "api/routers/workspaces.py",
+        "api/schemas/workspace.py",
+        "tests/_support/workspace_service.py",
+        "tests/api/test_workspaces.py",
+        "tests/db/test_workspace_repo.py"
+      ],
+      "files_modified": [
+        "core/db/enums.py",
+        "core/db/models/__init__.py",
+        "core/auth/db_service.py",
+        "api/auth/dependencies.py",
+        "api/dependencies.py",
+        "api/app.py",
+        "tests/api/conftest.py"
+      ],
+      "validation": "alembic upgrade head (0042); pytest tests/api/test_workspaces.py tests/api/test_registration.py -q"
+    },
     {
       "id": "T-webflow-content-engine-runtime-reset",
       "task": "Operational reset \u2014 clear prior Webflow content-engine runtime state before the next TD-entry test pass",

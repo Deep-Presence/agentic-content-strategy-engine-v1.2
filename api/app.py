@@ -26,7 +26,7 @@ from api.exceptions import (
 from api.tasks.exceptions import ApprovalDeliveryError
 from api.auth.middleware import AuthMiddleware
 from api.auth.store import AuthStore
-from api.routers import analytics, artifacts, audience_persona, auth, brand_data, cms, companies, company_stream, content, content_data, content_inventory, content_performance, content_to_prompt, content_v13, cps, daily_tracker, events, gap_analysis, gap_data, health, knowledge_base, knowledge_docs, onboarding, research_orchestrator, settings, site_audit as site_audit_router, tasks, topic_discovery, voice_style_guide
+from api.routers import analytics, artifacts, audience_persona, auth, brand_data, cms, companies, company_stream, content, content_data, content_inventory, content_performance, content_to_prompt, content_v13, cps, daily_tracker, events, gap_analysis, gap_data, health, knowledge_base, knowledge_docs, onboarding, research_orchestrator, settings, site_audit as site_audit_router, tasks, topic_discovery, voice_style_guide, workspaces
 from api.tasks.exceptions import TaskConflictError, TaskNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -380,6 +380,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(auth.router)
     app.include_router(companies.router)
+    app.include_router(workspaces.router)
     app.include_router(gap_analysis.router)
     app.include_router(gap_data.router)
     app.include_router(events.router)
