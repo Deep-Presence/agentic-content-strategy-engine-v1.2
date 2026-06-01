@@ -17,10 +17,9 @@ from core.db.repositories.workspace_repo import (
 from core.models.organization import Company, UserProfile
 from core.models.workspace import (
     Workspace,
-    WorkspaceArtifactStatus,
-    WorkspaceIntegrationsSummary,
     WorkspaceMemberSummary,
     WorkspaceMembership,
+    WorkspaceProductSummary,
     WorkspaceProfile,
     WorkspaceSummary,
 )
@@ -348,99 +347,15 @@ class WorkspaceService:
         workspace, membership = await self.assert_workspace_access(
             workspace_slug, user
         )
+        from core.services.workspace_profile_service import WorkspaceProfileService
 
-        products: List[dict[str, Any]] = []
-        if auth_service is not None:
-            company = await auth_service.get_company_by_slug(workspace_slug)
-            if company and company.products:
-                products = [
-                    {
-                        "slug": p.slug,
-                        "name": p.name,
-                        "domain": p.domain,
-                        "description": p.description,
-                    }
-                    for p in company.products
-                ]
-
-        artifact_status = WorkspaceArtifactStatus()
-        if artifacts_root is not None:
-            from api.routers.companies import (
-                _build_research_summary,
-                _detect_artifact_status,
-                _has_nested_artifacts,
-            )
-
-            slug = workspace_slug
-            research = _build_research_summary(
-                artifacts_root, slug, backend=storage_backend
-            )
-            if research.company_context_status != "none":
-                artifact_status.knowledge_base = research.company_context_status
-            if research.personas:
-                artifact_status.audience_personas = "ready"
-            if research.style_guide_status != "none":
-                artifact_status.voice_style_guide = research.style_guide_status
-            if _has_nested_artifacts(
-                artifacts_root, "gap_analysis", slug, backend=storage_backend
-            ):
-                artifact_status.gap_analysis = "ready"
-            if _has_nested_artifacts(
-                artifacts_root, "content", slug, backend=storage_backend
-            ):
-                artifact_status.content_engine = "ready"
-
-        integrations = WorkspaceIntegrationsSummary()
-        try:
-            from sqlalchemy import select
-
-            from core.db.models.cms import CMSConnectionModel
-
-            cid = _uuid.UUID(workspace.company_id)
-            stmt = (
-                select(CMSConnectionModel)
-                .where(
-                    CMSConnectionModel.company_id == cid,
-                    CMSConnectionModel.is_active.is_(True),
-                )
-                .limit(1)
-            )
-            result = await self._workspace_repo._session.execute(stmt)
-            cms = result.scalar_one_or_none()
-            if cms is not None:
-                integrations.cms = {
-                    "connected": True,
-                    "provider": cms.provider.value
-                    if hasattr(cms.provider, "value")
-                    else str(cms.provider),
-                }
-        except Exception:
-            pass
-
-        if task_store is not None:
-            for task in task_store.list_tasks():
-                if task.company_slug != workspace_slug:
-                    continue
-                if task.status.value in ("pending", "running", "PENDING", "RUNNING"):
-                    pipeline = task.pipeline
-                    if pipeline in ("gap_analysis", "td_gap_analysis"):
-                        artifact_status.gap_analysis = "running"
-                    elif pipeline in ("content", "content_v13", "td_content"):
-                        artifact_status.content_engine = "running"
-                    elif pipeline == "topic_discovery":
-                        artifact_status.topic_discovery = "running"
-
-        return WorkspaceProfile(
-            id=workspace.id,
-            slug=workspace.slug,
-            name=workspace.name,
-            primary_domain=workspace.primary_domain,
-            additional_domains=workspace.additional_domains,
-            industry=workspace.industry,
-            color=workspace.color,
-            logo_url=workspace.logo_url,
-            role=membership.role,
-            products=products,
-            integrations=integrations,
-            artifact_status=artifact_status,
+        profile_service = WorkspaceProfileService(self._workspace_repo._session)
+        return await profile_service.get_profile(
+            workspace_slug,
+            workspace=workspace,
+            membership=membership,
+            auth_service=auth_service,
+            artifacts_root=artifacts_root,
+            storage_backend=storage_backend,
+            task_store=task_store,
         )

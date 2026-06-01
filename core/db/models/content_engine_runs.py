@@ -89,6 +89,11 @@ class ContentEngineTopicRunModel(UUIDPKMixin, TimestampMixin, Base):
         ForeignKey("companies.id", ondelete="CASCADE"),
         nullable=False,
     )
+    workspace_id: Mapped[_uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     product_id: Mapped[_uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True),
         ForeignKey("products.id", ondelete="SET NULL"),

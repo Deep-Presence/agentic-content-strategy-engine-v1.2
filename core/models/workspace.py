@@ -88,6 +88,75 @@ class WorkspaceArtifactStatus(BaseModel):
     content_engine: str = "idle"
 
 
+class WorkspaceProductSummary(BaseModel):
+    """Product/project row within a workspace profile."""
+
+    slug: str
+    name: str
+    domain: Optional[str] = None
+    description: Optional[str] = None
+    has_research: bool = False
+    has_gap_analysis: bool = False
+    has_content: bool = False
+
+
+class WorkspaceResearchSummary(BaseModel):
+    """Research artifact snapshot for workspace profile."""
+
+    company_context: Optional[str] = None
+    company_context_status: str = "none"
+    personas: List[str] = Field(default_factory=list)
+    style_guide: Optional[str] = None
+    style_guide_status: str = "none"
+
+
+class WorkspaceLatestRunSummary(BaseModel):
+    """Summary of the most recent pipeline run."""
+
+    run_id: str
+    status: str
+    created_at: datetime
+    completed_at: Optional[datetime] = None
+    summary: Optional[Dict[str, Any]] = None
+
+
+class WorkspaceRunningTaskSummary(BaseModel):
+    """In-flight pipeline task for workspace profile."""
+
+    task_id: str
+    pipeline: str
+    status: str
+    created_at: datetime
+    current_step: Optional[str] = None
+
+
+class WorkspaceStatsSummary(BaseModel):
+    """Aggregate counts for workspace dashboard shell."""
+
+    content_inventory_count: int = 0
+    tracked_prompts_active: int = 0
+    tracked_prompts_total: int = 0
+    knowledge_docs_count: int = 0
+
+
+class WorkspaceTopicDiscoverySummary(BaseModel):
+    """Topic discovery state for workspace profile."""
+
+    status: str = "idle"
+    assignment_count: int = 0
+    latest_run_id: Optional[str] = None
+
+
+class WorkspaceContentStudioSummary(BaseModel):
+    """Content studio queue state for workspace profile."""
+
+    queued: int = 0
+    running: int = 0
+    waiting_human: int = 0
+    completed: int = 0
+    failed: int = 0
+
+
 class WorkspaceProfile(BaseModel):
     """Broad workspace profile for selector + dashboard shell."""
 
@@ -100,10 +169,26 @@ class WorkspaceProfile(BaseModel):
     color: str = "#5BA4C4"
     logo_url: Optional[str] = None
     role: WorkspaceRoleLiteral = "member"
-    products: List[Dict[str, Any]] = Field(default_factory=list)
+    is_archived: bool = False
+    products: List[WorkspaceProductSummary] = Field(default_factory=list)
     integrations: WorkspaceIntegrationsSummary = Field(
         default_factory=WorkspaceIntegrationsSummary
     )
     artifact_status: WorkspaceArtifactStatus = Field(
         default_factory=WorkspaceArtifactStatus
+    )
+    has_research: bool = False
+    has_gap_analysis: bool = False
+    has_content: bool = False
+    research_summary: WorkspaceResearchSummary = Field(
+        default_factory=WorkspaceResearchSummary
+    )
+    latest_runs: Dict[str, WorkspaceLatestRunSummary] = Field(default_factory=dict)
+    running_tasks: List[WorkspaceRunningTaskSummary] = Field(default_factory=list)
+    stats: WorkspaceStatsSummary = Field(default_factory=WorkspaceStatsSummary)
+    topic_discovery: WorkspaceTopicDiscoverySummary = Field(
+        default_factory=WorkspaceTopicDiscoverySummary
+    )
+    content_studio: WorkspaceContentStudioSummary = Field(
+        default_factory=WorkspaceContentStudioSummary
     )

@@ -11,7 +11,9 @@ from core.models.workspace import (
     Workspace,
     WorkspaceMemberSummary,
     WorkspaceMembership,
+    WorkspaceProductSummary,
     WorkspaceProfile,
+    WorkspaceResearchSummary,
     WorkspaceSummary,
 )
 
@@ -37,6 +39,8 @@ class TestWorkspaceService:
     def __init__(self, store: AuthStore) -> None:
         self._store = store
         self._extra_memberships: Dict[str, Set[str]] = {}
+        self._archived_slugs: Set[str] = set()
+        self._membership_roles: Dict[str, Dict[str, str]] = {}
 
     def _get_user(self, user_id: str) -> Optional[Dict[str, Any]]:
         return self._store.get_user_by_id(user_id)
@@ -51,6 +55,13 @@ class TestWorkspaceService:
         if user.get("company_id") == company.id:
             return True
         return slug_in_extra(user_id, company.slug, self._extra_memberships)
+
+    def _role_for_user(self, user_id: str, company: Company) -> str:
+        override = self._membership_roles.get(user_id, {}).get(company.slug)
+        if override:
+            return override
+        user = self._get_user(user_id)
+        return _legacy_role(user.get("role", "member") if user else "member")
 
     def _workspace_from_company(self, company: Company, *, role: str) -> Workspace:
         return Workspace(
@@ -69,13 +80,13 @@ class TestWorkspaceService:
     async def list_workspaces_for_user(
         self, user_id: str, *, include_archived: bool = False
     ) -> List[WorkspaceSummary]:
-        del include_archived
         summaries: List[WorkspaceSummary] = []
         for company in self._store.list_companies():
+            if not include_archived and company.slug in self._archived_slugs:
+                continue
             if not self._user_can_access(user_id, company):
                 continue
-            user = self._get_user(user_id)
-            role = _legacy_role(user.get("role", "member") if user else "member")
+            role = self._role_for_user(user_id, company)
             summaries.append(
                 WorkspaceSummary(
                     id=company.id,
@@ -83,6 +94,7 @@ class TestWorkspaceService:
                     name=company.name,
                     primary_domain=company.domain,
                     role=role,
+                    is_archived=company.slug in self._archived_slugs,
                 )
             )
         return summaries
@@ -91,7 +103,9 @@ class TestWorkspaceService:
         company = self._company_for_slug(slug)
         if company is None:
             return None
-        return self._workspace_from_company(company, role="member")
+        workspace = self._workspace_from_company(company, role="member")
+        workspace.is_archived = slug in self._archived_slugs
+        return workspace
 
     async def get_active_membership(
         self, workspace_slug: str, user_id: str
@@ -99,8 +113,7 @@ class TestWorkspaceService:
         company = self._company_for_slug(workspace_slug)
         if company is None or not self._user_can_access(user_id, company):
             return None
-        user = self._get_user(user_id)
-        role = _legacy_role(user.get("role", "member") if user else "member")
+        role = self._role_for_user(user_id, company)
         now = _utcnow()
         return WorkspaceMembership(
             id="test-membership",
@@ -161,6 +174,7 @@ class TestWorkspaceService:
             primary_domain,
         )
         self._extra_memberships.setdefault(user.id, set()).add(company.slug)
+        self._membership_roles.setdefault(user.id, {})[company.slug] = "owner"
         workspace = self._workspace_from_company(company, role="owner")
         workspace.color = color
         workspace.industry = industry
@@ -190,6 +204,7 @@ class TestWorkspaceService:
         workspace, _membership = await self.assert_workspace_access(
             workspace_slug, user, min_roles=("owner",)
         )
+        self._archived_slugs.add(workspace_slug)
         workspace.is_archived = True
         return workspace
 
@@ -226,19 +241,77 @@ class TestWorkspaceService:
         workspace, membership = await self.assert_workspace_access(
             workspace_slug, user
         )
-        products: List[dict[str, Any]] = []
+        workspace.is_archived = workspace_slug in self._archived_slugs
+        products: List[WorkspaceProductSummary] = []
         if auth_service is not None:
             company = await auth_service.get_company_by_slug(workspace_slug)
             if company and company.products:
                 products = [
-                    {
-                        "slug": p.slug,
-                        "name": p.name,
-                        "domain": p.domain,
-                        "description": p.description,
-                    }
+                    WorkspaceProductSummary(
+                        slug=p.slug,
+                        name=p.name,
+                        domain=p.domain,
+                        description=p.description,
+                    )
                     for p in company.products
                 ]
+
+        research_summary = None
+        has_research = False
+        has_gap_analysis = False
+        has_content = False
+        latest_runs = {}
+        running_tasks = []
+
+        if artifacts_root is not None:
+            from core.models.workspace import (
+                WorkspaceLatestRunSummary,
+                WorkspaceResearchSummary,
+                WorkspaceRunningTaskSummary,
+            )
+            from core.services.company_profile_helpers import (
+                build_research_summary,
+                get_latest_runs,
+                get_running_tasks,
+                has_nested_artifacts,
+            )
+
+            research_raw = build_research_summary(
+                artifacts_root, workspace_slug, backend=storage_backend
+            )
+            research_summary = WorkspaceResearchSummary(**research_raw)
+            has_research = (
+                research_summary.company_context_status != "none"
+                or len(research_summary.personas) > 0
+                or research_summary.style_guide_status != "none"
+            )
+            has_gap_analysis = has_nested_artifacts(
+                artifacts_root, "gap_analysis", workspace_slug, backend=storage_backend
+            )
+            has_content = has_nested_artifacts(
+                artifacts_root, "content", workspace_slug, backend=storage_backend
+            )
+
+        if task_store is not None:
+            from core.models.workspace import (
+                WorkspaceLatestRunSummary,
+                WorkspaceRunningTaskSummary,
+            )
+            from core.services.company_profile_helpers import (
+                get_latest_runs,
+                get_running_tasks,
+            )
+
+            latest_runs = {
+                key: WorkspaceLatestRunSummary(**value)
+                for key, value in get_latest_runs(task_store, workspace_slug).items()
+                if value is not None
+            }
+            running_tasks = [
+                WorkspaceRunningTaskSummary(**item)
+                for item in get_running_tasks(task_store, workspace_slug)
+            ]
+
         return WorkspaceProfile(
             id=workspace.id,
             slug=workspace.slug,
@@ -249,7 +322,14 @@ class TestWorkspaceService:
             color=workspace.color,
             logo_url=workspace.logo_url,
             role=membership.role,
+            is_archived=workspace.is_archived,
             products=products,
+            has_research=has_research,
+            has_gap_analysis=has_gap_analysis,
+            has_content=has_content,
+            research_summary=research_summary or WorkspaceResearchSummary(),
+            latest_runs=latest_runs,
+            running_tasks=running_tasks,
         )
 
 

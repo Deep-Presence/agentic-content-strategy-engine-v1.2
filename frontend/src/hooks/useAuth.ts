@@ -4,6 +4,7 @@
  */
 
 import { useAuthStore, type AuthState } from '@/stores/auth';
+import { useWorkspaceStore } from '@/stores/workspace';
 import { ROLE_HIERARCHY } from '@/lib/auth/constants';
 import type { UserRole } from '@/lib/auth/types';
 
@@ -13,6 +14,12 @@ export function useAuth() {
   const sessionExpiresAt = useAuthStore((s: AuthState) => s.sessionExpiresAt);
   const isInitialized = useAuthStore((s: AuthState) => s.isInitialized);
   const isLoading = useAuthStore((s: AuthState) => s.isLoading);
+  const activeWorkspaceSlug = useWorkspaceStore((s) => s.activeWorkspaceSlug);
+  const workspaces = useWorkspaceStore((s) => s.workspaces);
+  const activeWorkspace =
+    workspaces.find((workspace) => workspace.slug === activeWorkspaceSlug) ?? null;
+
+  const resolvedWorkspaceSlug = activeWorkspaceSlug || company?.slug || '';
 
   return {
     isAuthenticated: !!user,
@@ -22,9 +29,11 @@ export function useAuth() {
     company,
     sessionExpiresAt,
 
-    companySlug: company?.slug ?? '',
-    companyName: company?.name ?? '',
-    companyDomain: company?.domain ?? '',
+    companySlug: resolvedWorkspaceSlug,
+    activeWorkspaceSlug: resolvedWorkspaceSlug,
+    activeWorkspace,
+    companyName: activeWorkspace?.name ?? company?.name ?? '',
+    companyDomain: activeWorkspace?.primaryDomain ?? company?.domain ?? '',
     userId: user?.id ?? '',
     fullName: user ? `${user.first_name} ${user.last_name}`.trim() : '',
     email: user?.email ?? '',

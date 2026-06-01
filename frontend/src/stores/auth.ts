@@ -69,6 +69,10 @@ export const useAuthStore = create<AuthState>((set) => ({
         isInitialized: true,
       });
       broadcast('login');
+      const { fetchWorkspaces } = await import('@/stores/workspace').then(
+        (mod) => mod.useWorkspaceStore.getState(),
+      );
+      await fetchWorkspaces();
     } finally {
       set({ isLoading: false });
     }
@@ -85,6 +89,10 @@ export const useAuthStore = create<AuthState>((set) => ({
         isInitialized: true,
       });
       broadcast('login');
+      const { fetchWorkspaces } = await import('@/stores/workspace').then(
+        (mod) => mod.useWorkspaceStore.getState(),
+      );
+      await fetchWorkspaces();
     } finally {
       set({ isLoading: false });
     }
@@ -101,6 +109,10 @@ export const useAuthStore = create<AuthState>((set) => ({
         isInitialized: true,
       });
       broadcast('login');
+      const { fetchWorkspaces } = await import('@/stores/workspace').then(
+        (mod) => mod.useWorkspaceStore.getState(),
+      );
+      await fetchWorkspaces();
     } finally {
       set({ isLoading: false });
     }

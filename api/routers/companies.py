@@ -2,18 +2,26 @@
 
 Returns company profile with products, research artifact status,
 gap analysis/content availability, and latest pipeline runs.
+
+Legacy alias: delegates to WorkspaceProfileService and maps the response
+shape for backward-compatible clients.
 """
 from __future__ import annotations
 
 import logging
 import re
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 
-from api.auth.dependencies import require_company_member, require_tenant
-from api.dependencies import get_artifacts_root, get_auth_service, get_storage_backend, get_task_store
+from api.auth.dependencies import require_auth, require_company_member, require_tenant
+from api.dependencies import (
+    get_artifacts_root,
+    get_auth_service,
+    get_storage_backend,
+    get_task_store,
+    get_workspace_service,
+)
 from api.schemas.company import (
     CompanyProfileResponse,
     LatestRunSummary,
@@ -23,9 +31,11 @@ from api.schemas.company import (
     ProductUpdateRequest,
     ResearchArtifactSummary,
 )
-from core.services.task_store import TaskStoreProtocol
 from core.auth.service import AuthServiceProtocol
 from core.models.organization import Company, Product, UserProfile
+from core.models.workspace import WorkspaceProfile
+from core.services.task_store import TaskStoreProtocol
+from core.services.workspace_protocol import WorkspaceServiceProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -34,193 +44,76 @@ router = APIRouter(prefix="/api/v1/companies", tags=["companies"])
 _SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
-def _detect_artifact_status(
-    artifacts_root: Path, type_name: str, slug: str,
-    *, backend: Optional[Any] = None,
-) -> str:
-    """Check if an artifact exists: 'approved', 'draft', or 'none'.
-
-    For flat types (company_context, style_guides): looks for {slug}.md or {slug}.draft.md.
-    """
-    from core.storage.backends.local import LocalStorageBackend
-    _backend = backend or LocalStorageBackend(artifacts_root)
-    if _backend.exists(f"{type_name}/{slug}.md"):
-        return "approved"
-    if _backend.exists(f"{type_name}/{slug}.draft.md"):
-        return "draft"
-    return "none"
-
-
-def _detect_personas(
-    artifacts_root: Path, slug: str,
-    *, backend: Optional[Any] = None,
-) -> List[str]:
-    """Find all persona files for a company slug via PersonaStorage."""
-    try:
-        from core.storage.backends.local import LocalStorageBackend
-        from core.research.audience_persona.storage import PersonaStorage
-        _backend = backend or LocalStorageBackend(artifacts_root)
-        ap_storage = PersonaStorage(artifacts_root, slug, backend=_backend)
-        manifest = ap_storage.read_manifest()
-        if not manifest.personas:
-            return []
-        persona_files: List[str] = []
-        for pid, entry in manifest.personas.items():
-            if entry.status in ("fresh", "stale") and entry.current_version > 0:
-                persona_files.append(f"{pid}.md")
-        return sorted(persona_files)
-    except Exception:
-        return []
-
-
-def _has_nested_artifacts(
-    artifacts_root: Path, type_name: str, slug: str,
-    *, backend: Optional[Any] = None,
-) -> bool:
-    """Check if nested artifact directory exists and has files."""
-    from core.storage.backends.local import LocalStorageBackend
-    _backend = backend or LocalStorageBackend(artifacts_root)
-    entries = _backend.list_dir(f"{type_name}/{slug}/")
-    # Filter hidden files
-    return any(not e.rsplit("/", 1)[-1].startswith(".") for e in entries)
-
-
-def _build_research_summary(
-    artifacts_root: Path, slug: str,
-    *, backend: Optional[Any] = None,
-) -> ResearchArtifactSummary:
-    """Scan filesystem for research artifacts belonging to this company."""
-    cc_status = _detect_artifact_status(artifacts_root, "company_context", slug, backend=backend)
-    sg_status = _detect_artifact_status(artifacts_root, "style_guides", slug, backend=backend)
-    personas = _detect_personas(artifacts_root, slug, backend=backend)
-
-    # Determine the file path for company_context if it exists
-    cc_file = None
-    if cc_status == "approved":
-        cc_file = f"{slug}.md"
-    elif cc_status == "draft":
-        cc_file = f"{slug}.draft.md"
-
-    sg_file = None
-    if sg_status == "approved":
-        sg_file = f"{slug}.md"
-    elif sg_status == "draft":
-        sg_file = f"{slug}.draft.md"
-
-    return ResearchArtifactSummary(
-        company_context=cc_file,
-        company_context_status=cc_status,
-        personas=personas,
-        style_guide=sg_file,
-        style_guide_status=sg_status,
-    )
-
-
-def _get_latest_runs(
-    task_store: TaskStoreProtocol, slug: str
-) -> Dict[str, Optional[LatestRunSummary]]:
-    """Find the most recent task per pipeline type for this company."""
-    latest: Dict[str, Optional[LatestRunSummary]] = {
-        "research": None,
-        "gap_analysis": None,
-        "content": None,
+def workspace_profile_to_company_response(
+    profile: WorkspaceProfile,
+) -> CompanyProfileResponse:
+    """Map workspace profile to legacy company profile response."""
+    products = [
+        ProductSummary(
+            slug=p.slug,
+            name=p.name,
+            domain=p.domain,
+            description=p.description,
+            has_research=p.has_research,
+            has_gap_analysis=p.has_gap_analysis,
+            has_content=p.has_content,
+        )
+        for p in profile.products
+    ]
+    latest_runs: Dict[str, Optional[LatestRunSummary]] = {
+        key: None for key in ("research", "gap_analysis", "content")
     }
-
-    all_tasks = task_store.list_tasks()
-    # Filter to this company and group by pipeline
-    for task in all_tasks:
-        if task.company_slug != slug:
-            continue
-        pipeline = task.pipeline
-        if pipeline not in latest:
-            continue
-
-        current = latest[pipeline]
-        if current is None or task.created_at > current.created_at:
-            latest[pipeline] = LatestRunSummary(
-                run_id=task.task_id,
-                status=task.status.value,
-                created_at=task.created_at,
-                completed_at=(
-                    task.updated_at
-                    if task.status.value in ("completed", "failed", "cancelled")
-                    else None
-                ),
-                summary=task.result,
-            )
-
-    return latest
+    for key, value in profile.latest_runs.items():
+        if key in latest_runs and value is not None:
+            latest_runs[key] = LatestRunSummary(**value.model_dump(mode="json"))
+    return CompanyProfileResponse(
+        slug=profile.slug,
+        name=profile.name,
+        domain=profile.primary_domain,
+        products=products,
+        has_research=profile.has_research,
+        has_gap_analysis=profile.has_gap_analysis,
+        has_content=profile.has_content,
+        research_summary=ResearchArtifactSummary(
+            **profile.research_summary.model_dump(mode="json")
+        ),
+        latest_runs=latest_runs,
+    )
 
 
 @router.get("/{slug}", response_model=CompanyProfileResponse)
 async def get_company_profile(
     slug: str,
-    artifacts_root: Path = Depends(get_artifacts_root),
+    artifacts_root=Depends(get_artifacts_root),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
     task_store: TaskStoreProtocol = Depends(get_task_store),
-    _user: UserProfile = Depends(require_tenant),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
+    user: UserProfile = Depends(require_auth),
     storage_backend=Depends(get_storage_backend),
 ) -> CompanyProfileResponse:
     """Get company profile with artifacts, products, and latest runs.
 
-    Requires authentication and company membership.
+    Legacy alias for ``GET /api/v1/workspaces/{slug}/profile``.
     """
     if not _SLUG_PATTERN.match(slug):
         raise HTTPException(status_code=400, detail="Invalid slug format")
 
-    # Try auth service first for company metadata
-    company = await auth_service.get_company_by_slug(slug)
-
-    # Check filesystem for artifacts
-    has_research = (
-        _detect_artifact_status(artifacts_root, "company_context", slug, backend=storage_backend) != "none"
-        or len(_detect_personas(artifacts_root, slug, backend=storage_backend)) > 0
-        or _detect_artifact_status(artifacts_root, "style_guides", slug, backend=storage_backend) != "none"
-    )
-    has_gap_analysis = _has_nested_artifacts(artifacts_root, "gap_analysis", slug, backend=storage_backend)
-    has_content = _has_nested_artifacts(artifacts_root, "content", slug, backend=storage_backend)
-
-    # If no company in auth store AND no artifacts, 404
-    if company is None and not has_research and not has_gap_analysis and not has_content:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Company '{slug}' not found",
+    try:
+        profile = await workspace_service.get_profile(
+            slug,
+            user,
+            auth_service=auth_service,
+            artifacts_root=artifacts_root,
+            storage_backend=storage_backend,
+            task_store=task_store,
         )
+    except ValueError as exc:
+        code = str(exc)
+        if code in ("workspace_not_found", "access_denied"):
+            raise HTTPException(status_code=403, detail="Access denied") from exc
+        raise HTTPException(status_code=400, detail=code) from exc
 
-    # Build sub-components
-    research_summary = _build_research_summary(artifacts_root, slug, backend=storage_backend)
-    latest_runs = _get_latest_runs(task_store, slug)
-
-    # Build product summaries from auth store
-    products: List[ProductSummary] = []
-    if company and company.products:
-        for p in company.products:
-            effective = f"{slug}__{p.slug}"
-            products.append(
-                ProductSummary(
-                    slug=p.slug,
-                    name=p.name,
-                    domain=p.domain,
-                    description=p.description,
-                    has_research=(
-                        _detect_artifact_status(artifacts_root, "company_context", effective, backend=storage_backend) != "none"
-                    ),
-                    has_gap_analysis=_has_nested_artifacts(artifacts_root, "gap_analysis", effective, backend=storage_backend),
-                    has_content=_has_nested_artifacts(artifacts_root, "content", effective, backend=storage_backend),
-                )
-            )
-
-    return CompanyProfileResponse(
-        slug=slug,
-        name=company.name if company else slug.replace("-", " ").title(),
-        domain=company.domain if company else "",
-        products=products,
-        has_research=has_research,
-        has_gap_analysis=has_gap_analysis,
-        has_content=has_content,
-        research_summary=research_summary,
-        latest_runs=latest_runs,
-    )
+    return workspace_profile_to_company_response(profile)
 
 
 # ── Product CRUD endpoints ─────────────────────────────────

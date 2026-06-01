@@ -60,6 +60,11 @@ class TrackedPromptModel(UUIDPKMixin, TimestampMixin, Base):
     )
 
     company_id: Mapped[str] = mapped_column(String, nullable=False)
+    workspace_id: Mapped[_uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     text: Mapped[str] = mapped_column(Text, nullable=False)
     category: Mapped[str | None] = mapped_column(String, nullable=True)
     # Why: JSONB for tags and platforms — flexible list storage without a

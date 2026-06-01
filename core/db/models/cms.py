@@ -47,6 +47,11 @@ class CMSConnectionModel(UUIDPKMixin, TimestampMixin, Base):
         ForeignKey("companies.id", ondelete="CASCADE"),
         nullable=False,
     )
+    workspace_id: Mapped[_uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     tenant_id: Mapped[str] = mapped_column(String, nullable=False)
     company_slug: Mapped[str] = mapped_column(String, nullable=False)
 

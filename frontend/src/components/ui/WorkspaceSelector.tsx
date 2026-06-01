@@ -20,14 +20,21 @@ function WorkspaceIcon({ color, size = 28 }: { color: string; size?: number }) {
 }
 
 export function WorkspaceSelector({ className, collapsed = false }: WorkspaceSelectorProps) {
-  const { workspaces, activeWorkspaceId, setActiveWorkspace, addWorkspace } = useWorkspaceStore();
+  const {
+    workspaces,
+    activeWorkspaceSlug,
+    setActiveWorkspace,
+    createWorkspace,
+    isLoading,
+  } = useWorkspaceStore();
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
+  const [newDomain, setNewDomain] = useState('');
   const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId);
+  const activeWorkspace = workspaces.find((w) => w.slug === activeWorkspaceSlug);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -35,6 +42,7 @@ export function WorkspaceSelector({ className, collapsed = false }: WorkspaceSel
         setOpen(false);
         setCreating(false);
         setNewName('');
+        setNewDomain('');
       }
     };
     if (open) {
@@ -50,17 +58,19 @@ export function WorkspaceSelector({ className, collapsed = false }: WorkspaceSel
   }, [creating]);
 
   const handleSelect = (workspace: Workspace) => {
-    setActiveWorkspace(workspace.id);
+    setActiveWorkspace(workspace.slug);
     setOpen(false);
   };
 
-  const handleCreate = () => {
-    if (newName.trim()) {
-      addWorkspace(newName.trim());
-      setNewName('');
-      setCreating(false);
-      setOpen(false);
-    }
+  const handleCreate = async () => {
+    const name = newName.trim();
+    const domain = newDomain.trim() || `${name.toLowerCase().replace(/\s+/g, '')}.com`;
+    if (!name) return;
+    await createWorkspace({ name, primary_domain: domain });
+    setNewName('');
+    setNewDomain('');
+    setCreating(false);
+    setOpen(false);
   };
 
   if (collapsed) {
@@ -76,7 +86,6 @@ export function WorkspaceSelector({ className, collapsed = false }: WorkspaceSel
 
   return (
     <div ref={dropdownRef} className={cn('relative', className)}>
-      {/* Trigger */}
       <button
         onClick={() => setOpen(!open)}
         className={cn(
@@ -87,7 +96,7 @@ export function WorkspaceSelector({ className, collapsed = false }: WorkspaceSel
       >
         <WorkspaceIcon color={activeWorkspace?.color ?? '#5BA4C4'} size={28} />
         <span className="flex-1 text-left text-[13px] font-medium text-text-primary truncate">
-          {activeWorkspace?.name ?? 'Select workspace'}
+          {isLoading ? 'Loading workspaces…' : activeWorkspace?.name ?? 'Select workspace'}
         </span>
         <ChevronDown
           size={14}
@@ -99,7 +108,6 @@ export function WorkspaceSelector({ className, collapsed = false }: WorkspaceSel
         />
       </button>
 
-      {/* Dropdown */}
       {open && (
         <div className="absolute top-full left-0 right-0 mt-1 z-50 rounded-md border border-border bg-surface-raised shadow-float overflow-hidden">
           <div className="py-1">
@@ -110,14 +118,14 @@ export function WorkspaceSelector({ className, collapsed = false }: WorkspaceSel
                 className={cn(
                   'flex items-center gap-2.5 w-full px-2.5 py-2 text-left',
                   'hover:bg-accent-subtle transition-colors cursor-pointer',
-                  ws.id === activeWorkspaceId && 'bg-accent-subtle'
+                  ws.slug === activeWorkspaceSlug && 'bg-accent-subtle'
                 )}
               >
                 <WorkspaceIcon color={ws.color} size={22} />
                 <span className="flex-1 text-[12px] font-medium text-text-primary truncate">
                   {ws.name}
                 </span>
-                {ws.id === activeWorkspaceId && (
+                {ws.slug === activeWorkspaceSlug && (
                   <Check size={14} strokeWidth={1.5} className="text-accent flex-shrink-0" />
                 )}
               </button>
@@ -127,16 +135,26 @@ export function WorkspaceSelector({ className, collapsed = false }: WorkspaceSel
           <div className="border-t border-border" />
 
           {creating ? (
-            <div className="p-2">
+            <div className="p-2 space-y-2">
               <input
                 ref={inputRef}
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleCreate();
-                  if (e.key === 'Escape') { setCreating(false); setNewName(''); }
+                  if (e.key === 'Enter') void handleCreate();
+                  if (e.key === 'Escape') {
+                    setCreating(false);
+                    setNewName('');
+                    setNewDomain('');
+                  }
                 }}
                 placeholder="Workspace name..."
+                className="w-full h-[30px] px-2 text-[12px] rounded-sm border border-border bg-bg text-text-primary placeholder:text-text-tertiary outline-none focus:border-accent"
+              />
+              <input
+                value={newDomain}
+                onChange={(e) => setNewDomain(e.target.value)}
+                placeholder="Primary domain (optional)"
                 className="w-full h-[30px] px-2 text-[12px] rounded-sm border border-border bg-bg text-text-primary placeholder:text-text-tertiary outline-none focus:border-accent"
               />
             </div>

@@ -48,6 +48,11 @@ class LLMCostEventModel(UUIDPKMixin, TimestampMixin, Base):
     completion_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     estimated_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     company_slug: Mapped[str] = mapped_column(String, nullable=False, default="")
+    workspace_id: Mapped[_uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     call_site: Mapped[str] = mapped_column(String, nullable=False, default="")
     source: Mapped[str] = mapped_column(String, nullable=False, default="native")
     run_id: Mapped[_uuid.UUID | None] = mapped_column(

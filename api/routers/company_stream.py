@@ -18,8 +18,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from api.auth.dependencies import require_auth
+from api.dependencies import get_workspace_service
 from core.events.company_event_bus import company_event_bus
 from core.models.organization import UserProfile
+from core.services.workspace_protocol import WorkspaceServiceProtocol
 from core.shared_tools.structured_logging import bind_context, clear_context
 
 router = APIRouter(prefix="/api/v1/companies", tags=["company-stream"])
@@ -31,7 +33,8 @@ _HEARTBEAT_INTERVAL_S = 30
 async def company_stream(
     company_slug: str,
     request: Request,
-    _user: UserProfile = Depends(require_auth),
+    user: UserProfile = Depends(require_auth),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> StreamingResponse:
     """SSE stream for all pipeline events within a company.
 
@@ -39,10 +42,12 @@ async def company_stream(
       - ``state_changed``: one or more cards changed status (carries IDs + hint)
       - ``notification``: user-facing notification (HITL review, completion, error)
     """
-    # Tenant isolation: verify the user belongs to the requested company
-    auth_company_slug = getattr(request.state, "company_slug", None)
-    if company_slug != auth_company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
+    try:
+        await workspace_service.assert_workspace_access(company_slug, user)
+    except ValueError as exc:
+        if str(exc) == "workspace_not_found":
+            raise HTTPException(status_code=404, detail="Workspace not found") from exc
+        raise HTTPException(status_code=403, detail="Access denied") from exc
 
     raw_corr = request.headers.get("X-Correlation-ID", "")
     correlation_id = raw_corr[:128] if raw_corr else str(uuid.uuid4())

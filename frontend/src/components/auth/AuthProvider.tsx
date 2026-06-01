@@ -9,6 +9,7 @@
 
 import { useEffect, useRef } from 'react';
 import { useAuthStore, type AuthState } from '@/stores/auth';
+import { useWorkspaceStore } from '@/stores/workspace';
 import { AUTH_CHANNEL, SESSION_EXPIRY_WARNING_MS } from '@/lib/auth/constants';
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -19,7 +20,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!initialized.current) {
       initialized.current = true;
-      useAuthStore.getState().initialize();
+      void (async () => {
+        await useAuthStore.getState().initialize();
+        const authState = useAuthStore.getState();
+        if (authState.user) {
+          await useWorkspaceStore.getState().fetchWorkspaces();
+        }
+      })();
     }
   }, []);
 
@@ -32,9 +39,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const { type } = event.data ?? {};
         if (type === 'logout') {
           useAuthStore.setState({ user: null, company: null, sessionExpiresAt: null });
+          useWorkspaceStore.getState().reset();
           window.location.href = '/login';
         } else if (type === 'login') {
-          useAuthStore.getState().initialize();
+          void (async () => {
+            await useAuthStore.getState().initialize();
+            await useWorkspaceStore.getState().fetchWorkspaces();
+          })();
         }
       };
     }
