@@ -161,6 +161,20 @@ class TrackedPromptRepository(SQLAlchemyRepository[TrackedPromptModel]):
         await self._session.flush()
         return instances
 
+    async def get_by_id_for_company(
+        self, prompt_id: _uuid.UUID | str, company_id: str
+    ) -> TrackedPromptModel | None:
+        """Fetch a prompt only when it belongs to the given company/workspace slug."""
+        pk = _uuid.UUID(str(prompt_id)) if isinstance(prompt_id, str) else prompt_id
+        stmt = select(TrackedPromptModel).where(
+            and_(
+                TrackedPromptModel.id == pk,
+                TrackedPromptModel.company_id == company_id,
+            )
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().first()
+
     async def find_by_text(
         self, company_id: str, text: str
     ) -> TrackedPromptModel | None:

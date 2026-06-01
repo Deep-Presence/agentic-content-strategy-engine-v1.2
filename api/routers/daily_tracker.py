@@ -177,6 +177,23 @@ async def get_tracker_company_id(
     return scope.workspace_slug
 
 
+async def get_tracker_write_company_id(
+    request: Request,
+    user: UserProfile = Depends(require_auth),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
+    workspace_slug: str | None = Query(None),
+) -> str:
+    """Resolve workspace slug for daily-tracker write routes (member+)."""
+    scope = await resolve_workspace_scope(
+        request,
+        user,
+        workspace_service,
+        workspace_slug=workspace_slug,
+        min_roles=("owner", "admin", "member"),
+    )
+    return scope.workspace_slug
+
+
 # ── Prompt Library Endpoints ─────────────────────────────────────────
 
 
@@ -191,7 +208,7 @@ class CreatePromptResponse(BaseModel):
 async def create_prompt(
     body: CreatePromptRequest,
     request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
     task_store: TaskStoreProtocol = Depends(get_task_store),
     event_bus: EventBusProtocol = Depends(get_event_bus),
@@ -217,6 +234,7 @@ async def create_prompt(
             text=body.text,
             category=body.category,
             tags=body.tags,
+            workspace_id=scope.workspace_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
@@ -480,10 +498,10 @@ async def get_prompt(
     request: Request,
     _user: UserProfile = Depends(require_auth),
     prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
-    _company_id: str = Depends(get_tracker_company_id),
+    company_id: str = Depends(get_tracker_company_id),
 ) -> TrackedPrompt:
     """Get a specific tracked prompt by ID."""
-    prompt = await prompt_service.get_prompt(prompt_id)
+    prompt = await prompt_service.get_prompt_for_company(prompt_id, company_id)
     if prompt is None:
         raise HTTPException(status_code=404, detail="Prompt not found")
     return prompt
@@ -494,9 +512,9 @@ async def update_prompt(
     prompt_id: str,
     body: UpdatePromptRequest,
     request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
-    _company_id: str = Depends(get_tracker_company_id),
+    company_id: str = Depends(get_tracker_write_company_id),
 ) -> TrackedPrompt:
     """Update a tracked prompt's fields."""
     update_kwargs: dict[str, Any] = {}
@@ -513,7 +531,9 @@ async def update_prompt(
         raise HTTPException(status_code=400, detail="No fields to update")
 
     try:
-        return await prompt_service.update_prompt(prompt_id, **update_kwargs)
+        return await prompt_service.update_prompt_for_company(
+            prompt_id, company_id, **update_kwargs
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
@@ -522,12 +542,12 @@ async def update_prompt(
 async def delete_prompt(
     prompt_id: str,
     request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
-    _company_id: str = Depends(get_tracker_company_id),
+    company_id: str = Depends(get_tracker_write_company_id),
 ) -> None:
     """Delete a tracked prompt."""
-    deleted = await prompt_service.delete_prompt(prompt_id)
+    deleted = await prompt_service.delete_prompt_for_company(prompt_id, company_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Prompt not found")
 
@@ -537,13 +557,15 @@ async def toggle_prompt(
     prompt_id: str,
     body: ToggleActiveRequest,
     request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
-    _company_id: str = Depends(get_tracker_company_id),
+    company_id: str = Depends(get_tracker_write_company_id),
 ) -> TrackedPrompt:
     """Toggle a prompt's active/inactive status."""
     try:
-        return await prompt_service.toggle_prompt(prompt_id, body.active)
+        return await prompt_service.toggle_prompt_for_company(
+            prompt_id, company_id, body.active
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
@@ -552,9 +574,9 @@ async def toggle_prompt(
 async def import_prompts(
     body: ImportPromptsRequest,
     request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
-    company_id: str = Depends(get_tracker_company_id),
+    company_id: str = Depends(get_tracker_write_company_id),
 ) -> list[TrackedPrompt]:
     """Import prompts from a gap analysis run's queries.json."""
     try:
@@ -570,9 +592,9 @@ async def import_prompts(
 async def bulk_create_prompts(
     body: BulkCreatePromptsRequest,
     request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
-    company_id: str = Depends(get_tracker_company_id),
+    company_id: str = Depends(get_tracker_write_company_id),
 ) -> list[TrackedPrompt]:
     """Bulk create tracked prompts (duplicates are skipped)."""
     prompt_dicts = [p.model_dump(mode="json") for p in body.prompts]
@@ -655,7 +677,7 @@ async def list_fanouts(
     company_id: str = Depends(get_tracker_company_id),
 ) -> FanoutListResponse:
     """List fanout queries for a parent prompt with observation counts."""
-    parent = await prompt_service.get_prompt(prompt_id)
+    parent = await prompt_service.get_prompt_for_company(prompt_id, company_id)
     if parent is None:
         raise HTTPException(status_code=404, detail="Prompt not found")
 
@@ -705,13 +727,13 @@ async def add_fanout(
     prompt_id: str,
     body: AddFanoutRequest,
     request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
-    company_id: str = Depends(get_tracker_company_id),
+    company_id: str = Depends(get_tracker_write_company_id),
 ) -> TrackedPrompt:
     """Manually add a fanout query to a parent prompt."""
 
-    parent = await prompt_service.get_prompt(prompt_id)
+    parent = await prompt_service.get_prompt_for_company(prompt_id, company_id)
     if parent is None:
         raise HTTPException(status_code=404, detail="Prompt not found")
 
@@ -740,11 +762,12 @@ async def regenerate_fanouts(
     prompt_id: str,
     body: RegenerateFanoutRequest,
     request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
     event_bus: EventBusProtocol = Depends(get_event_bus),
     prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
-    company_id: str = Depends(get_tracker_company_id),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
+    company_id: str = Depends(get_tracker_write_company_id),
 ) -> dict[str, str]:
     """Regenerate fanout queries for a parent prompt (background task).
 
@@ -752,7 +775,7 @@ async def regenerate_fanouts(
     Pinned fanouts are preserved.
     """
 
-    parent = await prompt_service.get_prompt(prompt_id)
+    parent = await prompt_service.get_prompt_for_company(prompt_id, company_id)
     if parent is None:
         raise HTTPException(status_code=404, detail="Prompt not found")
 
@@ -761,12 +784,23 @@ async def regenerate_fanouts(
             status_code=400, detail="brand_name is required for regeneration"
         )
 
-    from api.routers._helpers import create_task_durable
+    from api.routers._helpers import create_task_durable, resolve_workspace_scope
     from api.tasks.runner import run_fanout_generation_task
 
+    scope = await resolve_workspace_scope(
+        request,
+        _user,
+        workspace_service,
+        workspace_slug=company_id,
+        min_roles=("owner", "admin", "member"),
+    )
+
     task = await create_task_durable(
-        task_store, "fanout_generation", company_id,
+        task_store,
+        "fanout_generation",
+        company_id,
         allow_parallel=True,
+        workspace_id=scope.workspace_id,
     )
 
     handle = asyncio.create_task(
@@ -791,12 +825,15 @@ async def delete_fanout(
     prompt_id: str,
     fanout_id: str,
     request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
-    company_id: str = Depends(get_tracker_company_id),
+    company_id: str = Depends(get_tracker_write_company_id),
 ) -> None:
     """Delete a specific fanout query."""
-    deleted = await prompt_service.delete_prompt(fanout_id)
+    parent = await prompt_service.get_prompt_for_company(prompt_id, company_id)
+    if parent is None:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+    deleted = await prompt_service.delete_prompt_for_company(fanout_id, company_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Fanout not found")
 
@@ -806,12 +843,15 @@ async def toggle_pin(
     prompt_id: str,
     fanout_id: str,
     request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
-    company_id: str = Depends(get_tracker_company_id),
+    company_id: str = Depends(get_tracker_write_company_id),
 ) -> TrackedPrompt:
     """Toggle the pinned status of a fanout query."""
-    fanout = await prompt_service.get_prompt(fanout_id)
+    parent = await prompt_service.get_prompt_for_company(prompt_id, company_id)
+    if parent is None:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+    fanout = await prompt_service.get_prompt_for_company(fanout_id, company_id)
     if fanout is None:
         raise HTTPException(status_code=404, detail="Fanout not found")
 
@@ -826,13 +866,18 @@ async def toggle_fanout_active(
     fanout_id: str,
     body: ToggleActiveRequest,
     request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
-    company_id: str = Depends(get_tracker_company_id),
+    company_id: str = Depends(get_tracker_write_company_id),
 ) -> TrackedPrompt:
     """Toggle the active status of a fanout query."""
+    parent = await prompt_service.get_prompt_for_company(prompt_id, company_id)
+    if parent is None:
+        raise HTTPException(status_code=404, detail="Prompt not found")
     try:
-        return await prompt_service.toggle_prompt(fanout_id, body.active)
+        return await prompt_service.toggle_prompt_for_company(
+            fanout_id, company_id, body.active
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
@@ -845,6 +890,7 @@ async def get_answer_history(
     prompt_id: str,
     request: Request,
     _user: UserProfile = Depends(require_auth),
+    prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
     company_id: str = Depends(get_tracker_company_id),
     engine: str | None = Query(None),
     days: int = Query(30, ge=1, le=365),
@@ -858,6 +904,10 @@ async def get_answer_history(
     Returns only the parent prompt's own AI responses with mention
     analysis data, ordered by date descending.
     """
+    parent = await prompt_service.get_prompt_for_company(prompt_id, company_id)
+    if parent is None:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+
     sf = getattr(request.app.state, "db_session_factory", None)
     if sf is None:
         return AnswerHistoryResponse(prompt_id=prompt_id, responses=[], total=0)
@@ -950,6 +1000,8 @@ async def get_prompt_analytics(
     prompt_id: str,
     request: Request,
     _user: UserProfile = Depends(require_auth),
+    prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
+    company_id: str = Depends(get_tracker_company_id),
     days: int = Query(30, ge=1, le=365),
     start_date: str | None = Query(None, description="ISO date (YYYY-MM-DD). Overrides days when paired with end_date."),
     end_date: str | None = Query(None, description="ISO date (YYYY-MM-DD). Overrides days when paired with start_date."),
@@ -968,6 +1020,9 @@ async def get_prompt_analytics(
         PromptAnalyticsResponse,
     )
 
+    parent = await prompt_service.get_prompt_for_company(prompt_id, company_id)
+    if parent is None:
+        raise HTTPException(status_code=404, detail="Prompt not found")
 
     sf = getattr(request.app.state, "db_session_factory", None)
     if sf is None:
@@ -1138,7 +1193,7 @@ async def trigger_cleanup(
 async def trigger_daily_run(
     body: TriggerRunRequest,
     request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
     event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),

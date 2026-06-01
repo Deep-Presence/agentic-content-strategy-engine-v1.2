@@ -32,7 +32,7 @@ from core.services.cms_cache import (
 )
 from core.services.analytics_cache import invalidate_all_ga4_caches
 
-from api.auth.dependencies import require_auth, require_role
+from api.auth.dependencies import get_workspace_read_slug, get_workspace_write_slug, require_auth
 from api.dependencies import get_auth_service, get_cms_service, get_event_bus, get_task_store
 from api.schemas.cms import (
     CMSCategoryItem,
@@ -66,14 +66,6 @@ router = APIRouter(prefix="/api/v1/cms", tags=["cms"])
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
-
-
-def _get_company_slug(request: Request) -> str:
-    """Extract company_slug from authenticated request state."""
-    slug: Optional[str] = getattr(request.state, "company_slug", None)
-    if not slug:
-        raise HTTPException(status_code=403, detail="Access denied")
-    return slug
 
 
 async def _get_connection_or_404(
@@ -117,7 +109,8 @@ def _handle_cms_error(exc: CMSError) -> HTTPException:
 async def connect_cms(
     body: CMSConnectRequest,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    company_slug: str = Depends(get_workspace_write_slug),
+    _user: UserProfile = Depends(require_auth),
     cms_service: Any = Depends(get_cms_service),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
     task_store: TaskStoreProtocol = Depends(get_task_store),
@@ -128,8 +121,6 @@ async def connect_cms(
     On first-time connect (``last_sync_at is None``), automatically launches
     a CMS sync background task to populate the content inventory.
     """
-    company_slug = _get_company_slug(http_request)
-
     # Resolve company_id
     company = await auth_service.get_company_by_slug(company_slug)
     if company is None:
@@ -201,13 +192,11 @@ async def connect_cms(
 
 @router.get("/connection", response_model=Optional[CMSConnectionInfoResponse])
 async def get_connection(
-    http_request: Request,
+    company_slug: str = Depends(get_workspace_read_slug),
     _user: UserProfile = Depends(require_auth),
     cms_service: Any = Depends(get_cms_service),
 ) -> Optional[CMSConnectionInfoResponse]:
     """Get the current CMS connection info for this company."""
-    company_slug = _get_company_slug(http_request)
-
     # Redis cache check (display fields only, no credentials)
     cached = await asyncio.to_thread(
         get_cached_connection_info, company_slug, company_slug
@@ -247,11 +236,11 @@ async def get_connection(
 @router.delete("/connection")
 async def disconnect_cms(
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    company_slug: str = Depends(get_workspace_write_slug),
+    _user: UserProfile = Depends(require_auth),
     cms_service: Any = Depends(get_cms_service),
 ) -> dict[str, bool]:
     """Disconnect the CMS integration. Does NOT delete synced data."""
-    company_slug = _get_company_slug(http_request)
     disconnected = await cms_service.disconnect(company_slug, tenant_id=company_slug)
 
     # Invalidate cached connection info after disconnect
@@ -266,13 +255,13 @@ async def disconnect_cms(
 @router.post("/sync", status_code=202)
 async def trigger_sync(
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    company_slug: str = Depends(get_workspace_write_slug),
+    _user: UserProfile = Depends(require_auth),
     cms_service: Any = Depends(get_cms_service),
     task_store: TaskStoreProtocol = Depends(get_task_store),
     event_bus: Any = Depends(get_event_bus),
 ) -> dict[str, Any]:
     """Re-sync existing content from the CMS (background task)."""
-    company_slug = _get_company_slug(http_request)
     await _get_connection_or_404(cms_service, company_slug, company_slug)
 
     task = task_store.create_task("cms_sync", company_slug)
@@ -310,15 +299,14 @@ async def trigger_sync(
 
 @router.get("/synced-posts", response_model=list[CMSSyncedPostSummary])
 async def list_synced_posts(
-    http_request: Request,
     stale_only: bool = False,
     limit: int = 100,
     offset: int = 0,
+    company_slug: str = Depends(get_workspace_read_slug),
     _user: UserProfile = Depends(require_auth),
     cms_service: Any = Depends(get_cms_service),
 ) -> list[CMSSyncedPostSummary]:
     """List the locally indexed posts from the connected CMS."""
-    company_slug = _get_company_slug(http_request)
     posts = await cms_service.list_synced_posts(
         company_slug, stale_only=stale_only, limit=limit, offset=offset
     )
@@ -346,12 +334,11 @@ async def list_synced_posts(
 
 @router.get("/stale-actions", response_model=list[StaleContentAction])
 async def get_stale_actions(
-    http_request: Request,
+    company_slug: str = Depends(get_workspace_read_slug),
     _user: UserProfile = Depends(require_auth),
     cms_service: Any = Depends(get_cms_service),
 ) -> list[StaleContentAction]:
     """Get stale content cards for the Home dashboard Recommended Actions."""
-    company_slug = _get_company_slug(http_request)
     actions = await cms_service.get_stale_actions(company_slug)
     return [StaleContentAction(**a) for a in actions]
 
@@ -363,11 +350,11 @@ async def get_stale_actions(
 async def stale_to_triage(
     body: CMSStaleToTriageRequest,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    company_slug: str = Depends(get_workspace_write_slug),
+    _user: UserProfile = Depends(require_auth),
     cms_service: Any = Depends(get_cms_service),
 ) -> StaleToTriageResponse:
     """Queue a stale post for content refresh (Recommended Actions → Triage)."""
-    company_slug = _get_company_slug(http_request)
     try:
         result = await cms_service.queue_stale_for_refresh(
             company_slug, body.cms_synced_post_id
@@ -388,11 +375,11 @@ async def stale_to_triage(
 async def publish_to_cms(
     body: CMSPublishRequest,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    company_slug: str = Depends(get_workspace_write_slug),
+    _user: UserProfile = Depends(require_auth),
     cms_service: Any = Depends(get_cms_service),
 ) -> CMSPublishResponse:
     """Publish an approved Content Engine brief to the connected CMS."""
-    company_slug = _get_company_slug(http_request)
     connection = await _get_connection_or_404(
         cms_service, company_slug, company_slug
     )
@@ -440,11 +427,11 @@ async def refresh_cms_post(
     cms_post_id: str,
     body: CMSRefreshRequest,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    company_slug: str = Depends(get_workspace_write_slug),
+    _user: UserProfile = Depends(require_auth),
     cms_service: Any = Depends(get_cms_service),
 ) -> CMSPublishResponse:
     """Update an existing CMS post with refreshed content."""
-    company_slug = _get_company_slug(http_request)
     connection = await _get_connection_or_404(
         cms_service, company_slug, company_slug
     )
@@ -482,14 +469,13 @@ async def refresh_cms_post(
 
 @router.get("/publish-history", response_model=list[CMSPublishHistoryItem])
 async def get_publish_history(
-    http_request: Request,
     limit: int = 50,
     offset: int = 0,
+    company_slug: str = Depends(get_workspace_read_slug),
     _user: UserProfile = Depends(require_auth),
     cms_service: Any = Depends(get_cms_service),
 ) -> list[CMSPublishHistoryItem]:
     """List all publish/refresh actions for this company."""
-    company_slug = _get_company_slug(http_request)
     records = await cms_service.list_publish_history(
         company_slug, limit=limit, offset=offset
     )
@@ -520,12 +506,11 @@ async def get_publish_history(
 
 @router.get("/categories", response_model=list[CMSCategoryItem])
 async def list_categories(
-    http_request: Request,
+    company_slug: str = Depends(get_workspace_read_slug),
     _user: UserProfile = Depends(require_auth),
     cms_service: Any = Depends(get_cms_service),
 ) -> list[CMSCategoryItem]:
     """Fetch categories from the connected CMS (for publish UI selector)."""
-    company_slug = _get_company_slug(http_request)
     connection = await _get_connection_or_404(
         cms_service, company_slug, company_slug
     )

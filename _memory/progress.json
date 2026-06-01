@@ -1,10 +1,15 @@
 {
   "current_sprint": "feat/workspace-backend",
-  "last_updated": "2026-06-01",
-  "test_count": 2129,
+  "last_updated": "2026-06-01T12:00:00Z",
+  "test_count": 2159,
   "completed_sprints_summary": {
-    "total_tasks_completed": 48,
+    "total_tasks_completed": 51,
     "sprints": [
+      {
+        "sprint": "feat/workspace-backend",
+        "date": "2026-06-01",
+        "summary": "Workspace tenant model (migrations 0042–0044), membership auth, WorkspaceProfileService, frontend workspace store + selector, pipeline workspace scoping on gap/content/TD plus KB/AP/VSG/site-audit/onboarding/research/daily-tracker, workspace_id on tasks and pipeline runs. Branch feat/workspace-backend (4 commits). Remaining: slug-less read routers (artifacts, settings, CMS, content_performance), workspace member invite/mutate API, docs sync."
+      },
       {
         "sprint": "td-entry-parallel-execution-phase3b",
         "date": "2026-04-10",
@@ -329,6 +334,77 @@
         "tests/api/conftest.py"
       ],
       "validation": "alembic upgrade head (0042); pytest tests/api/test_workspaces.py tests/api/test_registration.py -q"
+    },
+    {
+      "id": "T-workspace-backend-phase4-7",
+      "task": "Workspace Backend Phases 4–7 — WorkspaceProfileService, migration 0043 workspace_id columns, companies router alias to workspace profile, frontend workspace store wired to GET /api/v1/workspaces, WorkspaceSelector, useAuth active workspace slug.",
+      "sprint": "feat/workspace-backend",
+      "status": "done",
+      "completed_at": "2026-06-01",
+      "commit": "61bd964",
+      "branch_base": "codex-td-entry-parallelism-plan",
+      "tests_added": 25,
+      "files_created": [
+        "core/db/migrations/versions/0043_workspace_id_columns.py",
+        "core/services/workspace_profile_service.py",
+        "core/services/company_profile_helpers.py",
+        "core/shared_tools/workspace_slugs.py",
+        "tests/api/test_workspace_phase47.py"
+      ],
+      "files_modified": [
+        "api/routers/companies.py",
+        "core/services/workspace_service.py",
+        "core/models/workspace.py",
+        "frontend/src/stores/workspace.ts",
+        "frontend/src/components/ui/WorkspaceSelector.tsx",
+        "frontend/src/hooks/useAuth.ts"
+      ],
+      "validation": "alembic upgrade head (0043); pytest tests/api/test_workspace_phase47.py tests/api/test_workspaces.py tests/api/test_companies.py -q; npx tsc --noEmit"
+    },
+    {
+      "id": "T-workspace-runtime-scoping",
+      "task": "Workspace runtime scoping — resolve_workspace_scope on gap/content/TD starts, workspace_id on create_task_durable and runner writes, migration 0044 runtime backfill, explicit workspace_slug on planner/content-studio POST bodies.",
+      "sprint": "feat/workspace-backend",
+      "status": "done",
+      "completed_at": "2026-06-01",
+      "commit": "29b848c",
+      "tests_added": 12,
+      "files_modified": [
+        "api/routers/_helpers.py",
+        "api/routers/gap_analysis.py",
+        "api/routers/content_v13.py",
+        "api/routers/topic_discovery.py",
+        "api/tasks/runner.py",
+        "core/db/migrations/versions/0044_workspace_id_runtime_backfill.py",
+        "core/services/db_task_store.py",
+        "frontend/src/app/(dashboard)/planner/_lib/api.ts",
+        "frontend/src/app/(dashboard)/content-studio/_lib/api.ts"
+      ],
+      "validation": "alembic upgrade head (0044); pytest tests/api/test_workspace_phase47.py tests/services/test_db_task_store.py tests/api/test_gap_analysis.py tests/api/test_content_v13.py tests/api/test_topic_discovery.py -q"
+    },
+    {
+      "id": "T-workspace-remaining-pipelines",
+      "task": "Workspace scoping on remaining pipeline routers — KB, AP, VSG, site audit, onboarding, research orchestrator, daily tracker; workspace_slug on start schemas; explicit workspace_slug from artifacts regeneration and prompt-tracking frontend APIs.",
+      "sprint": "feat/workspace-backend",
+      "status": "done",
+      "completed_at": "2026-06-01",
+      "commit": "79b8264",
+      "tests_added": 2,
+      "files_modified": [
+        "api/routers/knowledge_base.py",
+        "api/routers/audience_persona.py",
+        "api/routers/voice_style_guide.py",
+        "api/routers/site_audit.py",
+        "api/routers/onboarding.py",
+        "api/routers/research_orchestrator.py",
+        "api/routers/daily_tracker.py",
+        "api/auth/dependencies.py",
+        "frontend/src/app/(dashboard)/artifacts/_lib/api.ts",
+        "frontend/src/app/(dashboard)/prompt-tracking/_lib/api.ts",
+        "tests/api/test_site_audit.py",
+        "tests/api/test_voice_style_guide_router.py"
+      ],
+      "validation": "pytest tests/api/test_site_audit.py tests/api/test_voice_style_guide_router.py tests/api/test_knowledge_base.py tests/api/test_audience_persona.py tests/api/test_daily_tracker.py -q (216 passed across affected API modules in session)"
     },
     {
       "id": "T-webflow-content-engine-runtime-reset",
@@ -1104,6 +1180,36 @@
     }
   ],
   "in_progress": [
+    {
+      "id": "T-workspace-backend-remaining",
+      "task": "Workspace backend — slug-less routers, member management API, settings team wiring, docs",
+      "sprint": "feat/workspace-backend",
+      "status": "in_progress",
+      "started_at": "2026-06-01",
+      "branch": "feat/workspace-backend",
+      "completed_in_phase": [
+        "Phases 1–7 foundation: 0042–0044 migrations, /api/v1/workspaces, membership auth, profile service, frontend workspace selector",
+        "Pipeline starts scoped: gap, content v13, TD, KB, AP, VSG, site audit, onboarding, research orchestrator, daily tracker",
+        "Explicit workspace_slug on planner/content-studio/artifacts-regen/prompt-tracking API calls",
+        "workspace_id preserved on task creation and runner pipeline writes"
+      ],
+      "remaining_next_steps": [
+        "Migrate slug-less read routers still using JWT company_slug: artifacts, content_inventory, content_performance, cms, analytics, settings, tasks/events",
+        "Add workspace member invite/role-change/remove endpoints; wire Settings team tab to workspace_memberships",
+        "Use workspace membership role (not JWT user.role) for frontend RoleGate on active workspace",
+        "Apply migration 0044 in all environments; update COMPREHENSIVE_SYSTEM_DOCUMENTATION + FRONTEND_INTEGRATION_GUIDE",
+        "Open/update PR and merge feat/workspace-backend"
+      ],
+      "files_affected": [
+        "api/routers/artifacts.py",
+        "api/routers/settings.py",
+        "api/routers/cms.py",
+        "api/routers/analytics.py",
+        "api/routers/content_performance.py",
+        "api/routers/workspaces.py",
+        "frontend/src/app/(dashboard)/settings/_lib/api.ts"
+      ]
+    },
     {
       "id": "T-td-entry-parallel-execution-phase2",
       "task": "Codex Phase 2 \u2014 Redis-backed company event transport",

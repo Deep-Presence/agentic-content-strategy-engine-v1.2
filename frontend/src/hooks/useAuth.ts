@@ -5,8 +5,19 @@
 
 import { useAuthStore, type AuthState } from '@/stores/auth';
 import { useWorkspaceStore } from '@/stores/workspace';
-import { ROLE_HIERARCHY } from '@/lib/auth/constants';
+import {
+  ROLE_HIERARCHY,
+  WORKSPACE_MIN_FOR_USER_ROLE,
+  WORKSPACE_ROLE_HIERARCHY,
+} from '@/lib/auth/constants';
 import type { UserRole } from '@/lib/auth/types';
+
+function effectiveRoleLevel(workspaceRole: string | undefined, jwtRole: UserRole): number {
+  if (workspaceRole) {
+    return WORKSPACE_ROLE_HIERARCHY[workspaceRole] ?? 0;
+  }
+  return ROLE_HIERARCHY[jwtRole] ?? 0;
+}
 
 export function useAuth() {
   const user = useAuthStore((s: AuthState) => s.user);
@@ -20,6 +31,9 @@ export function useAuth() {
     workspaces.find((workspace) => workspace.slug === activeWorkspaceSlug) ?? null;
 
   const resolvedWorkspaceSlug = activeWorkspaceSlug || company?.slug || '';
+  const workspaceRole = activeWorkspace?.role;
+  const jwtRole = (user?.role ?? 'viewer') as UserRole;
+  const roleLevel = effectiveRoleLevel(workspaceRole, jwtRole);
 
   return {
     isAuthenticated: !!user,
@@ -37,15 +51,15 @@ export function useAuth() {
     userId: user?.id ?? '',
     fullName: user ? `${user.first_name} ${user.last_name}`.trim() : '',
     email: user?.email ?? '',
-    role: (user?.role ?? 'viewer') as UserRole,
+    role: jwtRole,
+    workspaceRole: workspaceRole ?? null,
 
-    isSuperuser: user?.role === 'superuser',
-    isMember: user?.role === 'member' || user?.role === 'superuser',
-    isViewer: user?.role === 'viewer',
+    isSuperuser: roleLevel >= WORKSPACE_MIN_FOR_USER_ROLE.superuser,
+    isMember: roleLevel >= WORKSPACE_MIN_FOR_USER_ROLE.member,
+    isViewer: roleLevel >= WORKSPACE_MIN_FOR_USER_ROLE.viewer,
     hasRole: (minRole: UserRole): boolean => {
-      const userLevel = ROLE_HIERARCHY[user?.role ?? 'viewer'] ?? 0;
-      const requiredLevel = ROLE_HIERARCHY[minRole] ?? 0;
-      return userLevel >= requiredLevel;
+      const requiredLevel = WORKSPACE_MIN_FOR_USER_ROLE[minRole] ?? 0;
+      return roleLevel >= requiredLevel;
     },
 
     login: useAuthStore.getState().login,

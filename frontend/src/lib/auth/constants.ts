@@ -11,6 +11,21 @@ export const ROLE_HIERARCHY: Record<string, number> = {
   superuser: 2,
 };
 
+/** Workspace membership roles (preferred over JWT when active workspace is set). */
+export const WORKSPACE_ROLE_HIERARCHY: Record<string, number> = {
+  viewer: 0,
+  member: 1,
+  admin: 2,
+  owner: 3,
+};
+
+/** Minimum workspace level required for each legacy JWT gate. */
+export const WORKSPACE_MIN_FOR_USER_ROLE: Record<string, number> = {
+  viewer: 0,
+  member: 1,
+  superuser: 2,
+};
+
 export const AUTH_CHANNEL = 'dp_auth_channel';
 
 /** BFF route paths (same-origin, relative) */

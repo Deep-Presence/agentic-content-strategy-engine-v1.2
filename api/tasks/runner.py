@@ -245,6 +245,29 @@ def _task_or_none(task_store: TaskStoreProtocol, task_id: str) -> PipelineTask |
         return None
 
 
+def _task_runner_slugs(
+    task: PipelineTask | None,
+    request: Any,
+    *,
+    company_name_attr: str = "company_name",
+    fallback_company_slug: str | None = None,
+) -> tuple[str, str | None, str | None]:
+    """Resolve slug scope from persisted task state, not stale request bodies."""
+    company_slug = (
+        task.company_slug
+        if task and task.company_slug
+        else fallback_company_slug
+        or _derive_slug(getattr(request, company_name_attr, None) or "")
+    )
+    product_slug = (
+        task.product_slug
+        if task and task.product_slug
+        else getattr(request, "product_slug", None)
+    )
+    workspace_id = task.workspace_id if task else None
+    return company_slug, product_slug, workspace_id
+
+
 async def _mark_pipeline_run_complete(
     session_factory: Optional[async_sessionmaker],
     run_id: Optional[uuid.UUID],
@@ -1047,8 +1070,8 @@ async def run_audience_persona_pipeline_task(
     from core.models.audience_persona import AudiencePersonaInput
     from core.research.audience_persona.pipeline import run_audience_persona_pipeline
 
-    company_slug = _derive_slug(request.company_name)
-    product_slug = getattr(request, "product_slug", None)
+    _task = _task_or_none(task_store, task_id)
+    company_slug, product_slug, workspace_id = _task_runner_slugs(_task, request)
     scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
 
     # Resolve DB context for research artifact persistence
@@ -1059,6 +1082,7 @@ async def run_audience_persona_pipeline_task(
         await _create_pipeline_run(
             session_factory, run_id, company_id,
             scope.effective_slug, "audience_persona",
+            workspace_id=workspace_id,
         )
 
     bind_context(task_id=task_id, pipeline_name="audience_persona", company_slug=scope.company_slug, run_id=str(run_id) if run_id else None)
@@ -1228,8 +1252,8 @@ async def run_voice_style_guide_pipeline_task(
     from core.models.voice_style_guide import VoiceStyleGuideInput
     from core.research.voice_style_guide.pipeline import run_voice_style_guide_pipeline
 
-    company_slug = _derive_slug(request.company_name)
-    product_slug = getattr(request, "product_slug", None)
+    _task = _task_or_none(task_store, task_id)
+    company_slug, product_slug, workspace_id = _task_runner_slugs(_task, request)
     scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
 
     # Resolve DB context for research artifact persistence
@@ -1240,6 +1264,7 @@ async def run_voice_style_guide_pipeline_task(
         await _create_pipeline_run(
             session_factory, run_id, company_id,
             scope.effective_slug, "voice_style_guide",
+            workspace_id=workspace_id,
         )
 
     bind_context(task_id=task_id, pipeline_name="voice_style_guide", company_slug=scope.company_slug, run_id=str(run_id) if run_id else None)
@@ -1332,8 +1357,8 @@ async def run_research_orchestrator_task(
     from core.models.research_orchestrator import ResearchOrchestratorInput
     from core.research.orchestrator import run_research_orchestrator
 
-    company_slug = _derive_slug(request.company_name)
-    product_slug = getattr(request, "product_slug", None)
+    _task = _task_or_none(task_store, task_id)
+    company_slug, product_slug, workspace_id = _task_runner_slugs(_task, request)
     scope = None  # Ensure always defined for finally block
     session_factory: Any = None
     run_id: Any = None
@@ -1350,6 +1375,7 @@ async def run_research_orchestrator_task(
             await _create_pipeline_run(
                 session_factory, run_id, company_id,
                 scope.effective_slug, "research_orchestrator",
+                workspace_id=workspace_id,
             )
         if run_id:
             bind_context(run_id=str(run_id))
@@ -2567,6 +2593,12 @@ async def run_onboarding_task(
     session_factory: Any = None
     run_id: Any = None
 
+    _task = _task_or_none(task_store, task_id)
+    task_company_slug, _product_slug, workspace_id = _task_runner_slugs(
+        _task, request, fallback_company_slug=company_slug,
+    )
+    company_slug = task_company_slug
+
     bind_context(task_id=task_id, pipeline_name="onboarding", company_slug=company_slug)
     try:
         session_factory, run_id, company_id = await _resolve_db_context(
@@ -2576,6 +2608,7 @@ async def run_onboarding_task(
             await _create_pipeline_run(
                 session_factory, run_id, company_id,
                 company_slug, "onboarding",
+                workspace_id=workspace_id,
             )
         if run_id:
             bind_context(run_id=str(run_id))
@@ -2709,6 +2742,12 @@ async def run_daily_tracker_task(
     pipeline_run_id: Any = None
     daily_run_id: Optional[str] = None
 
+    _task = _task_or_none(task_store, task_id)
+    task_company_slug, _product_slug, workspace_id = _task_runner_slugs(
+        _task, request, fallback_company_slug=company_slug,
+    )
+    company_slug = task_company_slug
+
     bind_context(task_id=task_id, pipeline_name="daily_tracker", company_slug=company_slug)
     try:
         # 1. Resolve DB context — session_factory for orchestrator + persistence,
@@ -2720,6 +2759,7 @@ async def run_daily_tracker_task(
             await _create_pipeline_run(
                 session_factory, pipeline_run_id, company_id,
                 company_slug, "daily_tracker",
+                workspace_id=workspace_id,
             )
         if pipeline_run_id:
             bind_context(run_id=str(pipeline_run_id))

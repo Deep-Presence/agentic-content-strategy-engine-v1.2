@@ -3,9 +3,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { ApiError } from '@/lib/api-client';
-import { fetchTeamMembers, updateTeamMember, generateInviteCode } from '../_lib/api';
-import { backendRoleToDisplay, displayRoleToBackend } from '../_lib/role-map';
-import type { TeamMemberDisplay, FrontendRole, BackendRole } from '../_lib/types';
+import {
+  fetchTeamMembers,
+  updateTeamMember,
+  generateWorkspaceInvite,
+} from '../_lib/api';
+import { workspaceRoleToDisplay, displayRoleToWorkspace } from '../_lib/role-map';
+import type { TeamMemberDisplay, FrontendRole, WorkspaceRole } from '../_lib/types';
 
 interface UseTeamDataReturn {
   members: TeamMemberDisplay[];
@@ -14,7 +18,7 @@ interface UseTeamDataReturn {
   error: string | null;
   inviteCode: string | null;
   isGenerating: boolean;
-  isSuperuser: boolean;
+  canManageTeam: boolean;
   currentUserId: string;
   updateRole: (userId: string, newRole: FrontendRole) => Promise<void>;
   deactivateMember: (userId: string) => Promise<void>;
@@ -22,20 +26,34 @@ interface UseTeamDataReturn {
   refetch: () => void;
 }
 
-function toDisplay(m: { id: string; email: string; first_name: string; last_name: string; role: BackendRole; is_active: boolean; created_at: string }): TeamMemberDisplay {
+function toDisplay(m: {
+  user_id: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  role: WorkspaceRole;
+  status: string;
+}): TeamMemberDisplay {
   return {
-    id: m.id,
+    id: m.user_id,
     name: `${m.first_name} ${m.last_name}`.trim() || m.email,
     email: m.email,
-    role: backendRoleToDisplay(m.role),
-    backendRole: m.role,
-    status: m.is_active ? 'active' : 'inactive',
-    createdAt: m.created_at,
+    role: workspaceRoleToDisplay(m.role),
+    workspaceRole: m.role,
+    status: m.status === 'active' ? 'active' : 'inactive',
   };
 }
 
 export function useTeamData(): UseTeamDataReturn {
-  const { companySlug, isInitialized, isSuperuser, userId } = useAuth();
+  const {
+    activeWorkspaceSlug,
+    isInitialized,
+    hasRole,
+    userId,
+  } = useAuth();
+
+  const workspaceSlug = activeWorkspaceSlug;
+  const canManageTeam = hasRole('superuser');
 
   const [members, setMembers] = useState<TeamMemberDisplay[]>([]);
   const [total, setTotal] = useState(0);
@@ -69,44 +87,46 @@ export function useTeamData(): UseTeamDataReturn {
   }, []);
 
   useEffect(() => {
-    if (!isInitialized || !companySlug) return;
-    loadData(companySlug);
+    if (!isInitialized || !workspaceSlug) return;
+    loadData(workspaceSlug);
     return () => { abortRef.current?.abort(); };
-  }, [isInitialized, companySlug, loadData]);
+  }, [isInitialized, workspaceSlug, loadData]);
 
   const refetch = useCallback(() => {
-    if (companySlug) loadData(companySlug);
-  }, [companySlug, loadData]);
+    if (workspaceSlug) loadData(workspaceSlug);
+  }, [workspaceSlug, loadData]);
 
   const updateRole = useCallback(async (targetUserId: string, newRole: FrontendRole) => {
-    if (!companySlug) return;
+    if (!workspaceSlug) return;
     try {
-      const backendRole = displayRoleToBackend(newRole);
-      await updateTeamMember(companySlug, targetUserId, { role: backendRole });
+      await updateTeamMember(workspaceSlug, targetUserId, {
+        role: displayRoleToWorkspace(newRole),
+      });
       refetch();
     } catch (err) {
       const msg = err instanceof ApiError ? err.detail : 'Failed to update role';
       setError(msg);
       throw err;
     }
-  }, [companySlug, refetch]);
+  }, [workspaceSlug, refetch]);
 
   const deactivateMember = useCallback(async (targetUserId: string) => {
-    if (!companySlug) return;
+    if (!workspaceSlug) return;
     try {
-      await updateTeamMember(companySlug, targetUserId, { is_active: false });
+      await updateTeamMember(workspaceSlug, targetUserId, { status: 'suspended' });
       refetch();
     } catch (err) {
       const msg = err instanceof ApiError ? err.detail : 'Failed to deactivate member';
       setError(msg);
       throw err;
     }
-  }, [companySlug, refetch]);
+  }, [workspaceSlug, refetch]);
 
   const generateInvite = useCallback(async (role: 'member' | 'viewer') => {
+    if (!workspaceSlug) return;
     setIsGenerating(true);
     try {
-      const res = await generateInviteCode(role);
+      const res = await generateWorkspaceInvite(workspaceSlug, role);
       setInviteCode(res.invite_code);
     } catch (err) {
       const msg = err instanceof ApiError ? err.detail : 'Failed to generate invite code';
@@ -114,7 +134,7 @@ export function useTeamData(): UseTeamDataReturn {
     } finally {
       setIsGenerating(false);
     }
-  }, []);
+  }, [workspaceSlug]);
 
   return {
     members,
@@ -123,7 +143,7 @@ export function useTeamData(): UseTeamDataReturn {
     error,
     inviteCode,
     isGenerating,
-    isSuperuser,
+    canManageTeam,
     currentUserId: userId,
     updateRole,
     deactivateMember,

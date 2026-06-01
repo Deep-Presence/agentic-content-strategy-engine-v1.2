@@ -112,6 +112,21 @@ async def assert_task_workspace_access(
         raise _http_from_workspace_error(workspace_slug, exc) from exc
 
 
+def authoritative_company_fields(
+    scope: WorkspaceRequestScope,
+    *,
+    company_name: Optional[str] = None,
+    domain: Optional[str] = None,
+) -> dict[str, str]:
+    """Prefer workspace metadata over stale client-supplied company fields."""
+    resolved_name = (scope.workspace.name or "").strip() or company_name or scope.workspace_slug
+    resolved_domain = (scope.workspace.primary_domain or "").strip() or domain or ""
+    fields: dict[str, str] = {"company_name": resolved_name}
+    if resolved_domain:
+        fields["domain"] = resolved_domain
+    return fields
+
+
 async def assert_slug_workspace_access(
     slug: str,
     user: UserProfile,

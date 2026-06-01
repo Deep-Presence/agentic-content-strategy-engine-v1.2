@@ -6,7 +6,7 @@
  */
 
 import { useState, useCallback } from 'react';
-import { api } from '@/lib/api-client';
+import { api, workspaceQueryParams } from '@/lib/api-client';
 import type { StreamTokenResponse } from '@/lib/auth/types';
 
 export function useStreamToken(taskId: string) {
@@ -20,6 +20,8 @@ export function useStreamToken(taskId: string) {
     try {
       const res = await api.post<StreamTokenResponse>(
         `/api/v1/tasks/${taskId}/stream-token`,
+        undefined,
+        { params: workspaceQueryParams() },
       );
       setStreamToken(res.stream_token);
       return res.stream_token;

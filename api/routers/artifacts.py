@@ -19,9 +19,11 @@ _SAFE_FILENAME_RE = re.compile(r"[^a-zA-Z0-9._-]")
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
-from api.auth.dependencies import require_auth
-from api.dependencies import get_storage_backend
+from api.auth.dependencies import get_workspace_read_slug, get_workspace_write_slug, require_auth
+from api.dependencies import get_storage_backend, get_workspace_service
+from api.routers._helpers import assert_slug_workspace_access
 from core.models.organization import UserProfile
+from core.services.workspace_protocol import WorkspaceServiceProtocol
 from core.storage.backends.base import StorageBackend
 
 router = APIRouter(prefix="/api/v1/artifacts", tags=["artifacts"])
@@ -31,14 +33,6 @@ _EXCLUDED_DIRS = {"chroma_db", "_logs", ".DS_Store"}
 
 # Artifact types where files live directly in the type dir (not in slug subdirs)
 _FLAT_TYPES = {"company_context", "personas", "style_guides"}
-
-
-def _user_company_slug(request: Request) -> str:
-    """Extract the authenticated user's company slug from request state."""
-    slug = getattr(request.state, "company_slug", None)
-    if not slug:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return slug
 
 
 def _slug_belongs_to_user(slug: str, company_slug: str) -> bool:
@@ -120,7 +114,7 @@ def _slugs_from_nested_listing(entries: List[str]) -> set[str]:
 
 @router.get("/companies")
 def list_companies(
-    request: Request,
+    workspace_slug: str = Depends(get_workspace_read_slug),
     backend: StorageBackend = Depends(get_storage_backend),
     _user: UserProfile = Depends(require_auth),
 ) -> Dict[str, List[str]]:
@@ -128,7 +122,7 @@ def list_companies(
 
     Returns only slugs belonging to the user's company (bare + effective).
     """
-    company_slug = _user_company_slug(request)
+    company_slug = workspace_slug
     all_slugs: set[str] = set()
 
     for type_name in VALID_TYPES:
@@ -146,12 +140,12 @@ def list_companies(
 
 
 @router.get("/{artifact_type}/{slug}")
-def list_artifacts(
+async def list_artifacts(
     artifact_type: str,
     slug: str,
-    request: Request,
     backend: StorageBackend = Depends(get_storage_backend),
-    _user: UserProfile = Depends(require_auth),
+    user: UserProfile = Depends(require_auth),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> Dict[str, Any]:
     """List files for a given artifact type and company slug."""
     if not _SLUG_PATTERN.match(slug):
@@ -161,10 +155,7 @@ def list_artifacts(
             status_code=422, detail=f"Invalid artifact type: {artifact_type}. Valid: {sorted(VALID_TYPES)}"
         )
 
-    # Tenant isolation
-    company_slug = _user_company_slug(request)
-    if not _slug_belongs_to_user(slug, company_slug):
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_slug_workspace_access(slug, user, workspace_service)
 
     if artifact_type in _FLAT_TYPES:
         entries = backend.list_dir(artifact_type)
@@ -212,13 +203,13 @@ def list_artifacts(
 
 
 @router.get("/{artifact_type}/{slug}/{filename:path}")
-def get_artifact_content(
+async def get_artifact_content(
     artifact_type: str,
     slug: str,
     filename: str,
-    request: Request,
     backend: StorageBackend = Depends(get_storage_backend),
-    _user: UserProfile = Depends(require_auth),
+    user: UserProfile = Depends(require_auth),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> Any:
     """Retrieve artifact file content."""
     if not _SLUG_PATTERN.match(slug):
@@ -228,10 +219,7 @@ def get_artifact_content(
             status_code=422, detail=f"Invalid artifact type: {artifact_type}"
         )
 
-    # Tenant isolation
-    company_slug = _user_company_slug(request)
-    if not _slug_belongs_to_user(slug, company_slug):
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_slug_workspace_access(slug, user, workspace_service)
 
     # Path traversal check
     if ".." in filename:
@@ -302,11 +290,12 @@ def _resolve_collision(backend: StorageBackend, storage_key: str) -> str:
 async def upload_artifact(
     artifact_type: str,
     slug: str,
-    request: Request,
     file: UploadFile = File(...),
     sub_path: Optional[str] = Query(default=None, description="Sub-directory within artifact type, e.g. 'company_overview' or 'guide' or persona_id"),
     backend: StorageBackend = Depends(get_storage_backend),
-    _user: UserProfile = Depends(require_auth),
+    user: UserProfile = Depends(require_auth),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
+    _write_slug: str = Depends(get_workspace_write_slug),
 ) -> Dict[str, Any]:
     """Upload a replacement document to an artifact directory.
 
@@ -322,10 +311,9 @@ async def upload_artifact(
             detail=f"Upload not supported for '{artifact_type}'. Allowed: {sorted(_UPLOADABLE_TYPES)}",
         )
 
-    # Tenant isolation
-    company_slug = _user_company_slug(request)
-    if not _slug_belongs_to_user(slug, company_slug):
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_slug_workspace_access(
+        slug, user, workspace_service, min_roles=("owner", "admin", "member")
+    )
 
     # Validate filename
     original_name = file.filename or "upload.md"

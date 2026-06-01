@@ -23,6 +23,7 @@ from api.tasks.models import PipelineTask, TaskStatus
 from api.routers._helpers import (
     assert_slug_workspace_access,
     assert_task_workspace_access,
+    authoritative_company_fields,
     create_task_durable,
     resolve_workspace_scope,
 )
@@ -101,7 +102,7 @@ async def start_voice_style_guide(
     body: VoiceStyleGuideStartRequest,
     response: Response,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
     event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
@@ -117,6 +118,14 @@ async def start_voice_style_guide(
         product_slug=body.product_slug,
         min_roles=("owner", "admin", "member"),
     )
+    if body.workspace_slug.strip():
+        body = body.model_copy(
+            update=authoritative_company_fields(
+                scope,
+                company_name=body.company_name,
+                domain=getattr(body, "domain", None),
+            )
+        )
     slug = scope.workspace_slug
     effective_slug = scope.effective_slug
 
@@ -235,7 +244,7 @@ async def approve_authors(
     run_id: str,
     body: AuthorApprovalRequest,
     request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
     workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> ApprovalResponseVSG:

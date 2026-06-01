@@ -61,6 +61,7 @@ class PromptLibraryService:
         text: str,
         category: str | None = None,
         tags: list[str] | None = None,
+        workspace_id: str | None = None,
     ) -> TrackedPrompt:
         """Create a new tracked prompt.
 
@@ -82,13 +83,18 @@ class PromptLibraryService:
                 f"Prompt with this text already exists for company {company_id}"
             )
 
-        orm_obj = await self._repo.create(
-            company_id=company_id,
-            text=text,
-            category=category,
-            tags=tags or [],
-            source=PromptSource.MANUAL.value,
-        )
+        import uuid as _uuid
+
+        create_kwargs: dict[str, object] = {
+            "company_id": company_id,
+            "text": text,
+            "category": category,
+            "tags": tags or [],
+            "source": PromptSource.MANUAL.value,
+        }
+        if workspace_id:
+            create_kwargs["workspace_id"] = _uuid.UUID(workspace_id)
+        orm_obj = await self._repo.create(**create_kwargs)
         return self._orm_to_pydantic(orm_obj)
 
     async def list_prompts(
@@ -135,6 +141,15 @@ class PromptLibraryService:
             return None
         return self._orm_to_pydantic(orm_obj)
 
+    async def get_prompt_for_company(
+        self, prompt_id: str, company_id: str
+    ) -> TrackedPrompt | None:
+        """Get a prompt scoped to a company/workspace slug (tenant-safe)."""
+        orm_obj = await self._repo.get_by_id_for_company(prompt_id, company_id)
+        if orm_obj is None:
+            return None
+        return self._orm_to_pydantic(orm_obj)
+
     async def update_prompt(
         self, prompt_id: str, **kwargs: object
     ) -> TrackedPrompt:
@@ -155,6 +170,15 @@ class PromptLibraryService:
             raise ValueError(f"Prompt {prompt_id} not found")
         return self._orm_to_pydantic(orm_obj)
 
+    async def update_prompt_for_company(
+        self, prompt_id: str, company_id: str, **kwargs: object
+    ) -> TrackedPrompt:
+        """Update a prompt only when it belongs to the company/workspace."""
+        existing = await self._repo.get_by_id_for_company(prompt_id, company_id)
+        if existing is None:
+            raise ValueError(f"Prompt {prompt_id} not found")
+        return await self.update_prompt(prompt_id, **kwargs)
+
     async def delete_prompt(self, prompt_id: str) -> bool:
         """Delete a prompt by ID.
 
@@ -165,6 +189,13 @@ class PromptLibraryService:
             True if deleted, False if not found.
         """
         return await self._repo.delete(prompt_id)
+
+    async def delete_prompt_for_company(self, prompt_id: str, company_id: str) -> bool:
+        """Delete a prompt only when it belongs to the company/workspace."""
+        existing = await self._repo.get_by_id_for_company(prompt_id, company_id)
+        if existing is None:
+            return False
+        return await self.delete_prompt(prompt_id)
 
     async def toggle_prompt(
         self, prompt_id: str, active: bool
@@ -185,6 +216,15 @@ class PromptLibraryService:
         if orm_obj is None:
             raise ValueError(f"Prompt {prompt_id} not found")
         return self._orm_to_pydantic(orm_obj)
+
+    async def toggle_prompt_for_company(
+        self, prompt_id: str, company_id: str, active: bool
+    ) -> TrackedPrompt:
+        """Toggle active state only for prompts in the company/workspace."""
+        existing = await self._repo.get_by_id_for_company(prompt_id, company_id)
+        if existing is None:
+            raise ValueError(f"Prompt {prompt_id} not found")
+        return await self.toggle_prompt(prompt_id, active)
 
     # ── Import ────────────────────────────────────────────────────────
 

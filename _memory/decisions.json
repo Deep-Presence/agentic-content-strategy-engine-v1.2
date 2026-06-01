@@ -1,5 +1,26 @@
 [
   {
+    "id": "D-WORKSPACE-REMAINING-PIPELINES",
+    "timestamp": "2026-06-01",
+    "task": "Workspace scoping on research + monitoring pipelines (KB, AP, VSG, site audit, onboarding, research orchestrator, daily tracker)",
+    "decision": "All pipeline start routes and slug-less daily-tracker routes must use resolve_workspace_scope() (or get_tracker_company_id dependency with optional ?workspace_slug=) and pass workspace_id into create_task_durable(). Start request schemas accept optional workspace_slug with empty-string default. Slug-in-path read routes continue to authorize via path slug membership; slug-less routes require explicit workspace_slug on GET query or POST body because JWT company_slug alone does not track UI workspace switch.",
+    "rationale": "Gap/content/TD were scoped in 29b848c but KB/AP/VSG/audit/onboarding/tracker still fell back to token company_slug, so switching workspaces in the UI could launch or read the wrong tenant on those pipelines and on prompt-tracking APIs.",
+    "files_affected": [
+      "api/routers/knowledge_base.py",
+      "api/routers/audience_persona.py",
+      "api/routers/voice_style_guide.py",
+      "api/routers/site_audit.py",
+      "api/routers/onboarding.py",
+      "api/routers/research_orchestrator.py",
+      "api/routers/daily_tracker.py",
+      "frontend/src/app/(dashboard)/artifacts/_lib/api.ts",
+      "frontend/src/app/(dashboard)/prompt-tracking/_lib/api.ts"
+    ],
+    "validation": "pytest tests/api/test_site_audit.py tests/api/test_voice_style_guide_router.py and related KB/AP/daily-tracker API modules",
+    "status": "COMPLETE",
+    "approved_by": "Aryan"
+  },
+  {
     "id": "D-WORKSPACE-RUNTIME-SCOPING",
     "timestamp": "2026-06-01",
     "task": "Workspace backend hardening after workspace model implementation review",

@@ -16,13 +16,17 @@ from api.dependencies import (
 from api.schemas.workspace import (
     WorkspaceCreateRequest,
     WorkspaceDetailResponse,
+    WorkspaceInviteRequest,
+    WorkspaceInviteResponse,
     WorkspaceListResponse,
+    WorkspaceMemberUpdateRequest,
     WorkspaceMembersResponse,
     WorkspaceProfileResponse,
     WorkspaceUpdateRequest,
 )
 from core.auth.service import AuthServiceProtocol
 from core.models.organization import UserProfile
+from core.models.workspace import WorkspaceMemberSummary
 from core.services.task_store import TaskStoreProtocol
 from core.services.workspace_protocol import WorkspaceServiceProtocol
 
@@ -153,7 +157,66 @@ async def list_workspace_members(
         if code == "access_denied":
             raise HTTPException(status_code=403, detail="Access denied") from exc
         raise HTTPException(status_code=400, detail=code) from exc
-    return WorkspaceMembersResponse(members=members)
+    return WorkspaceMembersResponse(members=members, total=len(members))
+
+
+@router.patch("/{workspace_slug}/members/{user_id}", response_model=WorkspaceMemberSummary)
+async def update_workspace_member(
+    workspace_slug: str,
+    user_id: str,
+    body: WorkspaceMemberUpdateRequest,
+    user: UserProfile = Depends(require_auth),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
+) -> WorkspaceMemberSummary:
+    """Update a member's workspace role or status (owner/admin)."""
+    if not body.model_dump(exclude_unset=True):
+        raise HTTPException(status_code=400, detail="No fields to update")
+    try:
+        return await workspace_service.update_member(
+            workspace_slug,
+            user,
+            user_id,
+            role=body.role,
+            status=body.status,
+        )
+    except ValueError as exc:
+        code = str(exc)
+        if code == "workspace_not_found":
+            raise HTTPException(status_code=404, detail="Workspace not found") from exc
+        if code == "member_not_found":
+            raise HTTPException(status_code=404, detail="Member not found") from exc
+        if code in ("access_denied", "insufficient_role", "cannot_modify_self", "last_owner"):
+            raise HTTPException(status_code=403, detail="Access denied") from exc
+        if code == "invalid_status":
+            raise HTTPException(status_code=400, detail=code) from exc
+        raise HTTPException(status_code=400, detail=code) from exc
+
+
+@router.post("/{workspace_slug}/invites", response_model=WorkspaceInviteResponse, status_code=201)
+async def create_workspace_invite(
+    workspace_slug: str,
+    body: WorkspaceInviteRequest,
+    user: UserProfile = Depends(require_auth),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
+) -> WorkspaceInviteResponse:
+    """Create an invite code for the workspace's company (owner/admin)."""
+    try:
+        await workspace_service.assert_workspace_access(
+            workspace_slug, user, min_roles=("owner", "admin")
+        )
+    except ValueError as exc:
+        code = str(exc)
+        if code == "workspace_not_found":
+            raise HTTPException(status_code=404, detail="Workspace not found") from exc
+        raise HTTPException(status_code=403, detail="Access denied") from exc
+
+    code = await auth_service.create_invite(workspace_slug, role=body.role)
+    return WorkspaceInviteResponse(
+        invite_code=code,
+        workspace_slug=workspace_slug,
+        role=body.role,
+    )
 
 
 @router.get("/{workspace_slug}/profile", response_model=WorkspaceProfileResponse)

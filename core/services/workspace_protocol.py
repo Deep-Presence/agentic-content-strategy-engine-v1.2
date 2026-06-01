@@ -58,6 +58,16 @@ class WorkspaceServiceProtocol(Protocol):
         self, workspace_slug: str, user: UserProfile
     ) -> List[WorkspaceMemberSummary]: ...
 
+    async def update_member(
+        self,
+        workspace_slug: str,
+        user: UserProfile,
+        target_user_id: str,
+        *,
+        role: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> WorkspaceMemberSummary: ...
+
     async def get_profile(
         self,
         workspace_slug: str,

@@ -1,5 +1,14 @@
 [
   {
+    "id": "F34",
+    "timestamp": "2026-06-01",
+    "what_broke": "Importing api/routers/daily_tracker.py raised NameError: get_tracker_company_id is not defined when starting the FastAPI server after workspace scoping patch.",
+    "root_cause": "get_tracker_company_id was appended below route handlers that already referenced it in Depends(), and a bad automated patch briefly introduced recursive Depends(get_tracker_company_id) inside the helper itself.",
+    "fix_applied": "Moved get_tracker_company_id above all route handlers; restored file from git and re-applied scoping with helper defined first; removed erroneous self-referential Depends.",
+    "lesson": "FastAPI dependencies used in route signatures must be defined before those routes in the module. When bulk-editing router files, validate import/startup (python -c 'from api.routers import daily_tracker') before running tests.",
+    "files_affected": ["api/routers/daily_tracker.py"]
+  },
+  {
     "id": "F30",
     "timestamp": "2026-04-11",
     "what_broke": "After GA4 property loading was fixed, selecting a property still ended with `Property saved, but the initial sync did not complete`. The backend sync task failed before any analytics data became usable on Content Performance.",

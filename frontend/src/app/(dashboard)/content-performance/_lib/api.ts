@@ -3,7 +3,7 @@
  * All calls go through BFF proxy via same-origin fetch.
  */
 
-import { api } from '@/lib/api-client';
+import { api, workspaceQueryParams } from '@/lib/api-client';
 import { serializePublishMetadata } from '../../content-studio/_lib/adapters';
 import type { ContentMetadata } from '../../content-studio/_components/types';
 import type {
@@ -24,7 +24,7 @@ export function fetchContentDetail(
 ): Promise<ContentDetailAPI> {
   return api.get<ContentDetailAPI>(
     `/api/v1/content-performance/${inventoryId}`,
-    params,
+    workspaceQueryParams(params),
     signal,
   );
 }
@@ -37,7 +37,7 @@ export function fetchContentTable(
 ): Promise<ContentPerformanceTableResponseAPI> {
   return api.get<ContentPerformanceTableResponseAPI>(
     '/api/v1/content-performance',
-    params,
+    workspaceQueryParams(params),
     signal,
   );
 }
@@ -48,7 +48,7 @@ export function fetchContentPerformanceReadiness(
 ): Promise<ContentPerformanceReadinessAPI> {
   return api.get<ContentPerformanceReadinessAPI>(
     '/api/v1/content-performance/readiness',
-    params,
+    workspaceQueryParams(params),
     signal,
   );
 }
@@ -61,7 +61,7 @@ export function fetchVelocityInsights(
 ): Promise<VelocityInsightsResponseAPI> {
   return api.get<VelocityInsightsResponseAPI>(
     '/api/v1/content-performance/insights/velocity',
-    params,
+    workspaceQueryParams(params),
     signal,
   );
 }
@@ -92,7 +92,7 @@ export function fetchSimilarContent(
 ): Promise<SimilarContentResponseAPI> {
   return api.get<SimilarContentResponseAPI>(
     `/api/v1/content-performance/${inventoryId}/similar`,
-    params,
+    workspaceQueryParams(params),
     signal,
   );
 }
@@ -110,7 +110,7 @@ export function generateEmbeddings(
   return api.post<GenerateEmbeddingsResponseAPI>(
     '/api/v1/content-inventory/generate-embeddings',
     undefined,
-    signal ? { signal } : undefined,
+    { ...workspaceQueryParams(), ...(signal ? { signal } : {}) },
   );
 }
 
@@ -130,7 +130,7 @@ export function fetchCMSConnection(
 ): Promise<CMSConnectionInfo | null> {
   return api.get<CMSConnectionInfo | null>(
     '/api/v1/cms/connection',
-    undefined,
+    workspaceQueryParams(),
     signal,
   );
 }
@@ -147,7 +147,11 @@ export interface SyncResponse {
 export function triggerCMSSync(
   signal?: AbortSignal,
 ): Promise<SyncResponse> {
-  return api.post<SyncResponse>('/api/v1/cms/sync', {}, signal ? { signal } : undefined);
+  return api.post<SyncResponse>(
+    '/api/v1/cms/sync',
+    {},
+    { ...workspaceQueryParams(), ...(signal ? { signal } : {}) },
+  );
 }
 
 // ── Content-to-Prompt Generate New Pages ──────────────
@@ -184,7 +188,11 @@ export function fetchTaskStatus(
   taskId: string,
   signal?: AbortSignal,
 ): Promise<TaskStatus> {
-  return api.get<TaskStatus>(`/api/v1/tasks/${taskId}`, undefined, signal);
+  return api.get<TaskStatus>(
+    `/api/v1/tasks/${taskId}`,
+    workspaceQueryParams(),
+    signal,
+  );
 }
 
 // ── Gap Analysis Signal Averages ───────────────────────
@@ -236,6 +244,6 @@ export function publishContentBrief(
       status: 'publish',
       publish_metadata: metadata ? serializePublishMetadata(metadata) : undefined,
     },
-    signal ? { signal } : undefined,
+    { ...workspaceQueryParams(), ...(signal ? { signal } : {}) },
   );
 }

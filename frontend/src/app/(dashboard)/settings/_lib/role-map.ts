@@ -1,28 +1,41 @@
 /**
- * Role mapping between backend (superuser/member/viewer) and
+ * Role mapping between workspace membership roles and
  * frontend display labels (Admin/Editor/Viewer).
  */
 
-import type { BackendRole, FrontendRole } from './types';
+import type { FrontendRole, WorkspaceRole } from './types';
 
-const BACKEND_TO_FRONTEND: Record<BackendRole, FrontendRole> = {
-  superuser: 'admin',
+const WORKSPACE_TO_FRONTEND: Record<WorkspaceRole, FrontendRole> = {
+  owner: 'admin',
+  admin: 'admin',
   member: 'editor',
   viewer: 'viewer',
 };
 
-const FRONTEND_TO_BACKEND: Record<FrontendRole, BackendRole> = {
-  admin: 'superuser',
+const FRONTEND_TO_WORKSPACE: Record<FrontendRole, WorkspaceRole> = {
+  admin: 'admin',
   editor: 'member',
   viewer: 'viewer',
 };
 
-export function backendRoleToDisplay(role: BackendRole): FrontendRole {
-  return BACKEND_TO_FRONTEND[role] ?? 'viewer';
+export function workspaceRoleToDisplay(role: WorkspaceRole): FrontendRole {
+  return WORKSPACE_TO_FRONTEND[role] ?? 'viewer';
 }
 
-export function displayRoleToBackend(role: FrontendRole): BackendRole {
-  return FRONTEND_TO_BACKEND[role] ?? 'viewer';
+export function displayRoleToWorkspace(role: FrontendRole): WorkspaceRole {
+  return FRONTEND_TO_WORKSPACE[role] ?? 'viewer';
+}
+
+/** @deprecated Legacy JWT role mapping — prefer workspace roles. */
+export function backendRoleToDisplay(role: string): FrontendRole {
+  if (role === 'superuser') return 'admin';
+  if (role === 'member') return 'editor';
+  return 'viewer';
+}
+
+/** @deprecated Legacy JWT role mapping — prefer workspace roles. */
+export function displayRoleToBackend(role: FrontendRole): string {
+  return displayRoleToWorkspace(role) === 'admin' ? 'superuser' : displayRoleToWorkspace(role);
 }
 
 export const ROLE_OPTIONS: { value: FrontendRole; label: string; description: string }[] = [
@@ -31,7 +44,7 @@ export const ROLE_OPTIONS: { value: FrontendRole; label: string; description: st
   { value: 'viewer', label: 'Viewer', description: 'Read-only access to dashboards' },
 ];
 
-/** Roles available for invites (cannot invite superusers). */
+/** Roles available for invites (cannot invite owners). */
 export const INVITE_ROLE_OPTIONS: { value: 'member' | 'viewer'; label: string }[] = [
   { value: 'member', label: 'Editor' },
   { value: 'viewer', label: 'Viewer' },

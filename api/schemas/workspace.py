@@ -64,6 +64,30 @@ class WorkspaceDetailResponse(BaseModel):
 
 class WorkspaceMembersResponse(BaseModel):
     members: List[WorkspaceMemberSummary] = Field(default_factory=list)
+    total: int = 0
+
+
+class WorkspaceMemberUpdateRequest(BaseModel):
+    """Patch workspace membership role or status (owner/admin only)."""
+
+    role: Optional[str] = None
+    status: Optional[str] = None
+
+
+class WorkspaceInviteRequest(BaseModel):
+    role: str = "member"
+
+    @model_validator(mode="after")
+    def _validate_role(self) -> "WorkspaceInviteRequest":
+        if self.role not in {"member", "viewer"}:
+            raise ValueError("Invite role must be member or viewer")
+        return self
+
+
+class WorkspaceInviteResponse(BaseModel):
+    invite_code: str = ""
+    workspace_slug: str = ""
+    role: str = "member"
 
 
 class WorkspaceProfileResponse(WorkspaceProfile):

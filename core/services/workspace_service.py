@@ -32,6 +32,14 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _workspace_role_to_user_role(role: str) -> UserRole:
+    if role in ("owner", "admin"):
+        return UserRole.superuser
+    if role == "viewer":
+        return UserRole.viewer
+    return UserRole.member
+
+
 def _user_role_to_workspace_role(role: UserRole | str) -> WorkspaceRole:
     value = role.value if isinstance(role, UserRole) else str(role)
     if value == "superuser":
@@ -368,6 +376,70 @@ class WorkspaceService:
                 )
             )
         return members
+
+    async def update_member(
+        self,
+        workspace_slug: str,
+        user: UserProfile,
+        target_user_id: str,
+        *,
+        role: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> WorkspaceMemberSummary:
+        workspace, _membership = await self.assert_workspace_access(
+            workspace_slug, user, min_roles=tuple(_ADMIN_ROLES)
+        )
+        if user.id == target_user_id and (
+            role is not None or status == MembershipStatus.suspended.value
+        ):
+            raise ValueError("cannot_modify_self")
+
+        target = await self._membership_repo.get_membership(
+            workspace.id, target_user_id
+        )
+        if target is None:
+            raise ValueError("member_not_found")
+
+        if role is not None:
+            new_role = WorkspaceRole(role)
+            if target.role == WorkspaceRole.owner and new_role != WorkspaceRole.owner:
+                owners = [
+                    m
+                    for m in await self._membership_repo.list_for_workspace(workspace.id)
+                    if m.role == WorkspaceRole.owner
+                    and m.status == MembershipStatus.active
+                ]
+                if len(owners) <= 1:
+                    raise ValueError("last_owner")
+            target.role = new_role
+
+        if status is not None:
+            new_status = MembershipStatus(status)
+            if new_status not in (MembershipStatus.active, MembershipStatus.suspended):
+                raise ValueError("invalid_status")
+            target.status = new_status
+
+        target.updated_at = _utcnow()
+        await self._membership_repo._session.flush()
+
+        user_model = await self._auth_repo.get_by_id(target_user_id)
+        if user_model is not None and str(user_model.company_id) == str(workspace.company_id):
+            if role is not None:
+                user_model.role = _workspace_role_to_user_role(target.role.value)
+            if status is not None:
+                user_model.is_active = target.status == MembershipStatus.active
+            user_model.updated_at = _utcnow()
+            await self._auth_repo._session.flush()
+
+        assert user_model is not None
+        return WorkspaceMemberSummary(
+            user_id=str(user_model.id),
+            email=user_model.email,
+            first_name=user_model.first_name,
+            last_name=user_model.last_name,
+            role=target.role.value,
+            status=target.status.value,
+        )
 
     async def get_profile(
         self,

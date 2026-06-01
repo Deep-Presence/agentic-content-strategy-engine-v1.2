@@ -21,7 +21,12 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 
-from api.auth.dependencies import require_auth, require_role
+from api.auth.dependencies import (
+    get_workspace_admin_slug,
+    get_workspace_read_slug,
+    get_workspace_write_slug,
+    require_auth,
+)
 from api.dependencies import get_auth_service, get_content_inventory_service
 from api.schemas.content_inventory import (
     ContentInventoryItem,
@@ -44,14 +49,6 @@ _MAX_CSV_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
-
-
-def _get_company_slug(request: Request) -> str:
-    """Extract company_slug from authenticated request state."""
-    slug: Optional[str] = getattr(request.state, "company_slug", None)
-    if not slug:
-        raise HTTPException(status_code=403, detail="Access denied")
-    return slug
 
 
 def _model_to_item(model: Any) -> ContentInventoryItem:
@@ -104,16 +101,15 @@ def _parse_source_filter(source: Optional[str]) -> ContentIngestionSource | None
 
 @router.get("/", response_model=ContentInventoryListResponse)
 async def list_inventory(
-    http_request: Request,
     page: int = 1,
     page_size: int = 50,
     source: Optional[str] = None,
+    company_slug: str = Depends(get_workspace_read_slug),
     _user: UserProfile = Depends(require_auth),
     inventory_service: Any = Depends(get_content_inventory_service),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> ContentInventoryListResponse:
     """List content inventory records (paginated, filterable by source)."""
-    company_slug = _get_company_slug(http_request)
     company = await auth_service.get_company_by_slug(company_slug)
     if company is None:
         raise HTTPException(status_code=404, detail="Company not found")
@@ -145,13 +141,12 @@ async def list_inventory(
 
 @router.get("/stats", response_model=ContentInventoryStats)
 async def get_stats(
-    http_request: Request,
+    company_slug: str = Depends(get_workspace_read_slug),
     _user: UserProfile = Depends(require_auth),
     inventory_service: Any = Depends(get_content_inventory_service),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> ContentInventoryStats:
     """Aggregate stats for the company's content inventory."""
-    company_slug = _get_company_slug(http_request)
     company = await auth_service.get_company_by_slug(company_slug)
     if company is None:
         raise HTTPException(status_code=404, detail="Company not found")
@@ -166,13 +161,12 @@ async def get_stats(
 @router.get("/{inventory_id}", response_model=ContentInventoryItem)
 async def get_inventory_item(
     inventory_id: str,
-    http_request: Request,
+    company_slug: str = Depends(get_workspace_read_slug),
     _user: UserProfile = Depends(require_auth),
     inventory_service: Any = Depends(get_content_inventory_service),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> ContentInventoryItem:
     """Get a single content inventory record."""
-    company_slug = _get_company_slug(http_request)
     company = await auth_service.get_company_by_slug(company_slug)
     if company is None:
         raise HTTPException(status_code=404, detail="Company not found")
@@ -198,14 +192,13 @@ async def get_inventory_item(
 
 @router.post("/import", response_model=CSVImportResponse)
 async def import_csv(
-    http_request: Request,
     file: UploadFile,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    company_slug: str = Depends(get_workspace_write_slug),
+    _user: UserProfile = Depends(require_auth),
     inventory_service: Any = Depends(get_content_inventory_service),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> CSVImportResponse:
     """Import content inventory from a CSV file."""
-    company_slug = _get_company_slug(http_request)
     company = await auth_service.get_company_by_slug(company_slug)
     if company is None:
         raise HTTPException(status_code=404, detail="Company not found")
@@ -240,8 +233,8 @@ async def import_csv(
 @router.post("/import-url", response_model=ContentInventoryItem)
 async def import_url(
     body: SingleURLImportRequest,
-    http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    company_slug: str = Depends(get_workspace_write_slug),
+    _user: UserProfile = Depends(require_auth),
     inventory_service: Any = Depends(get_content_inventory_service),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> ContentInventoryItem:
@@ -249,7 +242,6 @@ async def import_url(
 
     Phase 2: Registers URL + title only (no URL fetching/scraping).
     """
-    company_slug = _get_company_slug(http_request)
     company = await auth_service.get_company_by_slug(company_slug)
     if company is None:
         raise HTTPException(status_code=404, detail="Company not found")
@@ -273,13 +265,12 @@ async def import_url(
 
 @router.post("/generate-embeddings", response_model=GenerateEmbeddingsResponse)
 async def generate_embeddings(
-    http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    company_slug: str = Depends(get_workspace_write_slug),
+    _user: UserProfile = Depends(require_auth),
     inventory_service: Any = Depends(get_content_inventory_service),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> GenerateEmbeddingsResponse:
     """Trigger embedding generation for inventory records missing embeddings."""
-    company_slug = _get_company_slug(http_request)
     company = await auth_service.get_company_by_slug(company_slug)
     if company is None:
         raise HTTPException(status_code=404, detail="Company not found")
@@ -297,16 +288,12 @@ async def generate_embeddings(
 
 @router.delete("/")
 async def delete_inventory(
-    http_request: Request,
-    _user: UserProfile = Depends(require_role("superuser")),
+    company_slug: str = Depends(get_workspace_admin_slug),
+    _user: UserProfile = Depends(require_auth),
     inventory_service: Any = Depends(get_content_inventory_service),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> dict[str, int]:
-    """Delete all content inventory records for the company.
-
-    Restricted to superuser role.
-    """
-    company_slug = _get_company_slug(http_request)
+    """Delete all content inventory records for the workspace (owner/admin)."""
     company = await auth_service.get_company_by_slug(company_slug)
     if company is None:
         raise HTTPException(status_code=404, detail="Company not found")

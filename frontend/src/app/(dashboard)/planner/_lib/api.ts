@@ -3,7 +3,7 @@
  * All calls go through BFF proxy via same-origin fetch.
  */
 
-import { api } from '@/lib/api-client';
+import { api, workspaceQueryParams } from '@/lib/api-client';
 import { getActiveWorkspaceSlug } from '@/stores/workspace';
 import type {
   AssignmentListResponseAPI,
@@ -167,7 +167,7 @@ export function fetchTaskStatus(
 ): Promise<TaskStatusAPI> {
   return api.get<TaskStatusAPI>(
     `/api/v1/tasks/${taskId}`,
-    undefined,
+    workspaceQueryParams(),
     signal,
   );
 }

@@ -41,6 +41,7 @@ class TestWorkspaceService:
         self._extra_memberships: Dict[str, Set[str]] = {}
         self._archived_slugs: Set[str] = set()
         self._membership_roles: Dict[str, Dict[str, str]] = {}
+        self._membership_status: Dict[str, Dict[str, str]] = {}
 
     def _get_user(self, user_id: str) -> Optional[Dict[str, Any]]:
         return self._store.get_user_by_id(user_id)
@@ -224,6 +225,9 @@ class TestWorkspaceService:
         workspace.is_archived = True
         return workspace
 
+    def _status_for_user(self, user_id: str, company: Company) -> str:
+        return self._membership_status.get(user_id, {}).get(company.slug, "active")
+
     async def list_members(
         self, workspace_slug: str, user: UserProfile
     ) -> List[WorkspaceMemberSummary]:
@@ -238,11 +242,68 @@ class TestWorkspaceService:
                     email=profile.email,
                     first_name=profile.first_name,
                     last_name=profile.last_name,
-                    role=_legacy_role(profile.role),
-                    status="active",
+                    role=self._role_for_user(profile.id, company),
+                    status=self._status_for_user(profile.id, company),
                 )
             )
         return members
+
+    async def update_member(
+        self,
+        workspace_slug: str,
+        user: UserProfile,
+        target_user_id: str,
+        *,
+        role: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> WorkspaceMemberSummary:
+        workspace, membership = await self.assert_workspace_access(
+            workspace_slug, user, min_roles=("owner", "admin")
+        )
+        if user.id == target_user_id and (
+            role is not None or status == "suspended"
+        ):
+            raise ValueError("cannot_modify_self")
+
+        company = self._company_for_slug(workspace_slug)
+        assert company is not None
+        target = self._get_user(target_user_id)
+        if target is None or target.get("company_id") != company.id:
+            raise ValueError("member_not_found")
+
+        if role is not None:
+            current = self._role_for_user(target_user_id, company)
+            if current == "owner" and role != "owner":
+                owners = [
+                    p.id
+                    for p in self._store.list_users_for_company(company.id)
+                    if self._role_for_user(p.id, company) == "owner"
+                    and self._status_for_user(p.id, company) == "active"
+                ]
+                if len(owners) <= 1:
+                    raise ValueError("last_owner")
+            self._membership_roles.setdefault(target_user_id, {})[company.slug] = role
+            legacy = "superuser" if role in ("owner", "admin") else role
+            if role == "member":
+                legacy = "member"
+            self._store.update_user(target_user_id, role=legacy)
+
+        if status is not None:
+            if status not in ("active", "suspended"):
+                raise ValueError("invalid_status")
+            self._membership_status.setdefault(target_user_id, {})[company.slug] = status
+            self._store.update_user(target_user_id, is_active=status == "active")
+
+        profile = self._store.get_user_by_id(target_user_id)
+        assert profile is not None
+        return WorkspaceMemberSummary(
+            user_id=profile["id"],
+            email=profile["email"],
+            first_name=profile["first_name"],
+            last_name=profile["last_name"],
+            role=self._role_for_user(target_user_id, company),
+            status=self._status_for_user(target_user_id, company),
+        )
 
     async def get_profile(
         self,

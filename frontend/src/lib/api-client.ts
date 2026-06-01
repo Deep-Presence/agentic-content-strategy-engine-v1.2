@@ -5,6 +5,8 @@
  * No API_BASE_URL — all calls are relative (same-origin).
  */
 
+import { getActiveWorkspaceSlug } from '@/stores/workspace';
+
 import type {
   LoginPayload,
   RegisterPayload,
@@ -14,6 +16,15 @@ import type {
   InvitePayload,
   InviteResponse,
 } from './auth/types';
+
+/** Merge active workspace slug into query params for multi-tenant API routes. */
+export function workspaceQueryParams(
+  params?: Record<string, string | number | boolean | undefined>,
+): Record<string, string | number | boolean | undefined> {
+  const slug = getActiveWorkspaceSlug();
+  if (!slug) return params ?? {};
+  return { ...params, workspace_slug: slug };
+}
 
 // ── ApiError ─────────────────────────────────────────────
 
@@ -151,8 +162,8 @@ export const api = {
   put: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: 'PUT', body }),
 
-  patch: <T>(path: string, body?: unknown) =>
-    request<T>(path, { method: 'PATCH', body }),
+  patch: <T>(path: string, body?: unknown, options?: Omit<RequestOptions, 'method' | 'body'>) =>
+    request<T>(path, { method: 'PATCH', body, ...options }),
 
   del: <T>(path: string, params?: RequestOptions['params']) =>
     request<T>(path, { method: 'DELETE', params }),

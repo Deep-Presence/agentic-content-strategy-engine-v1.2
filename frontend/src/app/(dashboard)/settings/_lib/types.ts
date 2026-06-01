@@ -7,30 +7,37 @@
  *   api/schemas/analytics.py  (GA4 analytics)
  */
 
-// ── Team (from api/schemas/settings.py) ─────────────────
+// ── Team (workspace memberships) ───────────────────────
 
+export type WorkspaceRole = 'owner' | 'admin' | 'member' | 'viewer';
+export type MembershipStatus = 'active' | 'invited' | 'suspended';
+
+/** @deprecated Use WorkspaceRole — kept for legacy display helpers. */
 export type BackendRole = 'superuser' | 'member' | 'viewer';
 
-export interface TeamMemberAPI {
-  id: string;
+export interface WorkspaceMemberAPI {
+  user_id: string;
   email: string;
   first_name: string;
   last_name: string;
-  role: BackendRole;
-  is_active: boolean;
-  created_at: string;
+  role: WorkspaceRole;
+  status: MembershipStatus;
 }
 
-export interface TeamListResponseAPI {
-  members: TeamMemberAPI[];
+export interface WorkspaceMembersResponseAPI {
+  members: WorkspaceMemberAPI[];
   total: number;
 }
 
-export interface UpdateUserRequestAPI {
-  role?: BackendRole;
-  first_name?: string;
-  last_name?: string;
-  is_active?: boolean;
+export interface UpdateWorkspaceMemberRequestAPI {
+  role?: WorkspaceRole;
+  status?: MembershipStatus;
+}
+
+export interface WorkspaceInviteResponseAPI {
+  invite_code: string;
+  workspace_slug: string;
+  role: 'member' | 'viewer';
 }
 
 // ── CMS (from api/schemas/cms.py) ───────────────────────
@@ -131,9 +138,8 @@ export interface TeamMemberDisplay {
   name: string;
   email: string;
   role: FrontendRole;
-  backendRole: BackendRole;
+  workspaceRole: WorkspaceRole;
   status: 'active' | 'inactive';
-  createdAt: string;
 }
 
 export type IntegrationStatus = 'connected' | 'disconnected' | 'pending' | 'coming_soon';

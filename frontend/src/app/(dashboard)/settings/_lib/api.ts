@@ -3,12 +3,8 @@
  * All calls go through BFF proxy via same-origin fetch.
  */
 
-import { api, authApi } from '@/lib/api-client';
-import type { InviteResponse } from '@/lib/auth/types';
+import { api, workspaceQueryParams } from '@/lib/api-client';
 import type {
-  TeamListResponseAPI,
-  TeamMemberAPI,
-  UpdateUserRequestAPI,
   CMSConnectRequestAPI,
   CMSConnectResponseAPI,
   CMSConnectionInfoAPI,
@@ -20,36 +16,46 @@ import type {
   GA4SyncRequestAPI,
   GA4SyncResponseAPI,
   TaskStatusAPI,
+  UpdateWorkspaceMemberRequestAPI,
+  WorkspaceInviteResponseAPI,
+  WorkspaceMembersResponseAPI,
+  WorkspaceMemberAPI,
 } from './types';
 
-// ── Team ────────────────────────────────────────────────
+// ── Team (workspace memberships) ────────────────────────
 
 export function fetchTeamMembers(
-  companySlug: string,
+  workspaceSlug: string,
   signal?: AbortSignal,
-): Promise<TeamListResponseAPI> {
-  return api.get<TeamListResponseAPI>(
-    `/api/v1/companies/${companySlug}/settings/team`,
-    undefined,
+): Promise<WorkspaceMembersResponseAPI> {
+  return api.get<WorkspaceMembersResponseAPI>(
+    `/api/v1/workspaces/${encodeURIComponent(workspaceSlug)}/members`,
+    workspaceQueryParams(),
     signal,
   );
 }
 
 export function updateTeamMember(
-  companySlug: string,
+  workspaceSlug: string,
   userId: string,
-  body: UpdateUserRequestAPI,
-): Promise<TeamMemberAPI> {
-  return api.put<TeamMemberAPI>(
-    `/api/v1/companies/${companySlug}/settings/team/${userId}`,
+  body: UpdateWorkspaceMemberRequestAPI,
+): Promise<WorkspaceMemberAPI> {
+  return api.patch<WorkspaceMemberAPI>(
+    `/api/v1/workspaces/${encodeURIComponent(workspaceSlug)}/members/${encodeURIComponent(userId)}`,
     body,
+    { params: workspaceQueryParams() },
   );
 }
 
-export function generateInviteCode(
+export function generateWorkspaceInvite(
+  workspaceSlug: string,
   role: 'member' | 'viewer',
-): Promise<InviteResponse> {
-  return authApi.invite({ role });
+): Promise<WorkspaceInviteResponseAPI> {
+  return api.post<WorkspaceInviteResponseAPI>(
+    `/api/v1/workspaces/${encodeURIComponent(workspaceSlug)}/invites`,
+    { role },
+    { params: workspaceQueryParams() },
+  );
 }
 
 // ── CMS (WordPress) ─────────────────────────────────────
@@ -57,7 +63,11 @@ export function generateInviteCode(
 export function connectCMS(
   body: CMSConnectRequestAPI,
 ): Promise<CMSConnectResponseAPI> {
-  return api.post<CMSConnectResponseAPI>('/api/v1/cms/connect', body);
+  return api.post<CMSConnectResponseAPI>(
+    '/api/v1/cms/connect',
+    body,
+    { params: workspaceQueryParams() },
+  );
 }
 
 export function fetchCMSConnection(
@@ -65,13 +75,16 @@ export function fetchCMSConnection(
 ): Promise<CMSConnectionInfoAPI | null> {
   return api.get<CMSConnectionInfoAPI | null>(
     '/api/v1/cms/connection',
-    undefined,
+    workspaceQueryParams(),
     signal,
   );
 }
 
 export function disconnectCMS(): Promise<{ disconnected: boolean }> {
-  return api.del<{ disconnected: boolean }>('/api/v1/cms/connection');
+  return api.del<{ disconnected: boolean }>(
+    '/api/v1/cms/connection',
+    workspaceQueryParams(),
+  );
 }
 
 // ── GA4 Analytics ───────────────────────────────────────
@@ -81,7 +94,7 @@ export function startGA4OAuth(
 ): Promise<GA4AuthorizeResponseAPI> {
   return api.get<GA4AuthorizeResponseAPI>(
     '/api/v1/analytics/google/authorize',
-    { return_url: returnUrl },
+    workspaceQueryParams({ return_url: returnUrl }),
   );
 }
 
@@ -90,7 +103,7 @@ export function fetchGA4Connection(
 ): Promise<GA4ConnectionResponseAPI | null> {
   return api.get<GA4ConnectionResponseAPI | null>(
     '/api/v1/analytics/google/connection',
-    undefined,
+    workspaceQueryParams(),
     signal,
   );
 }
@@ -100,7 +113,7 @@ export function disconnectGA4(
 ): Promise<GA4DisconnectResponseAPI> {
   return api.del<GA4DisconnectResponseAPI>(
     '/api/v1/analytics/google/connection',
-    { purge_data: purgeData },
+    workspaceQueryParams({ purge_data: purgeData }),
   );
 }
 
@@ -109,7 +122,7 @@ export function fetchGA4Properties(
 ): Promise<GA4PropertiesResponseAPI> {
   return api.get<GA4PropertiesResponseAPI>(
     '/api/v1/analytics/google/properties',
-    undefined,
+    workspaceQueryParams(),
     signal,
   );
 }
@@ -120,15 +133,20 @@ export function selectGA4Property(
   return api.post<{ selected: boolean }>(
     '/api/v1/analytics/google/select-property',
     body,
+    { params: workspaceQueryParams() },
   );
 }
 
 export function triggerGA4Sync(
   body?: GA4SyncRequestAPI,
 ): Promise<GA4SyncResponseAPI> {
-  return api.post<GA4SyncResponseAPI>('/api/v1/analytics/google/sync', body);
+  return api.post<GA4SyncResponseAPI>(
+    '/api/v1/analytics/google/sync',
+    body,
+    { params: workspaceQueryParams() },
+  );
 }
 
 export function fetchTaskStatus(taskId: string): Promise<TaskStatusAPI> {
-  return api.get<TaskStatusAPI>(`/api/v1/tasks/${taskId}`);
+  return api.get<TaskStatusAPI>(`/api/v1/tasks/${taskId}`, workspaceQueryParams());
 }

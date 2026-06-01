@@ -5,7 +5,7 @@
  * Auth is handled via httpOnly cookie — no token injection needed.
  */
 
-import { api } from '@/lib/api-client';
+import { api, workspaceQueryParams } from '@/lib/api-client';
 import { getActiveWorkspaceSlug } from '@/stores/workspace';
 import type {
   ContentBriefListResponseAPI,
@@ -213,6 +213,7 @@ export function publishContentToCMS(
       status: 'publish',
       publish_metadata: metadata ? serializePublishMetadata(metadata) : undefined,
     },
+    { params: workspaceQueryParams() },
   );
 }
 
@@ -287,6 +288,8 @@ export function cancelTask(
 ): Promise<{ run_id: string; status: string }> {
   return api.post<{ run_id: string; status: string }>(
     `/api/v1/tasks/${encodeURIComponent(taskId)}/cancel`,
+    undefined,
+    { params: workspaceQueryParams() },
   );
 }
 

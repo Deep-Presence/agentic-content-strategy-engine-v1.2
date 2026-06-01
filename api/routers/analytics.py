@@ -23,7 +23,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 
-from api.auth.dependencies import require_auth, require_role
+from api.auth.dependencies import get_workspace_read_slug, get_workspace_write_slug, require_auth
 from api.dependencies import get_auth_service, get_event_bus, get_task_store
 from api.schemas.analytics import (
     AuthorizeResponse,
@@ -47,14 +47,6 @@ router = APIRouter(prefix="/api/v1/analytics/google", tags=["analytics"])
 # ── Helpers ──────────────────────────────────────────────────────────
 
 
-def _get_company_slug(request: Request) -> str:
-    """Extract company_slug from authenticated request state."""
-    slug: Optional[str] = getattr(request.state, "company_slug", None)
-    if not slug:
-        raise HTTPException(status_code=403, detail="Access denied")
-    return slug
-
-
 # ── Lazy DI import ───────────────────────────────────────────────────
 # Avoids circular imports — the DI function is registered in dependencies.py
 # but we import it lazily to keep the module self-contained.
@@ -72,11 +64,11 @@ def _get_ga4_service_dep():
 async def authorize(
     http_request: Request,
     return_url: str = Query(default="", description="URL to redirect after OAuth"),
+    company_slug: str = Depends(get_workspace_read_slug),
     _user: UserProfile = Depends(require_auth),
     ga4_service: Any = Depends(_get_ga4_service_dep()),
 ) -> AuthorizeResponse:
     """Generate Google OAuth consent URL for GA4 access."""
-    company_slug = _get_company_slug(http_request)
     secret_key = http_request.app.state.secret_key
 
     url = ga4_service.generate_authorize_url(
@@ -151,7 +143,7 @@ async def oauth_callback(
 
 @router.get("/connection", response_model=Optional[ConnectionResponse])
 async def get_connection(
-    http_request: Request,
+    company_slug: str = Depends(get_workspace_read_slug),
     _user: UserProfile = Depends(require_auth),
     ga4_service: Any = Depends(_get_ga4_service_dep()),
 ) -> Optional[ConnectionResponse]:
@@ -160,8 +152,6 @@ async def get_connection(
         get_cached_ga4_connection,
         set_cached_ga4_connection,
     )
-
-    company_slug = _get_company_slug(http_request)
 
     # Check cache first
     cached = await asyncio.to_thread(
@@ -199,18 +189,17 @@ async def get_connection(
 
 @router.delete("/connection", response_model=DisconnectResponse)
 async def disconnect(
-    http_request: Request,
     purge_data: bool = Query(
         default=False,
         description="If true, purge all synced GA4 data (GDPR compliance)",
     ),
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    company_slug: str = Depends(get_workspace_write_slug),
+    _user: UserProfile = Depends(require_auth),
     ga4_service: Any = Depends(_get_ga4_service_dep()),
 ) -> DisconnectResponse:
     """Revoke GA4 OAuth tokens and deactivate connection."""
     from core.services.analytics_cache import invalidate_all_ga4_caches
 
-    company_slug = _get_company_slug(http_request)
     try:
         result = await ga4_service.disconnect(
             company_slug, tenant_id=company_slug, purge_data=purge_data
@@ -227,7 +216,7 @@ async def disconnect(
 
 @router.get("/properties", response_model=PropertiesResponse)
 async def list_properties(
-    http_request: Request,
+    company_slug: str = Depends(get_workspace_read_slug),
     _user: UserProfile = Depends(require_auth),
     ga4_service: Any = Depends(_get_ga4_service_dep()),
 ) -> PropertiesResponse:
@@ -236,8 +225,6 @@ async def list_properties(
         get_cached_ga4_properties,
         set_cached_ga4_properties,
     )
-
-    company_slug = _get_company_slug(http_request)
 
     # Check cache first
     cached = await asyncio.to_thread(
@@ -281,14 +268,13 @@ async def list_properties(
 @router.post("/select-property", status_code=200)
 async def select_property(
     body: SelectPropertyRequest,
-    http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    company_slug: str = Depends(get_workspace_write_slug),
+    _user: UserProfile = Depends(require_auth),
     ga4_service: Any = Depends(_get_ga4_service_dep()),
 ) -> dict[str, bool]:
     """Store the selected GA4 property for data syncing."""
     from core.services.analytics_cache import invalidate_all_ga4_caches
 
-    company_slug = _get_company_slug(http_request)
     try:
         await ga4_service.select_property(
             company_slug=company_slug,
@@ -310,13 +296,13 @@ async def select_property(
 async def trigger_sync(
     http_request: Request,
     body: SyncRequest | None = None,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    company_slug: str = Depends(get_workspace_write_slug),
+    _user: UserProfile = Depends(require_auth),
     ga4_service: Any = Depends(_get_ga4_service_dep()),
     task_store: TaskStoreProtocol = Depends(get_task_store),
     event_bus: Any = Depends(get_event_bus),
 ) -> dict[str, Any]:
     """Trigger a manual GA4 data sync (background task).  Returns 202 with task_id."""
-    company_slug = _get_company_slug(http_request)
 
     # Verify active connection with property selected
     conn_info = await ga4_service.get_connection_info(

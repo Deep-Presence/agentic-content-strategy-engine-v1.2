@@ -14,7 +14,7 @@ export function TeamTab() {
     error,
     inviteCode,
     isGenerating,
-    isSuperuser,
+    canManageTeam,
     currentUserId,
     updateRole,
     generateInvite,
@@ -93,7 +93,7 @@ export function TeamTab() {
               ) : (
                 members.map((m) => {
                   const isSelf = m.id === currentUserId;
-                  const canEdit = isSuperuser && !isSelf;
+                  const canEdit = canManageTeam && !isSelf;
 
                   return (
                     <tr key={m.id} className="hover:bg-accent-subtle transition-colors h-[40px]">
@@ -140,7 +140,7 @@ export function TeamTab() {
       </div>
 
       {/* Invite Section — superuser only */}
-      {isSuperuser && (
+      {canManageTeam && (
         <div className="bg-surface border border-border rounded-md p-4">
           <h3 className="text-[16px] font-semibold text-text-primary mb-3">
             Generate Invite Code
