@@ -8,6 +8,10 @@ import type {
   CMSConnectRequestAPI,
   CMSConnectResponseAPI,
   CMSConnectionInfoAPI,
+  WebflowCollectionFieldsAPI,
+  WebflowCollectionSummaryAPI,
+  WebflowConfigureRequestAPI,
+  WebflowConfigureResponseAPI,
   GA4AuthorizeResponseAPI,
   GA4ConnectionResponseAPI,
   GA4PropertiesResponseAPI,
@@ -84,6 +88,37 @@ export function disconnectCMS(): Promise<{ disconnected: boolean }> {
   return api.del<{ disconnected: boolean }>(
     '/api/v1/cms/connection',
     workspaceQueryParams(),
+  );
+}
+
+export function fetchWebflowCollections(
+  signal?: AbortSignal,
+): Promise<WebflowCollectionSummaryAPI[]> {
+  return api.get<WebflowCollectionSummaryAPI[]>(
+    '/api/v1/cms/webflow/collections',
+    workspaceQueryParams(),
+    signal,
+  );
+}
+
+export function fetchWebflowCollectionFields(
+  collectionId: string,
+  signal?: AbortSignal,
+): Promise<WebflowCollectionFieldsAPI> {
+  return api.get<WebflowCollectionFieldsAPI>(
+    `/api/v1/cms/webflow/collections/${encodeURIComponent(collectionId)}/fields`,
+    workspaceQueryParams(),
+    signal,
+  );
+}
+
+export function configureWebflow(
+  body: WebflowConfigureRequestAPI,
+): Promise<WebflowConfigureResponseAPI> {
+  return api.post<WebflowConfigureResponseAPI>(
+    '/api/v1/cms/webflow/configure',
+    body,
+    { params: workspaceQueryParams() },
   );
 }
 

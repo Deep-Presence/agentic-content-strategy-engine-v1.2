@@ -5,14 +5,16 @@ import { StatusDot, Button, Badge, Toast, Skeleton } from '@/components/ui';
 import { Globe, Users, BarChart3, ExternalLink, AlertCircle } from 'lucide-react';
 import { useIntegrationsData } from '../_hooks/useIntegrationsData';
 import { WordPressConnectModal } from './WordPressConnectModal';
+import { WebflowConnectModal } from './WebflowConnectModal';
 import { GA4ConnectFlow } from './GA4ConnectFlow';
+import { isWebflowConfigured } from '../_lib/webflow-utils';
 import type { IntegrationDef, IntegrationCategory, CMSConnectionInfoAPI, GA4ConnectionResponseAPI, GA4PropertyItemAPI, GA4SelectPropertyRequestAPI } from '../_lib/types';
 
 // ── Static integration definitions ──────────────────────
 
 const INTEGRATIONS: IntegrationDef[] = [
   { id: 'wordpress', name: 'WordPress', description: 'Publish content directly to your WordPress site', domain: 'wordpress.org', category: 'cms', available: true },
-  { id: 'webflow', name: 'Webflow', description: 'Push content to Webflow CMS collections', domain: 'webflow.com', category: 'cms', available: false },
+  { id: 'webflow', name: 'Webflow', description: 'Push content to Webflow CMS collections', domain: 'webflow.com', category: 'cms', available: true },
   { id: 'ghost', name: 'Ghost', description: 'Sync content with your Ghost publication', domain: 'ghost.org', category: 'cms', available: false },
   { id: 'salesforce', name: 'Salesforce', description: 'Track AI-attributed leads and pipeline', domain: 'salesforce.com', category: 'crm', available: false },
   { id: 'hubspot', name: 'HubSpot', description: 'Connect deals and attribution data', domain: 'hubspot.com', category: 'crm', available: false },
@@ -36,7 +38,11 @@ function IntegrationsContent() {
     isLoading,
     error,
     connectWordPress,
-    disconnectWordPress,
+    connectWebflow,
+    disconnectCMSConnection,
+    loadWebflowCollections,
+    loadWebflowCollectionFields,
+    saveWebflowConfiguration,
     startGA4Connect,
     disconnectGA4Connection,
     loadGA4Properties,
@@ -46,12 +52,13 @@ function IntegrationsContent() {
   } = useIntegrationsData();
 
   const [wpModalOpen, setWpModalOpen] = useState(false);
+  const [webflowModalOpen, setWebflowModalOpen] = useState(false);
   const [toast, setToast] = useState({ open: false, message: '', variant: 'success' as 'success' | 'error' });
 
-  const handleDisconnectWordPress = async () => {
+  const handleDisconnectCMS = async (providerLabel: string) => {
     try {
-      await disconnectWordPress();
-      setToast({ open: true, message: 'WordPress disconnected', variant: 'success' });
+      await disconnectCMSConnection();
+      setToast({ open: true, message: `${providerLabel} disconnected`, variant: 'success' });
     } catch {
       setToast({ open: true, message: 'Failed to disconnect', variant: 'error' });
     }
@@ -74,9 +81,23 @@ function IntegrationsContent() {
         <WordPressCard
           key={def.id}
           def={def}
-          connection={cmsConnection}
+          connection={cmsConnection?.provider === 'wordpress' ? cmsConnection : null}
           onConnect={() => setWpModalOpen(true)}
-          onDisconnect={handleDisconnectWordPress}
+          onDisconnect={() => handleDisconnectCMS('WordPress')}
+          formatDate={formatDate}
+        />
+      );
+    }
+
+    if (def.id === 'webflow') {
+      return (
+        <WebflowCard
+          key={def.id}
+          def={def}
+          connection={cmsConnection?.provider === 'webflow' ? cmsConnection : null}
+          onConnect={() => setWebflowModalOpen(true)}
+          onFinishSetup={() => setWebflowModalOpen(true)}
+          onDisconnect={() => handleDisconnectCMS('Webflow')}
           formatDate={formatDate}
         />
       );
@@ -137,6 +158,15 @@ function IntegrationsContent() {
         open={wpModalOpen}
         onClose={() => setWpModalOpen(false)}
         onConnect={connectWordPress}
+      />
+
+      <WebflowConnectModal
+        open={webflowModalOpen}
+        onClose={() => setWebflowModalOpen(false)}
+        onConnect={connectWebflow}
+        onLoadCollections={loadWebflowCollections}
+        onLoadCollectionFields={loadWebflowCollectionFields}
+        onConfigure={saveWebflowConfiguration}
       />
 
       <Toast open={toast.open} onClose={() => setToast({ ...toast, open: false })} variant={toast.variant} message={toast.message} />
@@ -210,6 +240,81 @@ function WordPressCard({
       >
         {isConnected ? 'Disconnect' : 'Connect'}
       </Button>
+    </div>
+  );
+}
+
+function WebflowCard({
+  def,
+  connection,
+  onConnect,
+  onFinishSetup,
+  onDisconnect,
+  formatDate,
+}: {
+  def: IntegrationDef;
+  connection: CMSConnectionInfoAPI | null;
+  onConnect: () => void;
+  onFinishSetup: () => void;
+  onDisconnect: () => void;
+  formatDate: (iso: string | null) => string | null;
+}) {
+  const isConnected = connection?.is_active ?? false;
+  const configured = isWebflowConfigured(connection);
+
+  return (
+    <div className="bg-surface border border-border rounded-md p-4 min-h-[80px] hover:border-border-strong transition-[border-color] duration-150">
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-[14px] font-medium text-text-primary">{def.name}</span>
+        <StatusDot color={isConnected && configured ? 'success' : isConnected ? 'warning' : 'neutral'} />
+      </div>
+      <p className="text-[13px] text-text-secondary mb-3">{def.description}</p>
+
+      {isConnected && connection && (
+        <div className="space-y-1 mb-3">
+          <p className="text-[12px] text-text-primary font-medium">
+            {connection.site_name}
+          </p>
+          <a
+            href={connection.site_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[11px] text-accent hover:underline inline-flex items-center gap-1"
+          >
+            {connection.site_url}
+            <ExternalLink size={10} strokeWidth={1.5} />
+          </a>
+          {configured ? (
+            <p className="text-[11px] text-text-tertiary">
+              {connection.sync_post_count} items synced
+              {connection.last_sync_at && ` \u00B7 Last sync: ${formatDate(connection.last_sync_at)}`}
+            </p>
+          ) : (
+            <p className="text-[11px] text-warning">
+              Connected — finish collection setup to sync and publish
+            </p>
+          )}
+        </div>
+      )}
+
+      {isConnected && !configured ? (
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="secondary" onClick={onFinishSetup}>
+            Finish Setup
+          </Button>
+          <Button size="sm" variant="destructive" onClick={onDisconnect}>
+            Disconnect
+          </Button>
+        </div>
+      ) : (
+        <Button
+          size="sm"
+          variant={isConnected && configured ? 'destructive' : 'secondary'}
+          onClick={isConnected && configured ? onDisconnect : onConnect}
+        >
+          {isConnected && configured ? 'Disconnect' : 'Connect'}
+        </Button>
+      )}
     </div>
   );
 }

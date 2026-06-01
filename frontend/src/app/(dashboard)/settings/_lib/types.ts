@@ -45,8 +45,9 @@ export interface WorkspaceInviteResponseAPI {
 export interface CMSConnectRequestAPI {
   provider: string;
   site_url: string;
-  username: string;
+  username?: string;
   api_key: string;
+  provider_config?: Record<string, unknown>;
 }
 
 export interface CMSConnectResponseAPI {
@@ -67,6 +68,62 @@ export interface CMSConnectionInfoAPI {
   is_active: boolean;
   last_sync_at: string | null;
   sync_post_count: number;
+  provider_config?: Record<string, unknown>;
+}
+
+export interface WebflowFieldMappingAPI {
+  title_field: string;
+  slug_field: string;
+  body_field: string;
+  excerpt_field: string;
+  seo_title_field: string;
+  seo_description_field: string;
+  category_field: string;
+  tags_field: string;
+  featured_image_field: string;
+}
+
+export interface WebflowCollectionSummaryAPI {
+  collection_id: string;
+  collection_slug: string;
+  display_name: string;
+  singular_name: string;
+}
+
+export interface WebflowFieldSchemaItemAPI {
+  slug: string;
+  display_name: string;
+  field_type: string;
+  is_required: boolean;
+}
+
+export interface WebflowCollectionFieldsAPI {
+  collection_id: string;
+  fields: WebflowFieldSchemaItemAPI[];
+  suggested_mapping: WebflowFieldMappingAPI;
+}
+
+export interface WebflowCollectionConfigInputAPI {
+  collection_id: string;
+  collection_slug: string;
+  display_name: string;
+  enabled: boolean;
+  is_default_publish_target: boolean;
+  field_mapping: WebflowFieldMappingAPI;
+}
+
+export interface WebflowConfigureRequestAPI {
+  site_id?: string;
+  collections: WebflowCollectionConfigInputAPI[];
+  publish_mode?: string;
+  default_collection_id?: string;
+  trigger_sync?: boolean;
+}
+
+export interface WebflowConfigureResponseAPI {
+  configured: boolean;
+  provider_config: Record<string, unknown>;
+  sync_task_id: string | null;
 }
 
 // ── GA4 Analytics (from api/schemas/analytics.py) ───────

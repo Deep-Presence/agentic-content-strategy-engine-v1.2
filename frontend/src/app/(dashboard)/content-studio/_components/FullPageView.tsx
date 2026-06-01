@@ -61,9 +61,12 @@ interface FullPageViewProps {
   card: ContentCard;
   onClose: () => void;
   onAction: (action: ActionType, data?: { editorNotes?: string; contentMarkdown?: string }) => void | Promise<void>;
-  onPublish?: (data?: { contentMarkdown?: string; metadata?: ContentMetadata }) => void | Promise<void>;
+  onPublish?: (data?: { contentMarkdown?: string; metadata?: ContentMetadata; collectionId?: string }) => void | Promise<void>;
   publishLabel?: string;
   isPublishPending?: boolean;
+  cmsProvider?: string | null;
+  webflowPublishTargets?: Array<{ collectionId: string; label: string }>;
+  defaultWebflowCollectionId?: string;
 }
 
 function compileEditorNotes(comments: ReviewComment[], overall: string): string {
@@ -93,11 +96,15 @@ export function FullPageView({
   onPublish,
   publishLabel = 'Publish',
   isPublishPending = false,
+  cmsProvider = null,
+  webflowPublishTargets = [],
+  defaultWebflowCollectionId = '',
 }: FullPageViewProps) {
   const { companySlug } = useAuth();
   const [activeSection, setActiveSection] = useState(0);
   const [reviewComments, setReviewComments] = useState<ReviewComment[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [selectedWebflowCollectionId, setSelectedWebflowCollectionId] = useState(defaultWebflowCollectionId);
 
   const handleActionGuarded = useCallback(
     async (action: ActionType, data?: { editorNotes?: string; contentMarkdown?: string }) => {
@@ -189,6 +196,10 @@ export function FullPageView({
     currentReviewMarkdown &&
     currentReviewMarkdown !== lastSavedDraftRef.current
   );
+
+  useEffect(() => {
+    setSelectedWebflowCollectionId(defaultWebflowCollectionId);
+  }, [defaultWebflowCollectionId, card.id]);
 
   useEffect(() => {
     const nextMetadata = card.metadata || {
@@ -498,26 +509,56 @@ export function FullPageView({
           )}
 
           {showReadOnlyArticle && onPublish && (
-            <button
-              onClick={() => onPublish({ contentMarkdown: currentReviewMarkdown ?? undefined, metadata })}
-              disabled={isPublishPending}
-              className="flex items-center gap-1.5"
-              style={{
-                height: 30,
-                padding: '0 14px',
-                fontSize: 12,
-                fontWeight: 500,
-                background: 'var(--success)',
-                color: '#fff',
-                border: 'none',
-                borderRadius: 'var(--radius-sm)',
-                cursor: isPublishPending ? 'not-allowed' : 'pointer',
-                opacity: isPublishPending ? 0.6 : undefined,
-              }}
-            >
-              <Upload size={11} strokeWidth={2} />
-              {publishLabel}
-            </button>
+            <div className="flex items-center gap-2">
+              {cmsProvider === 'webflow' && webflowPublishTargets.length > 1 && (
+                <select
+                  value={selectedWebflowCollectionId}
+                  onChange={(e) => setSelectedWebflowCollectionId(e.target.value)}
+                  disabled={isPublishPending}
+                  style={{
+                    height: 30,
+                    padding: '0 8px',
+                    fontSize: 12,
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius-sm)',
+                    background: 'var(--surface)',
+                    color: 'var(--text-primary)',
+                  }}
+                >
+                  {webflowPublishTargets.map((target) => (
+                    <option key={target.collectionId} value={target.collectionId}>
+                      {target.label}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <button
+                onClick={() => onPublish({
+                  contentMarkdown: currentReviewMarkdown ?? undefined,
+                  metadata,
+                  collectionId: cmsProvider === 'webflow'
+                    ? (selectedWebflowCollectionId || defaultWebflowCollectionId)
+                    : undefined,
+                })}
+                disabled={isPublishPending}
+                className="flex items-center gap-1.5"
+                style={{
+                  height: 30,
+                  padding: '0 14px',
+                  fontSize: 12,
+                  fontWeight: 500,
+                  background: 'var(--success)',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 'var(--radius-sm)',
+                  cursor: isPublishPending ? 'not-allowed' : 'pointer',
+                  opacity: isPublishPending ? 0.6 : undefined,
+                }}
+              >
+                <Upload size={11} strokeWidth={2} />
+                {publishLabel}
+              </button>
+            </div>
           )}
 
           {hitl.canRetry && (
@@ -620,8 +661,18 @@ export function FullPageView({
           onPublish={onPublish ? () => onPublish({
             contentMarkdown: currentReviewMarkdown ?? undefined,
             metadata,
+            collectionId: cmsProvider === 'webflow'
+              ? (selectedWebflowCollectionId || defaultWebflowCollectionId)
+              : undefined,
           }) : undefined}
           exportMarkdown={currentReviewMarkdown ?? articleContent?.markdown ?? null}
+          cmsPublishEnabled={!!cmsProvider && !!onPublish}
+          publishLabel={publishLabel}
+          isPublishPending={isPublishPending}
+          cmsProvider={cmsProvider}
+          webflowPublishTargets={webflowPublishTargets}
+          selectedWebflowCollectionId={selectedWebflowCollectionId}
+          onWebflowCollectionChange={setSelectedWebflowCollectionId}
         />
       </div>
     </div>

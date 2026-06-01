@@ -557,12 +557,26 @@ function ExportTab({
   markdown,
   isEnabled,
   publishEnabled,
+  cmsPublishEnabled,
+  publishLabel = 'Publish to CMS',
+  isPublishPending = false,
+  cmsProvider = null,
+  webflowPublishTargets = [],
+  selectedWebflowCollectionId = '',
+  onWebflowCollectionChange,
 }: {
   onPublish?: () => void;
   title: string;
   markdown: string | null;
   isEnabled: boolean;
   publishEnabled: boolean;
+  cmsPublishEnabled?: boolean;
+  publishLabel?: string;
+  isPublishPending?: boolean;
+  cmsProvider?: string | null;
+  webflowPublishTargets?: Array<{ collectionId: string; label: string }>;
+  selectedWebflowCollectionId?: string;
+  onWebflowCollectionChange?: (collectionId: string) => void;
 }) {
   const [copied, setCopied] = useState<string | null>(null);
   const [showPublishForm, setShowPublishForm] = useState(false);
@@ -665,7 +679,51 @@ function ExportTab({
 
       <div>
         <div style={OVERLINE}>Publish</div>
-        {!showPublishForm ? (
+        {cmsPublishEnabled ? (
+          <div className="space-y-2">
+            {cmsProvider === 'webflow' && webflowPublishTargets.length > 1 && (
+              <select
+                value={selectedWebflowCollectionId}
+                onChange={(e) => onWebflowCollectionChange?.(e.target.value)}
+                disabled={isPublishPending}
+                style={{
+                  width: '100%',
+                  height: 30,
+                  padding: '0 8px',
+                  fontSize: 12,
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-sm)',
+                  background: 'var(--surface)',
+                  color: 'var(--text-primary)',
+                }}
+              >
+                {webflowPublishTargets.map((target) => (
+                  <option key={target.collectionId} value={target.collectionId}>
+                    {target.label}
+                  </option>
+                ))}
+              </select>
+            )}
+            <button
+              onClick={() => {
+                if (!publishEnabled || !markdown || !onPublish || isPublishPending) return;
+                onPublish();
+              }}
+              disabled={!publishEnabled || !markdown || !onPublish || isPublishPending}
+              style={{
+                ...(publishEnabled && markdown && onPublish && !isPublishPending ? {
+                  ...btnStyle,
+                  background: 'var(--accent)',
+                  color: 'var(--text-on-accent)',
+                  border: 'none',
+                } : disabledBtnStyle),
+                justifyContent: 'center',
+              }}
+            >
+              {isPublishPending ? 'Publishing...' : publishLabel}
+            </button>
+          </div>
+        ) : !showPublishForm ? (
           <>
             <button
               onClick={() => {
@@ -691,9 +749,13 @@ function ExportTab({
               fontSize: 11,
               color: 'var(--text-tertiary)',
               textAlign: 'center',
+              lineHeight: 1.5,
             }}>
-              Connect your CMS to publish directly.<br />
-              <span style={{ fontSize: 10, marginTop: 4, display: 'inline-block' }}>Coming Soon</span>
+              Connect WordPress or Webflow in{' '}
+              <a href="/settings?tab=integrations" style={{ color: 'var(--accent)' }}>
+                Settings → Integrations
+              </a>{' '}
+              to publish directly from Content Studio.
             </div>
           </>
         ) : (
@@ -843,6 +905,13 @@ interface RightSidebarProps {
   onMetadataChange: (m: ContentMetadata) => void;
   onPublish?: () => void;
   exportMarkdown?: string | null;
+  cmsPublishEnabled?: boolean;
+  publishLabel?: string;
+  isPublishPending?: boolean;
+  cmsProvider?: string | null;
+  webflowPublishTargets?: Array<{ collectionId: string; label: string }>;
+  selectedWebflowCollectionId?: string;
+  onWebflowCollectionChange?: (collectionId: string) => void;
 }
 
 export function RightSidebar({
@@ -855,6 +924,13 @@ export function RightSidebar({
   onMetadataChange,
   onPublish,
   exportMarkdown,
+  cmsPublishEnabled = false,
+  publishLabel,
+  isPublishPending = false,
+  cmsProvider = null,
+  webflowPublishTargets = [],
+  selectedWebflowCollectionId = '',
+  onWebflowCollectionChange,
 }: RightSidebarProps) {
   const [activeTab, setActiveTab] = useState<Tab>('metrics');
   const exportEnabled = (
@@ -921,6 +997,13 @@ export function RightSidebar({
             markdown={exportMarkdown ?? card.articleContent?.markdown ?? null}
             isEnabled={exportEnabled}
             publishEnabled={publishEnabled}
+            cmsPublishEnabled={cmsPublishEnabled}
+            publishLabel={publishLabel}
+            isPublishPending={isPublishPending}
+            cmsProvider={cmsProvider}
+            webflowPublishTargets={webflowPublishTargets}
+            selectedWebflowCollectionId={selectedWebflowCollectionId}
+            onWebflowCollectionChange={onWebflowCollectionChange}
           />
         )}
       </div>

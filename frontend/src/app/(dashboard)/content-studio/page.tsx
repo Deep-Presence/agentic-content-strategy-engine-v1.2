@@ -7,6 +7,7 @@ import { getDisplay, isTerminal } from './_lib/status-adapter';
 import { useContentBriefs } from './_hooks/useContentBriefs';
 import { useContentPipeline } from './_hooks/useContentPipeline';
 import { useCompanyStream } from './_hooks/useCompanyStream';
+import { useCMSConnection } from './_hooks/useCMSConnection';
 import type { SSEPendingApprovalData, SSEPipelineCompleteData } from './_lib/types';
 import {
   startPipeline,
@@ -52,6 +53,12 @@ export default function ContentStudioPage() {
     applyTopicRunChanged,
     applyStateChanged,
   } = useContentBriefs();
+  const {
+    cmsProvider,
+    webflowPublishTargets,
+    defaultWebflowCollectionId,
+    canPublishToCMS,
+  } = useCMSConnection();
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [publishPendingId, setPublishPendingId] = useState<string | null>(null);
   // Derive selectedCard from live cards array so it stays in sync after polls
@@ -278,7 +285,7 @@ export default function ContentStudioPage() {
   );
 
   const handlePublish = useCallback(
-    async (data?: { contentMarkdown?: string; metadata?: ContentMetadata }) => {
+    async (data?: { contentMarkdown?: string; metadata?: ContentMetadata; collectionId?: string }) => {
       if (!selectedCard) return;
       setPublishPendingId(selectedCard.id);
       try {
@@ -286,6 +293,9 @@ export default function ContentStudioPage() {
           selectedCard.id,
           selectedCard.effectiveSlug,
           data?.metadata,
+          {
+            collectionId: data?.collectionId,
+          },
         );
         updateCard(selectedCard.id, {
           status: 'published',
@@ -429,9 +439,12 @@ export default function ContentStudioPage() {
           card={selectedCard}
           onClose={() => setSelectedCardId(null)}
           onAction={handleAction}
-          onPublish={handlePublish}
-          publishLabel={publishPendingId === selectedCard.id ? 'Publishing...' : 'Publish'}
+          onPublish={canPublishToCMS ? handlePublish : undefined}
+          publishLabel={publishPendingId === selectedCard.id ? 'Publishing...' : 'Publish to CMS'}
           isPublishPending={publishPendingId === selectedCard.id}
+          cmsProvider={cmsProvider}
+          webflowPublishTargets={webflowPublishTargets}
+          defaultWebflowCollectionId={defaultWebflowCollectionId}
         />
       )}
     </>

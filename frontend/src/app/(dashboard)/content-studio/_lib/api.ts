@@ -197,6 +197,7 @@ export function publishContentToCMS(
   briefId: string,
   effectiveSlug?: string,
   metadata?: ContentMetadata,
+  options?: { collectionId?: string; categories?: string[] },
 ): Promise<{
   cms_post_id: string;
   url: string;
@@ -212,8 +213,28 @@ export function publishContentToCMS(
       effective_slug: effectiveSlug,
       status: 'publish',
       publish_metadata: metadata ? serializePublishMetadata(metadata) : undefined,
+      collection_id: options?.collectionId,
+      categories: options?.categories ?? [],
     },
     { params: workspaceQueryParams() },
+  );
+}
+
+export interface CMSConnectionForPublishAPI {
+  provider: string;
+  site_url: string;
+  site_name: string;
+  is_active: boolean;
+  provider_config?: Record<string, unknown>;
+}
+
+export function fetchCMSConnectionForPublish(
+  signal?: AbortSignal,
+): Promise<CMSConnectionForPublishAPI | null> {
+  return api.get<CMSConnectionForPublishAPI | null>(
+    '/api/v1/cms/connection',
+    workspaceQueryParams(),
+    signal,
   );
 }
 

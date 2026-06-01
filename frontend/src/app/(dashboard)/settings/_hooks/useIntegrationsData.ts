@@ -8,6 +8,9 @@ import {
   fetchCMSConnection,
   connectCMS,
   disconnectCMS,
+  fetchWebflowCollections,
+  fetchWebflowCollectionFields,
+  configureWebflow,
   fetchGA4Connection,
   startGA4OAuth,
   disconnectGA4,
@@ -19,6 +22,9 @@ import {
 import type {
   CMSConnectionInfoAPI,
   CMSConnectRequestAPI,
+  WebflowCollectionFieldsAPI,
+  WebflowCollectionSummaryAPI,
+  WebflowConfigureRequestAPI,
   GA4ConnectionResponseAPI,
   GA4PropertyItemAPI,
   GA4SelectPropertyRequestAPI,
@@ -35,6 +41,12 @@ interface UseIntegrationsDataReturn {
   error: string | null;
   // CMS mutations
   connectWordPress: (body: CMSConnectRequestAPI) => Promise<{ success: boolean; error?: string }>;
+  connectWebflow: (body: CMSConnectRequestAPI) => Promise<{ success: boolean; error?: string }>;
+  disconnectCMSConnection: () => Promise<void>;
+  loadWebflowCollections: () => Promise<WebflowCollectionSummaryAPI[]>;
+  loadWebflowCollectionFields: (collectionId: string) => Promise<WebflowCollectionFieldsAPI>;
+  saveWebflowConfiguration: (body: WebflowConfigureRequestAPI) => Promise<{ success: boolean; error?: string }>;
+  /** @deprecated Use disconnectCMSConnection */
   disconnectWordPress: () => Promise<void>;
   // GA4 mutations
   startGA4Connect: () => Promise<void>;
@@ -181,16 +193,53 @@ export function useIntegrationsData(): UseIntegrationsDataReturn {
     }
   }, [refetch]);
 
-  const disconnectWordPress = useCallback(async () => {
+  const connectWebflow = useCallback(async (body: CMSConnectRequestAPI) => {
+    try {
+      const res = await connectCMS(body);
+      if (res.connected) {
+        refetch();
+        return { success: true };
+      }
+      return { success: false, error: res.error || 'Connection failed' };
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.detail : 'Failed to connect Webflow';
+      setError(msg);
+      return { success: false, error: msg };
+    }
+  }, [refetch]);
+
+  const disconnectCMSConnection = useCallback(async () => {
     try {
       await disconnectCMS();
       setCmsConnection(null);
     } catch (err) {
-      const msg = err instanceof ApiError ? err.detail : 'Failed to disconnect WordPress';
+      const msg = err instanceof ApiError ? err.detail : 'Failed to disconnect CMS';
       setError(msg);
       throw err;
     }
   }, []);
+
+  const disconnectWordPress = disconnectCMSConnection;
+
+  const loadWebflowCollections = useCallback(async () => {
+    return fetchWebflowCollections();
+  }, []);
+
+  const loadWebflowCollectionFields = useCallback(async (collectionId: string) => {
+    return fetchWebflowCollectionFields(collectionId);
+  }, []);
+
+  const saveWebflowConfiguration = useCallback(async (body: WebflowConfigureRequestAPI) => {
+    try {
+      await configureWebflow(body);
+      refetch();
+      return { success: true };
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.detail : 'Failed to save Webflow configuration';
+      setError(msg);
+      return { success: false, error: msg };
+    }
+  }, [refetch]);
 
   // ── GA4 mutations ──────────────────────────────────────
 
@@ -263,6 +312,11 @@ export function useIntegrationsData(): UseIntegrationsDataReturn {
     isLoading,
     error,
     connectWordPress,
+    connectWebflow,
+    disconnectCMSConnection,
+    loadWebflowCollections,
+    loadWebflowCollectionFields,
+    saveWebflowConfiguration,
     disconnectWordPress,
     startGA4Connect,
     disconnectGA4Connection,
