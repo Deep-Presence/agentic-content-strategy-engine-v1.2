@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import html as html_mod
+import inspect
 import json
 import logging
 import re
@@ -19,7 +20,10 @@ import uuid as _uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from core.cms.adapters.webflow.adapter import WebflowAdapter
+from core.cms.adapters.webflow.field_mapper import suggest_field_mapping
 from core.cms.exceptions import CMSError
+from core.cms.webflow_models import WebflowProviderConfig
 from core.cms.factory import create_cms_adapter
 from core.cms.models import (
     CMSConnectionConfig,
@@ -89,16 +93,20 @@ class CMSService:
         site_url: str,
         username: str,
         api_key: str,
+        provider_config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Validate credentials, encrypt, and persist the connection.
 
         Returns the CMSConnectionStatus dict.
         """
+        cms_provider = CMSProvider(provider)
+        resolved_config: dict[str, Any] = dict(provider_config or {})
         config = CMSConnectionConfig(
-            provider=CMSProvider(provider),
+            provider=cms_provider,
             site_url=site_url,
             username=username,
             api_key=api_key,
+            provider_config=resolved_config,
         )
         adapter = create_cms_adapter(config)
         status = await adapter.validate_connection()
@@ -106,8 +114,20 @@ class CMSService:
         if not status.connected:
             return status.model_dump(mode="json")
 
-        # Encrypt credentials
-        encrypted = self._encrypt_credentials(username, api_key)
+        if cms_provider == CMSProvider.webflow:
+            export = getattr(adapter, "export_provider_config", None)
+            if callable(export):
+                exported = export()
+                if inspect.isawaitable(exported):
+                    exported = await exported
+                if isinstance(exported, dict):
+                    resolved_config = exported
+
+        encrypted = self._encrypt_credentials(
+            username,
+            api_key,
+            provider=cms_provider,
+        )
 
         # Upsert connection: update existing row in-place (preserves FK
         # references from publish_records and synced_posts) or create new.
@@ -116,9 +136,10 @@ class CMSService:
             company_slug, tenant_id
         )
         if existing:
-            existing.provider = CMSProvider(provider)
+            existing.provider = cms_provider
             existing.site_url = site_url
             existing.encrypted_credentials = encrypted
+            existing.provider_config = resolved_config or None
             existing.site_name = status.site_name
             existing.cms_version = status.cms_version
             existing.user_display_name = status.user_display_name
@@ -135,9 +156,10 @@ class CMSService:
                 company_id=cid,
                 tenant_id=tenant_id,
                 company_slug=company_slug,
-                provider=CMSProvider(provider),
+                provider=cms_provider,
                 site_url=site_url,
                 encrypted_credentials=encrypted,
+                provider_config=resolved_config or None,
                 site_name=status.site_name,
                 cms_version=status.cms_version,
                 user_display_name=status.user_display_name,
@@ -170,6 +192,141 @@ class CMSService:
         if not conn:
             return False
         return await self._connection_repo.deactivate(conn.id)
+
+    # ── Webflow configure (WF-2) ──────────────────────────────────
+
+    def _require_webflow_adapter(
+        self, connection: CMSConnectionModel
+    ) -> WebflowAdapter:
+        """Return a Webflow adapter for an active Webflow connection."""
+        if CMSProvider(connection.provider.value) != CMSProvider.webflow:
+            raise ValueError("CMS connection is not Webflow")
+        adapter = self._reconstruct_adapter(connection)
+        if not isinstance(adapter, WebflowAdapter):
+            raise ValueError("Expected Webflow adapter for Webflow connection")
+        return adapter
+
+    async def list_webflow_collections(
+        self,
+        connection: CMSConnectionModel,
+    ) -> list[dict[str, Any]]:
+        """List CMS collections on the connected Webflow site."""
+        adapter = self._require_webflow_adapter(connection)
+        raw_collections = await adapter.list_collections_for_site()
+        summaries: list[dict[str, Any]] = []
+        for coll in raw_collections:
+            if not isinstance(coll, dict):
+                continue
+            summaries.append(
+                {
+                    "collection_id": str(coll.get("id") or ""),
+                    "collection_slug": str(coll.get("slug") or ""),
+                    "display_name": str(
+                        coll.get("displayName") or coll.get("slug") or ""
+                    ),
+                    "singular_name": str(coll.get("singularName") or ""),
+                }
+            )
+        return summaries
+
+    async def get_webflow_collection_fields(
+        self,
+        connection: CMSConnectionModel,
+        collection_id: str,
+    ) -> dict[str, Any]:
+        """Return collection schema fields and a heuristic field mapping."""
+        adapter = self._require_webflow_adapter(connection)
+        schema = await adapter.get_collection_schema(collection_id)
+        raw_fields = schema.get("fields") or []
+        fields: list[dict[str, Any]] = []
+        field_dicts: list[dict[str, Any]] = []
+        for field in raw_fields:
+            if not isinstance(field, dict):
+                continue
+            field_dicts.append(field)
+            fields.append(
+                {
+                    "slug": str(field.get("slug") or ""),
+                    "display_name": str(field.get("displayName") or ""),
+                    "field_type": str(field.get("type") or ""),
+                    "is_required": bool(field.get("isRequired", False)),
+                }
+            )
+        suggested = suggest_field_mapping(field_dicts)
+        return {
+            "collection_id": collection_id,
+            "fields": fields,
+            "suggested_mapping": suggested.model_dump(mode="json"),
+        }
+
+    async def configure_webflow(
+        self,
+        company_slug: str,
+        tenant_id: str,
+        connection: CMSConnectionModel,
+        *,
+        configure_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Validate and persist Webflow ``provider_config`` on the connection."""
+        existing = WebflowProviderConfig.from_provider_config(
+            connection.provider_config
+        )
+        merged: dict[str, Any] = {
+            **existing.to_provider_config(),
+            **configure_payload,
+        }
+        if not merged.get("site_id") and existing.site_id:
+            merged["site_id"] = existing.site_id
+
+        validated = WebflowProviderConfig.model_validate(merged)
+        if not validated.enabled_collections():
+            raise ValueError("At least one enabled Webflow collection is required")
+
+        adapter = self._require_webflow_adapter(connection)
+        for coll in validated.enabled_collections():
+            if not coll.field_mapping.body_field:
+                raise ValueError(
+                    f"Collection {coll.display_name or coll.collection_id} "
+                    "requires a body_field mapping"
+                )
+            await adapter.get_collection_schema(coll.collection_id)
+
+        provider_config = validated.to_provider_config()
+        if validated.site_id and not provider_config.get("site_id"):
+            provider_config["site_id"] = validated.site_id
+
+        connection.provider_config = provider_config
+        connection.last_validated_at = datetime.now(timezone.utc)
+        await self._connection_repo._session.flush()
+
+        return {
+            "configured": True,
+            "provider_config": provider_config,
+        }
+
+    async def update_provider_config(
+        self,
+        company_slug: str,
+        tenant_id: str,
+        provider_config: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Merge and persist provider_config for the active CMS connection."""
+        conn = await self.get_connection(company_slug, tenant_id)
+        if conn is None:
+            raise CMSError("No active CMS connection for this company")
+
+        if CMSProvider(conn.provider.value) == CMSProvider.webflow:
+            return await self.configure_webflow(
+                company_slug,
+                tenant_id,
+                conn,
+                configure_payload=provider_config,
+            )
+
+        merged = {**(conn.provider_config or {}), **provider_config}
+        conn.provider_config = merged
+        await self._connection_repo._session.flush()
+        return {"configured": True, "provider_config": merged}
 
     # ── Sync Flow ─────────────────────────────────────────────────
 
@@ -284,6 +441,7 @@ class CMSService:
         category_names: list[str] | None = None,
         slug_override: str | None = None,
         publish_metadata: CMSPublishMetadata | None = None,
+        collection_id: str | None = None,
     ) -> CMSPost:
         """Read final.md from StorageBackend, convert to HTML, publish to CMS.
 
@@ -328,6 +486,7 @@ class CMSService:
             published_at=requested_publish_at,
             author=normalized_publish_metadata.author,
             schema_markup=normalized_publish_metadata.schema_markup,
+            collection_id=collection_id or "",
         )
         published_post = await adapter.publish_post(post_create)
         effective_published_at = (
@@ -650,37 +809,62 @@ class CMSService:
 
     # ── Private Helpers ───────────────────────────────────────────
 
-    def _encrypt_credentials(self, username: str, api_key: str) -> str:
+    def _encrypt_credentials(
+        self,
+        username: str,
+        api_key: str,
+        *,
+        provider: CMSProvider = CMSProvider.wordpress,
+    ) -> str:
         """Encrypt CMS credentials using Fernet symmetric encryption."""
         from cryptography.fernet import Fernet
 
-        payload = json.dumps({"username": username, "api_key": api_key})
+        from core.cms.adapters.webflow.auth import build_webflow_site_token_payload
+
+        if provider == CMSProvider.webflow:
+            payload: dict[str, Any] = build_webflow_site_token_payload(api_key=api_key)
+        else:
+            payload = {
+                "username": username,
+                "api_key": api_key,
+                "auth_type": "application_password",
+            }
         return Fernet(self._fernet_key.encode()).encrypt(
-            payload.encode()
+            json.dumps(payload).encode()
         ).decode()
+
+    def _decrypt_credential_payload(self, encrypted: str) -> dict[str, Any]:
+        """Decrypt CMS credential envelope."""
+        from cryptography.fernet import Fernet
+
+        decrypted = Fernet(self._fernet_key.encode()).decrypt(encrypted.encode())
+        data = json.loads(decrypted)
+        return data if isinstance(data, dict) else {}
 
     def _decrypt_credentials(self, encrypted: str) -> tuple[str, str]:
         """Decrypt CMS credentials. Returns ``(username, api_key)``."""
-        from cryptography.fernet import Fernet
-
-        decrypted = Fernet(self._fernet_key.encode()).decrypt(
-            encrypted.encode()
-        )
-        data = json.loads(decrypted)
-        return data["username"], data["api_key"]
+        data = self._decrypt_credential_payload(encrypted)
+        username = str(data.get("username", ""))
+        api_key = str(data.get("api_key", "") or data.get("access_token", ""))
+        return username, api_key
 
     def _reconstruct_adapter(
         self, connection: CMSConnectionModel
     ) -> CMSAdapterProtocol:
         """Decrypt credentials and create a CMS adapter from a stored connection."""
-        username, api_key = self._decrypt_credentials(
-            connection.encrypted_credentials
-        )
+        payload = self._decrypt_credential_payload(connection.encrypted_credentials)
+        username = str(payload.get("username", ""))
+        api_key = str(payload.get("api_key", "") or payload.get("access_token", ""))
         config = CMSConnectionConfig(
             provider=CMSProvider(connection.provider.value),
             site_url=connection.site_url,
             username=username,
             api_key=api_key,
+            provider_config=connection.provider_config or {},
+            extra={
+                "auth_type": str(payload.get("auth_type", "")),
+                "access_token": str(payload.get("access_token", "")),
+            },
         )
         return create_cms_adapter(config)
 

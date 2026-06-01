@@ -12,6 +12,13 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from core.db.enums import CMSPostStatus, CMSProvider
+from core.cms.webflow_models import (
+    WebflowAuthKind,
+    WebflowCollectionConfig,
+    WebflowFieldMapping,
+    WebflowProviderConfig,
+    WebflowPublishMode,
+)
 
 # Re-export for convenience so adapter code can do:
 #   from core.cms.models import CMSProvider, CMSPostStatus
@@ -27,6 +34,11 @@ __all__ = [
     "CMSPostStatus",
     "CMSPostUpdate",
     "CMSProvider",
+    "WebflowAuthKind",
+    "WebflowCollectionConfig",
+    "WebflowFieldMapping",
+    "WebflowProviderConfig",
+    "WebflowPublishMode",
 ]
 
 
@@ -44,6 +56,7 @@ class CMSConnectionConfig(BaseModel):
     api_key: str = ""
     username: str = ""
     extra: dict[str, Any] = Field(default_factory=dict)
+    provider_config: dict[str, Any] = Field(default_factory=dict)
 
 
 class CMSConnectionStatus(BaseModel):
@@ -103,6 +116,7 @@ class CMSPostCreate(BaseModel):
     published_at: datetime | None = None
     author: str = ""
     schema_markup: bool = False
+    collection_id: str = ""
 
 
 class CMSPostUpdate(BaseModel):
@@ -118,6 +132,7 @@ class CMSPostUpdate(BaseModel):
     seo_title: str | None = None
     seo_description: str | None = None
     canonical_url: str | None = None
+    collection_id: str = ""
 
 
 class CMSPublishMetadata(BaseModel):

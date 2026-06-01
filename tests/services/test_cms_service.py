@@ -56,13 +56,14 @@ def _mock_connection(
     provider: str = "wordpress",
     site_url: str = "https://blog.example.com",
     encrypted_credentials: str = "",
+    provider_config: dict | None = None,
     fernet_key: str = _TEST_FERNET_KEY,
 ) -> MagicMock:
     """Build a mock CMSConnectionModel."""
     if not encrypted_credentials:
         import json
 
-        payload = json.dumps({"username": "admin", "api_key": "secret"})
+        payload = json.dumps({"username": "admin", "api_key": "secret", "auth_type": "application_password"})
         encrypted_credentials = Fernet(fernet_key.encode()).encrypt(
             payload.encode()
         ).decode()
@@ -72,6 +73,7 @@ def _mock_connection(
     conn.provider = CMSProvider(provider)
     conn.site_url = site_url
     conn.encrypted_credentials = encrypted_credentials
+    conn.provider_config = provider_config
     conn.company_slug = "test-co"
     return conn
 
@@ -139,6 +141,188 @@ class TestConnect:
 
         assert result["connected"] is False
         conn_repo.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_connect_webflow_persists_provider_config(self) -> None:
+        conn_repo, _, _ = _make_mock_repos()
+        conn_repo.get_by_company_slug.return_value = None
+        conn_repo.create.return_value = MagicMock()
+
+        service = _make_service(conn_repo=conn_repo)
+        provider_config = {
+            "site_id": "site-1",
+            "collections": [
+                {
+                    "collection_id": "coll-1",
+                    "enabled": True,
+                    "field_mapping": {"body_field": "post-body"},
+                }
+            ],
+        }
+
+        mock_status = CMSConnectionStatus(connected=True, site_name="Webflow Site")
+        mock_adapter = AsyncMock()
+        mock_adapter.validate_connection.return_value = mock_status
+        mock_adapter.export_provider_config.return_value = {
+            **provider_config,
+            "site_id": "site-resolved",
+        }
+
+        with patch("core.services.cms_service.create_cms_adapter", return_value=mock_adapter):
+            result = await service.connect(
+                company_id=uuid.uuid4(),
+                company_slug="test-co",
+                tenant_id="tenant-1",
+                provider="webflow",
+                site_url="https://marketing.example.com",
+                username="",
+                api_key="wf-token",
+                provider_config=provider_config,
+            )
+
+        assert result["connected"] is True
+        create_kwargs = conn_repo.create.call_args.kwargs
+        assert create_kwargs["provider"] == CMSProvider.webflow
+        assert create_kwargs["provider_config"]["site_id"] == "site-resolved"
+
+
+class TestReconstructAdapter:
+    def test_reconstruct_passes_provider_config_to_adapter(self) -> None:
+        service = _make_service()
+        provider_config = {"site_id": "abc", "collections": []}
+        conn = _mock_connection(
+            provider="webflow",
+            provider_config=provider_config,
+        )
+        import json
+
+        payload = json.dumps(
+            {
+                "username": "",
+                "api_key": "wf-token",
+                "auth_type": "site_token",
+                "access_token": "wf-token",
+            }
+        )
+        conn.encrypted_credentials = Fernet(_TEST_FERNET_KEY.encode()).encrypt(
+            payload.encode()
+        ).decode()
+
+        with patch("core.services.cms_service.create_cms_adapter") as mock_factory:
+            mock_factory.return_value = AsyncMock()
+            service._reconstruct_adapter(conn)
+            config = mock_factory.call_args.args[0]
+            assert config.provider_config == provider_config
+            assert config.api_key == "wf-token"
+            assert config.extra["auth_type"] == "site_token"
+
+
+class TestWebflowConfigure:
+    @pytest.mark.asyncio
+    async def test_list_webflow_collections(self) -> None:
+        conn_repo, _, _ = _make_mock_repos()
+        service = _make_service(conn_repo=conn_repo)
+        conn = _mock_connection(provider="webflow")
+
+        mock_adapter = AsyncMock()
+        mock_adapter.list_collections_for_site.return_value = [
+            {
+                "id": "coll-1",
+                "slug": "blog-posts",
+                "displayName": "Blog Posts",
+                "singularName": "Blog Post",
+            }
+        ]
+
+        with patch.object(service, "_require_webflow_adapter", return_value=mock_adapter):
+            result = await service.list_webflow_collections(conn)
+
+        assert len(result) == 1
+        assert result[0]["collection_id"] == "coll-1"
+        assert result[0]["display_name"] == "Blog Posts"
+
+    @pytest.mark.asyncio
+    async def test_get_webflow_collection_fields(self) -> None:
+        service = _make_service()
+        conn = _mock_connection(provider="webflow")
+
+        mock_adapter = AsyncMock()
+        mock_adapter.get_collection_schema.return_value = {
+            "fields": [
+                {"slug": "name", "displayName": "Name", "type": "PlainText"},
+                {"slug": "post-body", "displayName": "Body", "type": "RichText"},
+            ]
+        }
+
+        with patch.object(service, "_require_webflow_adapter", return_value=mock_adapter):
+            result = await service.get_webflow_collection_fields(conn, "coll-1")
+
+        assert result["collection_id"] == "coll-1"
+        assert len(result["fields"]) == 2
+        assert result["suggested_mapping"]["body_field"] == "post-body"
+
+    @pytest.mark.asyncio
+    async def test_configure_webflow_persists_provider_config(self) -> None:
+        conn_repo, _, _ = _make_mock_repos()
+        service = _make_service(conn_repo=conn_repo)
+        conn = _mock_connection(
+            provider="webflow",
+            provider_config={"site_id": "site-1"},
+        )
+
+        mock_adapter = AsyncMock()
+        mock_adapter.get_collection_schema.return_value = {"fields": []}
+
+        configure_payload = {
+            "collections": [
+                {
+                    "collection_id": "coll-1",
+                    "collection_slug": "blog",
+                    "display_name": "Blog",
+                    "enabled": True,
+                    "is_default_publish_target": True,
+                    "field_mapping": {
+                        "title_field": "name",
+                        "slug_field": "slug",
+                        "body_field": "post-body",
+                    },
+                }
+            ],
+        }
+
+        with patch.object(service, "_require_webflow_adapter", return_value=mock_adapter):
+            result = await service.configure_webflow(
+                "test-co",
+                "tenant-1",
+                conn,
+                configure_payload=configure_payload,
+            )
+
+        assert result["configured"] is True
+        assert result["provider_config"]["site_id"] == "site-1"
+        assert conn.provider_config["collections"][0]["collection_id"] == "coll-1"
+        conn_repo._session.flush.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_configure_webflow_requires_body_field(self) -> None:
+        service = _make_service()
+        conn = _mock_connection(provider="webflow", provider_config={"site_id": "site-1"})
+
+        with pytest.raises(ValueError, match="body_field"):
+            await service.configure_webflow(
+                "test-co",
+                "tenant-1",
+                conn,
+                configure_payload={
+                    "collections": [
+                        {
+                            "collection_id": "coll-1",
+                            "enabled": True,
+                            "field_mapping": {"title_field": "name"},
+                        }
+                    ],
+                },
+            )
 
 
 # ── Disconnect Tests ──────────────────────────────────────────────────

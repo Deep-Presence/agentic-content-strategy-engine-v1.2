@@ -47,6 +47,7 @@ class TestCMSConnectionConfig:
         assert config.api_key == ""
         assert config.username == ""
         assert config.extra == {}
+        assert config.provider_config == {}
 
     def test_populated(self) -> None:
         config = CMSConnectionConfig(

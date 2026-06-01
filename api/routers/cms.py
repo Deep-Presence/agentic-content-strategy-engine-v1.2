@@ -3,7 +3,7 @@
 Auth: All endpoints require authentication + tenant isolation.
 Write operations require ``member`` or ``superuser`` role.
 
-11 endpoints:
+11 endpoints + 3 Webflow configure endpoints:
   POST   /connect             Connect a CMS (validate + store)
   GET    /connection           Get current connection info
   DELETE /connection           Disconnect CMS
@@ -15,6 +15,9 @@ Write operations require ``member`` or ``superuser`` role.
   POST   /refresh/{cms_post_id}  Update existing CMS post
   GET    /publish-history      Audit trail
   GET    /categories           CMS categories (for publish UI selector)
+  GET    /webflow/collections  List Webflow collections (Webflow only)
+  GET    /webflow/collections/{collection_id}/fields  Collection schema + mapping hints
+  POST   /webflow/configure    Save Webflow provider_config (+ optional sync)
 """
 from __future__ import annotations
 
@@ -47,6 +50,12 @@ from api.schemas.cms import (
     CMSStaleToTriageRequest,
     StaleContentAction,
     StaleToTriageResponse,
+    WebflowCollectionFieldsResponse,
+    WebflowCollectionSummary,
+    WebflowConfigureRequest,
+    WebflowConfigureResponse,
+    WebflowFieldSchemaItem,
+    WebflowFieldMappingResponse,
 )
 from core.auth.service import AuthServiceProtocol
 from core.cms.models import CMSPublishMetadata
@@ -102,6 +111,56 @@ def _handle_cms_error(exc: CMSError) -> HTTPException:
     return HTTPException(status_code=400, detail=str(exc))
 
 
+async def _require_webflow_connection(
+    cms_service: Any, company_slug: str
+) -> Any:
+    """Fetch active Webflow CMS connection or raise 404/422."""
+    conn = await _get_connection_or_404(cms_service, company_slug, company_slug)
+    provider = conn.provider.value if hasattr(conn.provider, "value") else str(conn.provider)
+    if provider != "webflow":
+        raise HTTPException(
+            status_code=422,
+            detail="Webflow endpoints require an active Webflow CMS connection",
+        )
+    return conn
+
+
+async def _maybe_trigger_cms_sync(
+    *,
+    http_request: Request,
+    company_slug: str,
+    task_store: TaskStoreProtocol,
+    event_bus: Any,
+) -> str | None:
+    """Launch a CMS sync background task; return task_id or None if locked."""
+    try:
+        task = task_store.create_task("cms_sync", company_slug)
+    except TaskConflictError:
+        logger.info("Webflow configure sync skipped for %s — sync already running", company_slug)
+        return None
+
+    from api.tasks.runner import run_cms_sync_task
+    from core.config.settings import settings
+
+    session_factory = getattr(http_request.app.state, "db_session_factory", None)
+    storage = getattr(http_request.app.state, "storage_backend", None)
+
+    handle = asyncio.create_task(
+        run_cms_sync_task(
+            task_id=task.task_id,
+            company_slug=company_slug,
+            tenant_id=company_slug,
+            task_store=task_store,
+            event_bus=event_bus,
+            session_factory=session_factory,
+            storage=storage,
+            fernet_key=settings.cms_fernet_key or "",
+        )
+    )
+    task_store.register_task_handle(task.task_id, handle)
+    return task.task_id
+
+
 # ── 1. Connect ────────────────────────────────────────────────────────
 
 
@@ -135,6 +194,7 @@ async def connect_cms(
             site_url=body.site_url,
             username=body.username,
             api_key=body.api_key,
+            provider_config=body.provider_config,
         )
     except (ValueError, CMSError) as exc:
         raise _handle_cms_error(exc) if isinstance(exc, CMSError) else HTTPException(
@@ -217,6 +277,7 @@ async def get_connection(
         is_active=conn.is_active,
         last_sync_at=conn.last_sync_at,
         sync_post_count=conn.sync_post_count,
+        provider_config=conn.provider_config or {},
     )
 
     # Cache write (fire-and-forget)
@@ -403,6 +464,7 @@ async def publish_to_cms(
                 if body.publish_metadata
                 else None
             ),
+            collection_id=body.collection_id,
         )
     except CMSError as exc:
         raise _handle_cms_error(exc)
@@ -529,3 +591,102 @@ async def list_categories(
         )
         for c in cats
     ]
+
+
+# ── 12–14. Webflow configure (WF-2) ─────────────────────────────────
+
+
+@router.get("/webflow/collections", response_model=list[WebflowCollectionSummary])
+async def list_webflow_collections(
+    company_slug: str = Depends(get_workspace_read_slug),
+    _user: UserProfile = Depends(require_auth),
+    cms_service: Any = Depends(get_cms_service),
+) -> list[WebflowCollectionSummary]:
+    """List Webflow CMS collections for the connected site."""
+    connection = await _require_webflow_connection(cms_service, company_slug)
+    try:
+        collections = await cms_service.list_webflow_collections(connection)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except CMSError as exc:
+        raise _handle_cms_error(exc)
+
+    return [WebflowCollectionSummary(**c) for c in collections]
+
+
+@router.get(
+    "/webflow/collections/{collection_id}/fields",
+    response_model=WebflowCollectionFieldsResponse,
+)
+async def get_webflow_collection_fields(
+    collection_id: str,
+    company_slug: str = Depends(get_workspace_read_slug),
+    _user: UserProfile = Depends(require_auth),
+    cms_service: Any = Depends(get_cms_service),
+) -> WebflowCollectionFieldsResponse:
+    """Fetch Webflow collection schema and suggested field mapping."""
+    connection = await _require_webflow_connection(cms_service, company_slug)
+    try:
+        payload = await cms_service.get_webflow_collection_fields(
+            connection, collection_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except CMSError as exc:
+        raise _handle_cms_error(exc)
+
+    return WebflowCollectionFieldsResponse(
+        collection_id=payload["collection_id"],
+        fields=[WebflowFieldSchemaItem(**f) for f in payload["fields"]],
+        suggested_mapping=WebflowFieldMappingResponse(**payload["suggested_mapping"]),
+    )
+
+
+@router.post("/webflow/configure", response_model=WebflowConfigureResponse)
+async def configure_webflow(
+    body: WebflowConfigureRequest,
+    http_request: Request,
+    company_slug: str = Depends(get_workspace_write_slug),
+    _user: UserProfile = Depends(require_auth),
+    cms_service: Any = Depends(get_cms_service),
+    task_store: TaskStoreProtocol = Depends(get_task_store),
+    event_bus: Any = Depends(get_event_bus),
+) -> WebflowConfigureResponse:
+    """Save Webflow multi-collection config and optionally trigger a sync."""
+    connection = await _require_webflow_connection(cms_service, company_slug)
+
+    configure_payload = {
+        "site_id": body.site_id,
+        "collections": [c.model_dump(mode="json") for c in body.collections],
+        "publish_mode": body.publish_mode,
+        "default_collection_id": body.default_collection_id,
+    }
+
+    try:
+        result = await cms_service.configure_webflow(
+            company_slug,
+            company_slug,
+            connection,
+            configure_payload=configure_payload,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except CMSError as exc:
+        raise _handle_cms_error(exc)
+
+    await asyncio.to_thread(invalidate_connection_info, company_slug, company_slug)
+
+    sync_task_id: str | None = None
+    if body.trigger_sync:
+        sync_task_id = await _maybe_trigger_cms_sync(
+            http_request=http_request,
+            company_slug=company_slug,
+            task_store=task_store,
+            event_bus=event_bus,
+        )
+
+    return WebflowConfigureResponse(
+        configured=result["configured"],
+        provider_config=result["provider_config"],
+        sync_task_id=sync_task_id,
+    )

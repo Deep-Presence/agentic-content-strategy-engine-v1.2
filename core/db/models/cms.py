@@ -84,6 +84,11 @@ class CMSConnectionModel(UUIDPKMixin, TimestampMixin, Base):
     sync_post_count: Mapped[int] = mapped_column(
         Integer, default=0, server_default="0"
     )
+    provider_config: Mapped[dict | None] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment="Provider-specific non-secret config (collections, field maps, OAuth refs).",
+    )
 
 
 # ── CMS Publish Records ──────────────────────────────────────────────

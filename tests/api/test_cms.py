@@ -50,6 +50,7 @@ def _mock_connection(**overrides):
     conn.is_active = True
     conn.last_sync_at = datetime.now(timezone.utc)
     conn.sync_post_count = 10
+    conn.provider_config = {}
     for k, v in overrides.items():
         setattr(conn, k, v)
     return conn
@@ -138,6 +139,20 @@ def mock_cms_service():
     svc.list_synced_posts = AsyncMock(return_value=[])
     svc.list_publish_history = AsyncMock(return_value=[])
     svc.list_categories = AsyncMock(return_value=[])
+    svc.list_webflow_collections = AsyncMock(return_value=[])
+    svc.get_webflow_collection_fields = AsyncMock(return_value={
+        "collection_id": "coll-1",
+        "fields": [],
+        "suggested_mapping": {
+            "title_field": "name",
+            "slug_field": "slug",
+            "body_field": "post-body",
+        },
+    })
+    svc.configure_webflow = AsyncMock(return_value={
+        "configured": True,
+        "provider_config": {"site_id": "site-1", "collections": []},
+    })
 
     return svc
 
@@ -792,3 +807,98 @@ class TestCMSCategories:
     def test_categories_requires_auth(self, public_client: TestClient) -> None:
         resp = public_client.get("/api/v1/cms/categories")
         assert resp.status_code in (401, 403)
+
+
+# ── 12–14. Webflow configure ──────────────────────────────────────────
+
+
+class TestWebflowConfigure:
+    """Webflow-specific CMS configure endpoints."""
+
+    def _webflow_connection(self):
+        return _mock_connection(provider=MagicMock(value="webflow"))
+
+    def test_list_collections_success(
+        self, client: TestClient, mock_cms_service: AsyncMock,
+    ) -> None:
+        mock_cms_service.get_connection.return_value = self._webflow_connection()
+        mock_cms_service.list_webflow_collections.return_value = [
+            {
+                "collection_id": "coll-1",
+                "collection_slug": "blog",
+                "display_name": "Blog Posts",
+                "singular_name": "Blog Post",
+            }
+        ]
+        resp = client.get("/api/v1/cms/webflow/collections")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["collection_id"] == "coll-1"
+
+    def test_list_collections_requires_webflow(
+        self, client: TestClient, mock_cms_service: AsyncMock,
+    ) -> None:
+        mock_cms_service.get_connection.return_value = _mock_connection()
+        resp = client.get("/api/v1/cms/webflow/collections")
+        assert resp.status_code == 422
+
+    def test_collection_fields_success(
+        self, client: TestClient, mock_cms_service: AsyncMock,
+    ) -> None:
+        mock_cms_service.get_connection.return_value = self._webflow_connection()
+        resp = client.get("/api/v1/cms/webflow/collections/coll-1/fields")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["collection_id"] == "coll-1"
+        assert data["suggested_mapping"]["body_field"] == "post-body"
+
+    def test_configure_success(
+        self, client: TestClient, mock_cms_service: AsyncMock,
+    ) -> None:
+        mock_cms_service.get_connection.return_value = self._webflow_connection()
+        with (
+            patch("api.routers.cms.invalidate_connection_info"),
+            patch("api.routers.cms._maybe_trigger_cms_sync", new_callable=AsyncMock) as mock_sync,
+        ):
+            mock_sync.return_value = "task-123"
+            resp = client.post("/api/v1/cms/webflow/configure", json={
+                "site_id": "site-1",
+                "collections": [
+                    {
+                        "collection_id": "coll-1",
+                        "enabled": True,
+                        "field_mapping": {
+                            "title_field": "name",
+                            "slug_field": "slug",
+                            "body_field": "post-body",
+                        },
+                    }
+                ],
+                "trigger_sync": True,
+            })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["configured"] is True
+        assert data["sync_task_id"] == "task-123"
+        mock_cms_service.configure_webflow.assert_awaited_once()
+
+    def test_configure_requires_member(self, viewer_client: TestClient) -> None:
+        resp = viewer_client.post("/api/v1/cms/webflow/configure", json={
+            "collections": [],
+        })
+        assert resp.status_code == 403
+
+    def test_connect_passes_provider_config(
+        self, client: TestClient, mock_cms_service: AsyncMock,
+    ) -> None:
+        with patch("api.routers.cms.invalidate_connection_info"):
+            resp = client.post("/api/v1/cms/connect", json={
+                "provider": "webflow",
+                "site_url": "https://marketing.example.com",
+                "api_key": "wf-token",
+                "provider_config": {"site_id": "site-1"},
+            })
+        assert resp.status_code == 200
+        call_kwargs = mock_cms_service.connect.call_args.kwargs
+        assert call_kwargs.get("provider_config") == {"site_id": "site-1"}
