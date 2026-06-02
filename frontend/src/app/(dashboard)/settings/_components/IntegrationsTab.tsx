@@ -7,7 +7,7 @@ import { useIntegrationsData } from '../_hooks/useIntegrationsData';
 import { WordPressConnectModal } from './WordPressConnectModal';
 import { WebflowConnectModal } from './WebflowConnectModal';
 import { GA4ConnectFlow } from './GA4ConnectFlow';
-import { isWebflowConfigured } from '../_lib/webflow-utils';
+import { isWebflowConfigured, isWebflowOAuthPendingSite } from '../_lib/webflow-utils';
 import type { IntegrationDef, IntegrationCategory, CMSConnectionInfoAPI, GA4ConnectionResponseAPI, GA4PropertyItemAPI, GA4SelectPropertyRequestAPI } from '../_lib/types';
 
 // ── Static integration definitions ──────────────────────
@@ -43,6 +43,9 @@ function IntegrationsContent() {
     loadWebflowCollections,
     loadWebflowCollectionFields,
     saveWebflowConfiguration,
+    startWebflowConnect,
+    loadWebflowSites,
+    selectWebflowSite,
     startGA4Connect,
     disconnectGA4Connection,
     loadGA4Properties,
@@ -163,7 +166,11 @@ function IntegrationsContent() {
       <WebflowConnectModal
         open={webflowModalOpen}
         onClose={() => setWebflowModalOpen(false)}
+        oauthPendingSite={isWebflowOAuthPendingSite(cmsConnection)}
         onConnect={connectWebflow}
+        onStartOAuth={startWebflowConnect}
+        onLoadSites={loadWebflowSites}
+        onSelectSite={selectWebflowSite}
         onLoadCollections={loadWebflowCollections}
         onLoadCollectionFields={loadWebflowCollectionFields}
         onConfigure={saveWebflowConfiguration}
@@ -261,6 +268,7 @@ function WebflowCard({
 }) {
   const isConnected = connection?.is_active ?? false;
   const configured = isWebflowConfigured(connection);
+  const pendingSite = isWebflowOAuthPendingSite(connection);
 
   return (
     <div className="bg-surface border border-border rounded-md p-4 min-h-[80px] hover:border-border-strong transition-[border-color] duration-150">
@@ -289,6 +297,10 @@ function WebflowCard({
               {connection.sync_post_count} items synced
               {connection.last_sync_at && ` \u00B7 Last sync: ${formatDate(connection.last_sync_at)}`}
             </p>
+          ) : pendingSite ? (
+            <p className="text-[11px] text-warning">
+              OAuth connected — select your Webflow site to continue
+            </p>
           ) : (
             <p className="text-[11px] text-warning">
               Connected — finish collection setup to sync and publish
@@ -297,7 +309,7 @@ function WebflowCard({
         </div>
       )}
 
-      {isConnected && !configured ? (
+      {isConnected && (!configured || pendingSite) ? (
         <div className="flex items-center gap-2">
           <Button size="sm" variant="secondary" onClick={onFinishSetup}>
             Finish Setup

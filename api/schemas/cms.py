@@ -232,3 +232,36 @@ class WebflowConfigureResponse(BaseModel):
     configured: bool = True
     provider_config: dict[str, Any] = Field(default_factory=dict)
     sync_task_id: Optional[str] = None
+
+
+class WebflowAuthorizeResponse(BaseModel):
+    """OAuth consent URL for Webflow connect."""
+
+    authorization_url: str = ""
+
+
+class WebflowSiteSummary(BaseModel):
+    """One Webflow site accessible to the connected account."""
+
+    site_id: str = ""
+    display_name: str = ""
+    short_name: str = ""
+    preview_url: str = ""
+
+
+class WebflowSelectSiteRequest(BaseModel):
+    """Bind OAuth connection to a Webflow site."""
+
+    site_id: str = ""
+    site_url: str = ""
+
+
+class WebflowSelectSiteResponse(BaseModel):
+    """Result of selecting a Webflow site."""
+
+    connected: bool = False
+    site_name: str = ""
+    site_url: str = ""
+    cms_version: str = ""
+    user_display_name: str = ""
+    error: Optional[str] = None

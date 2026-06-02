@@ -416,9 +416,30 @@ class WebflowAdapter:
     # ── Media Operations ──────────────────────────────────────────
 
     async def upload_media(self, media: CMSMediaUpload) -> CMSMediaResult:
-        """Webflow assets require a two-step upload; not implemented in WF-1."""
-        raise CMSAPIError(
-            "Webflow media upload is not yet supported — publish without featured image"
+        """Upload an image to the Webflow site asset library."""
+        site_id = self._webflow_config.site_id
+        if not site_id:
+            site = await self._resolve_site()
+            if site:
+                site_id = str(site.get("id", ""))
+        if not site_id:
+            raise CMSAPIError(
+                "Webflow site_id is required for media upload — configure site first"
+            )
+        if not media.content_bytes:
+            raise CMSAPIError("Webflow media upload requires content_bytes")
+
+        filename = media.filename or "upload.png"
+        uploaded = await self._client.upload_asset_bytes(
+            site_id,
+            file_name=filename,
+            content_bytes=media.content_bytes,
+            mime_type=media.mime_type or "image/png",
+        )
+        return CMSMediaResult(
+            cms_id=str(uploaded.get("id", "")),
+            url=str(uploaded.get("url", "")),
+            filename=filename,
         )
 
     # ── Webflow-specific helpers (used by WF-2 configure API) ─────

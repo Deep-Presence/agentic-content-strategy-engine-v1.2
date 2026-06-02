@@ -969,6 +969,11 @@ async def get_cms_service(
             inventory_service=inventory_svc,
             company_repo=CompanyRepository(session),
             content_to_prompt_orchestrator=prompt_orchestrator,
+            webflow_oauth_client_id=settings.webflow_oauth_client_id,
+            webflow_oauth_client_secret=settings.webflow_oauth_client_secret,
+            webflow_oauth_redirect_uri=settings.webflow_oauth_redirect_uri,
+            webflow_oauth_frontend_settings_url=settings.webflow_oauth_frontend_settings_url,
+            webflow_webhook_public_url=settings.webflow_webhook_public_url,
         )
         yield svc
         await session.commit()

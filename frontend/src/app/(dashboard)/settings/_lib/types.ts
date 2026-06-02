@@ -126,6 +126,31 @@ export interface WebflowConfigureResponseAPI {
   sync_task_id: string | null;
 }
 
+export interface WebflowAuthorizeResponseAPI {
+  authorization_url: string;
+}
+
+export interface WebflowSiteSummaryAPI {
+  site_id: string;
+  display_name: string;
+  short_name: string;
+  preview_url: string;
+}
+
+export interface WebflowSelectSiteRequestAPI {
+  site_id: string;
+  site_url?: string;
+}
+
+export interface WebflowSelectSiteResponseAPI {
+  connected: boolean;
+  site_name: string;
+  site_url: string;
+  cms_version: string;
+  user_display_name: string;
+  error: string | null;
+}
+
 // ── GA4 Analytics (from api/schemas/analytics.py) ───────
 
 export interface GA4AuthorizeResponseAPI {

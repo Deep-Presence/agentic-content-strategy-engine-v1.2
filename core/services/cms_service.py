@@ -21,12 +21,24 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from core.cms.adapters.webflow.adapter import WebflowAdapter
+from core.cms.adapters.webflow.auth import (
+    build_webflow_oauth_payload,
+    encrypt_credential_payload,
+)
+from core.cms.adapters.webflow.oauth import (
+    build_webflow_authorize_url,
+    create_webflow_oauth_state,
+    exchange_webflow_authorization_code,
+    verify_webflow_oauth_state,
+    verify_webflow_webhook_signature,
+)
 from core.cms.adapters.webflow.field_mapper import suggest_field_mapping
 from core.cms.exceptions import CMSError
-from core.cms.webflow_models import WebflowProviderConfig
+from core.cms.webflow_models import WebflowAuthKind, WebflowProviderConfig
 from core.cms.factory import create_cms_adapter
 from core.cms.models import (
     CMSConnectionConfig,
+    CMSMediaUpload,
     CMSPost,
     CMSPostCreate,
     CMSPostUpdate,
@@ -71,6 +83,11 @@ class CMSService:
         inventory_service: Any | None = None,
         company_repo: CompanyRepository | None = None,
         content_to_prompt_orchestrator: Any | None = None,
+        webflow_oauth_client_id: str | None = None,
+        webflow_oauth_client_secret: str | None = None,
+        webflow_oauth_redirect_uri: str = "",
+        webflow_oauth_frontend_settings_url: str = "",
+        webflow_webhook_public_url: str = "",
     ) -> None:
         self._connection_repo = connection_repo
         self._publish_repo = publish_repo
@@ -81,6 +98,11 @@ class CMSService:
         self._inventory_service = inventory_service
         self._company_repo = company_repo
         self._content_to_prompt_orchestrator = content_to_prompt_orchestrator
+        self._webflow_oauth_client_id = webflow_oauth_client_id or ""
+        self._webflow_oauth_client_secret = webflow_oauth_client_secret or ""
+        self._webflow_oauth_redirect_uri = webflow_oauth_redirect_uri
+        self._webflow_oauth_frontend_settings_url = webflow_oauth_frontend_settings_url
+        self._webflow_webhook_public_url = webflow_webhook_public_url
 
     # ── Connect Flow ──────────────────────────────────────────────
 
@@ -193,6 +215,360 @@ class CMSService:
             return False
         return await self._connection_repo.deactivate(conn.id)
 
+    # ── Webflow OAuth (WF-5) ─────────────────────────────────────
+
+    def generate_webflow_authorize_url(
+        self,
+        *,
+        secret_key: str,
+        company_slug: str,
+        return_url: str = "",
+    ) -> str:
+        """Build Webflow OAuth consent URL with signed state."""
+        if not self._webflow_oauth_client_id or not self._webflow_oauth_redirect_uri:
+            raise CMSError("Webflow OAuth is not configured on this server")
+        state = create_webflow_oauth_state(
+            secret_key=secret_key,
+            company_slug=company_slug,
+            return_url=return_url,
+        )
+        return build_webflow_authorize_url(
+            client_id=self._webflow_oauth_client_id,
+            redirect_uri=self._webflow_oauth_redirect_uri,
+            state=state,
+        )
+
+    @staticmethod
+    def verify_webflow_oauth_state(secret_key: str, state: str) -> dict[str, Any] | None:
+        return verify_webflow_oauth_state(secret_key, state)
+
+    @property
+    def webflow_oauth_frontend_settings_url(self) -> str:
+        return self._webflow_oauth_frontend_settings_url
+
+    async def exchange_webflow_code_and_store(
+        self,
+        *,
+        code: str,
+        company_id: str | _uuid.UUID,
+        company_slug: str,
+        tenant_id: str,
+    ) -> dict[str, Any]:
+        """Exchange OAuth code and upsert a Webflow connection (site pick pending)."""
+        if not self._webflow_oauth_client_id or not self._webflow_oauth_client_secret:
+            raise CMSError("Webflow OAuth is not configured on this server")
+
+        token_data = await exchange_webflow_authorization_code(
+            client_id=self._webflow_oauth_client_id,
+            client_secret=self._webflow_oauth_client_secret,
+            redirect_uri=self._webflow_oauth_redirect_uri,
+            code=code,
+        )
+        access_token = str(token_data.get("access_token", ""))
+        refresh_token = str(token_data.get("refresh_token", "") or "")
+        expires_at = str(token_data.get("expires_at", "") or "")
+
+        from core.cms.adapters.webflow.client import WebflowClient
+
+        client = WebflowClient(access_token)
+        auth_info = await client.get_authorized_by()
+        user_display = str(auth_info.get("email", "") or "")
+
+        cred_payload = build_webflow_oauth_payload(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_at=expires_at,
+        )
+        encrypted = encrypt_credential_payload(
+            cred_payload,
+            fernet_key=self._fernet_key,
+        )
+        provider_config = WebflowProviderConfig(
+            auth_kind=WebflowAuthKind.oauth,
+            site_id="",
+        ).to_provider_config()
+
+        existing = await self._connection_repo.get_by_company_slug(
+            company_slug, tenant_id
+        )
+        if existing:
+            existing.provider = CMSProvider.webflow
+            existing.site_url = ""
+            existing.encrypted_credentials = encrypted
+            existing.provider_config = provider_config
+            existing.site_name = "Webflow (select site)"
+            existing.cms_version = "webflow-v2"
+            existing.user_display_name = user_display
+            existing.is_active = True
+            existing.last_validated_at = datetime.now(timezone.utc)
+            await self._connection_repo._session.flush()
+        else:
+            cid = (
+                _uuid.UUID(str(company_id))
+                if isinstance(company_id, str)
+                else company_id
+            )
+            await self._connection_repo.create(
+                company_id=cid,
+                tenant_id=tenant_id,
+                company_slug=company_slug,
+                provider=CMSProvider.webflow,
+                site_url="",
+                encrypted_credentials=encrypted,
+                provider_config=provider_config,
+                site_name="Webflow (select site)",
+                cms_version="webflow-v2",
+                user_display_name=user_display,
+                last_validated_at=datetime.now(timezone.utc),
+            )
+
+        return {
+            "connected": True,
+            "site_name": "Webflow (select site)",
+            "site_url": "",
+            "cms_version": "webflow-v2",
+            "user_display_name": user_display,
+        }
+
+    async def list_webflow_sites(
+        self,
+        connection: CMSConnectionModel,
+    ) -> list[dict[str, Any]]:
+        """List Webflow sites accessible to the connected OAuth/token account."""
+        adapter = self._require_webflow_adapter(connection)
+        sites = await adapter._client.list_sites()
+        summaries: list[dict[str, Any]] = []
+        for site in sites:
+            if not isinstance(site, dict):
+                continue
+            site_id = str(site.get("id") or "")
+            custom_domains = site.get("customDomains") or []
+            preview_url = str(site.get("previewUrl") or site.get("defaultDomain") or "")
+            if isinstance(custom_domains, list) and custom_domains:
+                first = custom_domains[0]
+                if isinstance(first, dict) and first.get("url"):
+                    preview_url = str(first["url"])
+            summaries.append(
+                {
+                    "site_id": site_id,
+                    "display_name": str(
+                        site.get("displayName") or site.get("shortName") or site_id
+                    ),
+                    "short_name": str(site.get("shortName") or ""),
+                    "preview_url": preview_url,
+                }
+            )
+        return summaries
+
+    async def select_webflow_site(
+        self,
+        company_slug: str,
+        tenant_id: str,
+        connection: CMSConnectionModel,
+        *,
+        site_id: str,
+        site_url: str = "",
+    ) -> dict[str, Any]:
+        """Bind OAuth connection to a specific Webflow site."""
+        if not site_id:
+            raise ValueError("site_id is required")
+
+        existing = WebflowProviderConfig.from_provider_config(
+            connection.provider_config
+        )
+        merged = existing.to_provider_config()
+        merged["site_id"] = site_id
+        merged["auth_kind"] = WebflowAuthKind.oauth.value
+
+        config = CMSConnectionConfig(
+            provider=CMSProvider.webflow,
+            site_url=site_url,
+            username="",
+            api_key="",
+            provider_config=merged,
+            extra=self._decrypt_credential_payload(connection.encrypted_credentials),
+        )
+        adapter = create_cms_adapter(config)
+        status = await adapter.validate_connection()
+        if not status.connected:
+            raise CMSError(status.error or "Failed to validate selected Webflow site")
+
+        export = getattr(adapter, "export_provider_config", None)
+        if callable(export):
+            exported = export()
+            if inspect.isawaitable(exported):
+                exported = await exported
+            if isinstance(exported, dict):
+                merged = {**merged, **exported}
+
+        connection.site_url = status.site_url or site_url
+        connection.site_name = status.site_name
+        connection.cms_version = status.cms_version
+        connection.user_display_name = status.user_display_name
+        connection.provider_config = merged
+        connection.last_validated_at = datetime.now(timezone.utc)
+        await self._connection_repo._session.flush()
+
+        return status.model_dump(mode="json")
+
+    async def register_webflow_webhook(
+        self,
+        connection: CMSConnectionModel,
+    ) -> str | None:
+        """Ensure a collection_item_changed webhook exists for incremental sync."""
+        if not self._webflow_webhook_public_url:
+            return None
+
+        wf_config = WebflowProviderConfig.from_provider_config(
+            connection.provider_config
+        )
+        site_id = wf_config.site_id
+        if not site_id:
+            return None
+
+        existing_id = str(wf_config.oauth_metadata.get("webhook_id") or "")
+        adapter = self._require_webflow_adapter(connection)
+        webhooks = await adapter._client.list_webhooks(site_id)
+        for hook in webhooks:
+            if str(hook.get("url") or "") == self._webflow_webhook_public_url:
+                hook_id = str(hook.get("id") or "")
+                if hook_id and hook_id != existing_id:
+                    wf_config.oauth_metadata["webhook_id"] = hook_id
+                    connection.provider_config = wf_config.to_provider_config()
+                    await self._connection_repo._session.flush()
+                return hook_id or existing_id
+
+        created = await adapter._client.create_webhook(
+            site_id,
+            trigger_type="collection_item_changed",
+            url=self._webflow_webhook_public_url,
+        )
+        hook_id = str(created.get("id") or "")
+        if hook_id:
+            wf_config.oauth_metadata["webhook_id"] = hook_id
+            connection.provider_config = wf_config.to_provider_config()
+            await self._connection_repo._session.flush()
+        return hook_id or None
+
+    def verify_incoming_webflow_webhook(
+        self,
+        *,
+        timestamp: str,
+        body: bytes,
+        signature: str,
+    ) -> bool:
+        if not self._webflow_oauth_client_secret:
+            return False
+        return verify_webflow_webhook_signature(
+            client_secret=self._webflow_oauth_client_secret,
+            timestamp=timestamp,
+            body=body,
+            signature=signature,
+        )
+
+    async def handle_webflow_webhook_event(
+        self,
+        event: dict[str, Any],
+    ) -> None:
+        """Apply incremental sync for a Webflow CMS webhook payload."""
+        trigger = str(event.get("triggerType") or "")
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            return
+
+        site_id = str(payload.get("siteId") or "")
+        collection_id = str(payload.get("collectionId") or "")
+        item_id = str(payload.get("id") or "")
+
+        connection = await self._connection_repo.get_active_by_webflow_site_id(
+            site_id
+        )
+        if connection is None:
+            logger.info("webflow.webhook_ignored_unknown_site", extra={"site_id": site_id})
+            return
+
+        wf_config = WebflowProviderConfig.from_provider_config(
+            connection.provider_config
+        )
+        enabled_ids = {
+            c.collection_id for c in wf_config.enabled_collections() if c.collection_id
+        }
+        if collection_id and enabled_ids and collection_id not in enabled_ids:
+            return
+
+        company_slug = connection.company_slug
+
+        if trigger == "collection_item_deleted" and item_id:
+            await self._synced_post_repo.delete_by_cms_post_id(
+                connection.id,
+                item_id,
+            )
+            return
+
+        if trigger not in {
+            "collection_item_created",
+            "collection_item_changed",
+            "collection_item_published",
+            "collection_item_unpublished",
+        }:
+            return
+
+        if not item_id:
+            return
+
+        adapter = self._reconstruct_adapter(connection)
+        try:
+            post = await adapter.get_post(item_id)
+        except CMSError:
+            logger.warning(
+                "webflow.webhook_item_fetch_failed",
+                extra={"item_id": item_id, "collection_id": collection_id},
+                exc_info=True,
+            )
+            return
+
+        await self._upsert_synced_post_from_cms(
+            company_slug=company_slug,
+            connection=connection,
+            post=post,
+        )
+
+    async def _upsert_synced_post_from_cms(
+        self,
+        *,
+        company_slug: str,
+        connection: CMSConnectionModel,
+        post: CMSPost,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        stale_threshold = now - timedelta(days=STALE_THRESHOLD_DAYS)
+        mod_at = post.modified_at
+        if mod_at is not None and mod_at.tzinfo is None:
+            mod_at = mod_at.replace(tzinfo=timezone.utc)
+        is_stale = mod_at is not None and mod_at < stale_threshold
+        staleness_days = (now - mod_at).days if mod_at else 0
+        preview = re.sub(r"<[^>]+>", "", post.content_html)[:500]
+
+        await self._synced_post_repo.upsert_from_cms(
+            connection_id=connection.id,
+            company_slug=company_slug,
+            cms_post_id=post.cms_id,
+            title=post.title,
+            slug=post.slug,
+            url=post.url,
+            excerpt=re.sub(r"<[^>]+>", "", post.excerpt)[:500],
+            content_preview=preview,
+            word_count=post.word_count,
+            published_at=post.published_at,
+            modified_at=post.modified_at,
+            categories=post.categories,
+            tags=post.tags,
+            seo_title=post.seo_title,
+            seo_description=post.seo_description,
+            is_stale=is_stale,
+            staleness_days=staleness_days,
+        )
+
     # ── Webflow configure (WF-2) ──────────────────────────────────
 
     def _require_webflow_adapter(
@@ -298,6 +674,11 @@ class CMSService:
         connection.provider_config = provider_config
         connection.last_validated_at = datetime.now(timezone.utc)
         await self._connection_repo._session.flush()
+
+        try:
+            await self.register_webflow_webhook(connection)
+        except Exception:
+            logger.warning("webflow.webhook_register_failed", exc_info=True)
 
         return {
             "configured": True,
@@ -472,6 +853,27 @@ class CMSService:
         content_html = self._markdown_to_html(final_md)
 
         adapter = self._reconstruct_adapter(connection)
+        featured_image_id: str | None = None
+        featured_image_url = ""
+        if (
+            normalized_publish_metadata.featured_image_url
+            and isinstance(adapter, WebflowAdapter)
+        ):
+            image_bytes, mime_type, filename = await self._fetch_public_image(
+                normalized_publish_metadata.featured_image_url,
+            )
+            if image_bytes:
+                media = await adapter.upload_media(
+                    CMSMediaUpload(
+                        filename=filename,
+                        content_bytes=image_bytes,
+                        mime_type=mime_type,
+                        alt_text=normalized_publish_metadata.featured_image_alt,
+                    )
+                )
+                featured_image_id = media.cms_id or None
+                featured_image_url = media.url
+
         post_create = CMSPostCreate(
             title=title,
             slug=slug,
@@ -480,6 +882,8 @@ class CMSService:
             status=CMSPostStatus(target_status),
             categories=category_names or [],
             tags=normalized_publish_metadata.tags,
+            featured_image_id=featured_image_id,
+            featured_image_url=featured_image_url,
             seo_title=normalized_publish_metadata.meta_title,
             seo_description=normalized_publish_metadata.meta_description,
             canonical_url=normalized_publish_metadata.canonical_url,
@@ -906,7 +1310,30 @@ class CMSService:
             publish_date=publish_metadata.publish_date or "",
             author=publish_metadata.author or "",
             tags=publish_metadata.tags or [],
+            featured_image_url=publish_metadata.featured_image_url or "",
+            featured_image_alt=publish_metadata.featured_image_alt or "",
         )
+
+    @staticmethod
+    async def _fetch_public_image(
+        url: str,
+    ) -> tuple[bytes, str, str]:
+        """Download a public image for CMS featured-image upload."""
+        import httpx
+        from pathlib import PurePosixPath
+        from urllib.parse import urlparse
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                resp = await client.get(url)
+            if resp.status_code >= 400:
+                return b"", "", ""
+            content_type = resp.headers.get("content-type", "image/png").split(";")[0]
+            path_name = PurePosixPath(urlparse(url).path).name or "featured.png"
+            return resp.content, content_type, path_name
+        except Exception:
+            logger.warning("cms.featured_image_fetch_failed", exc_info=True)
+            return b"", "", ""
 
     @staticmethod
     def _parse_publish_date(publish_date: str) -> datetime | None:

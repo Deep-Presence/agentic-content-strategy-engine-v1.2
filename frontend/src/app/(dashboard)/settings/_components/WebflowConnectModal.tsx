@@ -10,9 +10,12 @@ import type {
   WebflowCollectionSummaryAPI,
   WebflowConfigureRequestAPI,
   WebflowFieldMappingAPI,
+  WebflowSiteSummaryAPI,
+  WebflowSelectSiteRequestAPI,
 } from '../_lib/types';
 
-type Step = 'credentials' | 'collections' | 'mapping';
+type Step = 'credentials' | 'site' | 'collections' | 'mapping';
+type AuthMode = 'oauth' | 'token';
 
 const MAPPING_FIELDS: Array<{ key: keyof WebflowFieldMappingAPI; label: string; required?: boolean }> = [
   { key: 'title_field', label: 'Title' },
@@ -29,7 +32,11 @@ const MAPPING_FIELDS: Array<{ key: keyof WebflowFieldMappingAPI; label: string; 
 interface WebflowConnectModalProps {
   open: boolean;
   onClose: () => void;
+  oauthPendingSite?: boolean;
   onConnect: (body: CMSConnectRequestAPI) => Promise<{ success: boolean; error?: string }>;
+  onStartOAuth: () => Promise<void>;
+  onLoadSites: () => Promise<WebflowSiteSummaryAPI[]>;
+  onSelectSite: (body: WebflowSelectSiteRequestAPI) => Promise<{ success: boolean; error?: string }>;
   onLoadCollections: () => Promise<WebflowCollectionSummaryAPI[]>;
   onLoadCollectionFields: (collectionId: string) => Promise<WebflowCollectionFieldsAPI>;
   onConfigure: (body: WebflowConfigureRequestAPI) => Promise<{ success: boolean; error?: string }>;
@@ -46,15 +53,22 @@ interface SelectedCollection {
 export function WebflowConnectModal({
   open,
   onClose,
+  oauthPendingSite = false,
   onConnect,
+  onStartOAuth,
+  onLoadSites,
+  onSelectSite,
   onLoadCollections,
   onLoadCollectionFields,
   onConfigure,
 }: WebflowConnectModalProps) {
   const [step, setStep] = useState<Step>('credentials');
+  const [authMode, setAuthMode] = useState<AuthMode>('oauth');
   const [siteUrl, setSiteUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [siteId, setSiteId] = useState('');
+  const [sites, setSites] = useState<WebflowSiteSummaryAPI[]>([]);
+  const [selectedSiteId, setSelectedSiteId] = useState('');
   const [selected, setSelected] = useState<Record<string, SelectedCollection>>({});
   const [activeMappingId, setActiveMappingId] = useState('');
   const [isBusy, setIsBusy] = useState(false);
@@ -67,13 +81,70 @@ export function WebflowConnectModal({
 
   const resetState = useCallback(() => {
     setStep('credentials');
+    setAuthMode('oauth');
     setSiteUrl('');
     setApiKey('');
     setSiteId('');
+    setSites([]);
+    setSelectedSiteId('');
     setSelected({});
     setActiveMappingId('');
     setError(null);
   }, []);
+
+  const loadCollectionsStep = useCallback(async (resolvedSiteId: string) => {
+    const collections = await onLoadCollections();
+    if (collections.length === 0) {
+      setError('No CMS collections found on this Webflow site');
+      return false;
+    }
+
+    const nextSelected: Record<string, SelectedCollection> = {};
+    for (let index = 0; index < collections.length; index += 1) {
+      const summary = collections[index];
+      const fieldsResponse = await onLoadCollectionFields(summary.collection_id);
+      nextSelected[summary.collection_id] = {
+        summary,
+        enabled: index === 0,
+        isDefault: index === 0,
+        mapping: fieldsResponse.suggested_mapping,
+        fields: fieldsResponse.fields,
+      };
+    }
+
+    setSiteId(resolvedSiteId);
+    setSelected(nextSelected);
+    setActiveMappingId(collections[0]?.collection_id ?? '');
+    setStep('collections');
+    return true;
+  }, [onLoadCollectionFields, onLoadCollections]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!oauthPendingSite) return;
+
+    let cancelled = false;
+    setStep('site');
+    setAuthMode('oauth');
+    setIsBusy(true);
+    setError(null);
+
+    onLoadSites()
+      .then((loaded) => {
+        if (cancelled) return;
+        setSites(loaded);
+        setSelectedSiteId(loaded[0]?.site_id ?? '');
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : 'Failed to load Webflow sites');
+      })
+      .finally(() => {
+        if (!cancelled) setIsBusy(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [open, oauthPendingSite, onLoadSites]);
 
   const handleClose = useCallback(() => {
     if (isBusy) return;
@@ -84,6 +155,17 @@ export function WebflowConnectModal({
   useEffect(() => {
     if (!open) resetState();
   }, [open, resetState]);
+
+  const handleOAuthStart = useCallback(async () => {
+    setIsBusy(true);
+    setError(null);
+    try {
+      await onStartOAuth();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start Webflow OAuth');
+      setIsBusy(false);
+    }
+  }, [onStartOAuth]);
 
   const handleCredentialsNext = useCallback(async () => {
     if (!siteUrl || !apiKey) {
@@ -108,35 +190,43 @@ export function WebflowConnectModal({
     }
 
     try {
-      const collections = await onLoadCollections();
-      if (collections.length === 0) {
-        setError('No CMS collections found on this Webflow site');
-        setIsBusy(false);
-        return;
-      }
-
-      const nextSelected: Record<string, SelectedCollection> = {};
-      for (let index = 0; index < collections.length; index += 1) {
-        const summary = collections[index];
-        const fieldsResponse = await onLoadCollectionFields(summary.collection_id);
-        nextSelected[summary.collection_id] = {
-          summary,
-          enabled: index === 0,
-          isDefault: index === 0,
-          mapping: fieldsResponse.suggested_mapping,
-          fields: fieldsResponse.fields,
-        };
-      }
-
-      setSelected(nextSelected);
-      setActiveMappingId(collections[0]?.collection_id ?? '');
-      setStep('collections');
+      await loadCollectionsStep(siteId);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load Webflow collections');
     } finally {
       setIsBusy(false);
     }
-  }, [apiKey, onConnect, onLoadCollectionFields, onLoadCollections, siteUrl]);
+  }, [apiKey, loadCollectionsStep, onConnect, siteId, siteUrl]);
+
+  const handleSiteNext = useCallback(async () => {
+    if (!selectedSiteId) {
+      setError('Select a Webflow site');
+      return;
+    }
+
+    const site = sites.find((item) => item.site_id === selectedSiteId);
+    setIsBusy(true);
+    setError(null);
+
+    const selectResult = await onSelectSite({
+      site_id: selectedSiteId,
+      site_url: site?.preview_url ?? '',
+    });
+
+    if (!selectResult.success) {
+      setIsBusy(false);
+      setError(selectResult.error || 'Failed to select Webflow site');
+      return;
+    }
+
+    try {
+      await loadCollectionsStep(selectedSiteId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load Webflow collections');
+    } finally {
+      setIsBusy(false);
+    }
+  }, [loadCollectionsStep, onSelectSite, selectedSiteId, sites]);
 
   const handleCollectionsNext = useCallback(() => {
     if (enabledCollections.length === 0) {
@@ -254,23 +344,75 @@ export function WebflowConnectModal({
 
   const stepTitle = step === 'credentials'
     ? 'Connect Webflow'
-    : step === 'collections'
-      ? 'Select Collections'
-      : 'Map Fields';
+    : step === 'site'
+      ? 'Select Site'
+      : step === 'collections'
+        ? 'Select Collections'
+        : 'Map Fields';
+
+  const showSiteStep = authMode === 'oauth' || oauthPendingSite;
 
   return (
     <Modal open={open} onClose={handleClose} title={stepTitle} className="min-w-[520px] max-w-[640px]">
       <div className="space-y-4">
-        <div className="flex items-center gap-2 text-[11px] text-text-tertiary">
-          <span className={step === 'credentials' ? 'text-accent font-medium' : ''}>1. Token</span>
+        <div className="flex items-center gap-2 text-[11px] text-text-tertiary flex-wrap">
+          {!oauthPendingSite && (
+            <>
+              <span className={step === 'credentials' ? 'text-accent font-medium' : ''}>1. Connect</span>
+              <ChevronRight size={12} />
+            </>
+          )}
+          {showSiteStep && (
+            <>
+              <span className={step === 'site' ? 'text-accent font-medium' : ''}>
+                {oauthPendingSite ? '1. Site' : '2. Site'}
+              </span>
+              <ChevronRight size={12} />
+            </>
+          )}
+          <span className={step === 'collections' ? 'text-accent font-medium' : ''}>
+            {showSiteStep ? (oauthPendingSite ? '2. Collections' : '3. Collections') : '2. Collections'}
+          </span>
           <ChevronRight size={12} />
-          <span className={step === 'collections' ? 'text-accent font-medium' : ''}>2. Collections</span>
-          <ChevronRight size={12} />
-          <span className={step === 'mapping' ? 'text-accent font-medium' : ''}>3. Field Map</span>
+          <span className={step === 'mapping' ? 'text-accent font-medium' : ''}>
+            {showSiteStep ? (oauthPendingSite ? '3. Field Map' : '4. Field Map') : '3. Field Map'}
+          </span>
         </div>
 
         {step === 'credentials' && (
           <>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant={authMode === 'oauth' ? 'secondary' : 'ghost'}
+                size="sm"
+                onClick={() => setAuthMode('oauth')}
+                disabled={isBusy}
+              >
+                Connect with Webflow
+              </Button>
+              <Button
+                type="button"
+                variant={authMode === 'token' ? 'secondary' : 'ghost'}
+                size="sm"
+                onClick={() => setAuthMode('token')}
+                disabled={isBusy}
+              >
+                Site API Token
+              </Button>
+            </div>
+
+            {authMode === 'oauth' ? (
+              <div className="space-y-3">
+                <p className="text-[13px] text-text-secondary">
+                  Authorize Deep Presence in Webflow, then pick your site and CMS collections.
+                </p>
+                <Button onClick={handleOAuthStart} disabled={isBusy}>
+                  {isBusy ? 'Redirecting...' : 'Continue to Webflow'}
+                </Button>
+              </div>
+            ) : (
+              <>
             <div>
               <label className="text-[13px] font-medium text-text-secondary block mb-1.5">
                 Site URL
@@ -313,7 +455,41 @@ export function WebflowConnectModal({
                 className="text-[14px] h-[34px]"
               />
             </div>
+              </>
+            )}
           </>
+        )}
+
+        {step === 'site' && (
+          <div className="space-y-2 max-h-[320px] overflow-y-auto pr-1">
+            {sites.map((site) => (
+              <label
+                key={site.site_id}
+                className="flex items-start gap-3 border border-border rounded-md p-3 cursor-pointer hover:border-border-strong"
+              >
+                <input
+                  type="radio"
+                  name="webflow-site"
+                  checked={selectedSiteId === site.site_id}
+                  onChange={() => setSelectedSiteId(site.site_id)}
+                  className="mt-0.5 accent-[var(--accent)]"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="text-[13px] font-medium text-text-primary">
+                    {site.display_name}
+                  </div>
+                  {site.preview_url && (
+                    <div className="text-[11px] text-text-tertiary truncate">
+                      {site.preview_url}
+                    </div>
+                  )}
+                </div>
+              </label>
+            ))}
+            {sites.length === 0 && !isBusy && (
+              <p className="text-[13px] text-text-secondary">No Webflow sites found for this account.</p>
+            )}
+          </div>
         )}
 
         {step === 'collections' && (
@@ -410,10 +586,14 @@ export function WebflowConnectModal({
         )}
 
         <div className="flex items-center gap-2 pt-1">
-          {step !== 'credentials' && (
+          {step !== 'credentials' && !(oauthPendingSite && step === 'site') && (
             <Button
               variant="ghost"
-              onClick={() => setStep(step === 'mapping' ? 'collections' : 'credentials')}
+              onClick={() => {
+                if (step === 'mapping') setStep('collections');
+                else if (step === 'collections') setStep(showSiteStep ? 'site' : 'credentials');
+                else if (step === 'site') setStep('credentials');
+              }}
               disabled={isBusy}
             >
               <ChevronLeft size={14} className="mr-1" />
@@ -421,9 +601,14 @@ export function WebflowConnectModal({
             </Button>
           )}
           <div className="flex-1" />
-          {step === 'credentials' && (
+          {step === 'credentials' && authMode === 'token' && (
             <Button onClick={handleCredentialsNext} disabled={isBusy || !siteUrl || !apiKey}>
               {isBusy ? 'Connecting...' : 'Next'}
+            </Button>
+          )}
+          {step === 'site' && (
+            <Button onClick={handleSiteNext} disabled={isBusy || !selectedSiteId}>
+              {isBusy ? 'Loading collections...' : 'Next'}
             </Button>
           )}
           {step === 'collections' && (

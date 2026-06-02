@@ -17,6 +17,7 @@ from typing import Optional, Sequence
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.db.enums import CMSProvider
 from core.db.models.cms import (
     CMSConnectionModel,
     CMSPublishRecordModel,
@@ -71,6 +72,25 @@ class CMSConnectionRepository(SQLAlchemyRepository[CMSConnectionModel]):
                 CMSConnectionModel.company_slug == company_slug,
                 CMSConnectionModel.tenant_id == tenant_id,
                 CMSConnectionModel.is_active.is_(True),
+            )
+            .limit(1)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_active_by_webflow_site_id(
+        self,
+        site_id: str,
+    ) -> Optional[CMSConnectionModel]:
+        """Return active Webflow connection matching provider_config.site_id."""
+        if not site_id:
+            return None
+        stmt = (
+            select(CMSConnectionModel)
+            .where(
+                CMSConnectionModel.is_active.is_(True),
+                CMSConnectionModel.provider == CMSProvider.webflow,
+                CMSConnectionModel.provider_config["site_id"].as_string() == site_id,
             )
             .limit(1)
         )
@@ -208,6 +228,22 @@ class CMSSyncedPostRepository(SQLAlchemyRepository[CMSSyncedPostModel]):
             cms_post_id=cms_post_id,
             **kwargs,
         )
+
+    async def delete_by_cms_post_id(
+        self,
+        connection_id: _uuid.UUID,
+        cms_post_id: str,
+    ) -> bool:
+        """Remove a synced post row when Webflow deletes the CMS item."""
+        from sqlalchemy import delete
+
+        del_stmt = delete(CMSSyncedPostModel).where(
+            CMSSyncedPostModel.connection_id == connection_id,
+            CMSSyncedPostModel.cms_post_id == cms_post_id,
+        )
+        result = await self._session.execute(del_stmt)
+        await self._session.flush()
+        return result.rowcount > 0
 
     async def get_stale(
         self,

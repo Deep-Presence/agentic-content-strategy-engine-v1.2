@@ -110,6 +110,7 @@ class CMSPostCreate(BaseModel):
     categories: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     featured_image_id: str | None = None
+    featured_image_url: str = ""
     seo_title: str = ""
     seo_description: str = ""
     canonical_url: str = ""
@@ -146,6 +147,8 @@ class CMSPublishMetadata(BaseModel):
     publish_date: str = ""
     author: str = ""
     tags: list[str] = Field(default_factory=list)
+    featured_image_url: str = ""
+    featured_image_alt: str = ""
 
 
 # ── Categories ────────────────────────────────────────────────────────

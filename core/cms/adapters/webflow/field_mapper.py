@@ -102,6 +102,11 @@ def build_field_data_for_create(
         field_data[mapping.category_field] = post.categories[0]
     if mapping.tags_field and post.tags:
         field_data[mapping.tags_field] = post.tags
+    if mapping.featured_image_field and post.featured_image_id:
+        image_value: dict[str, str] = {"fileId": post.featured_image_id}
+        if post.featured_image_url:
+            image_value["url"] = post.featured_image_url
+        field_data[mapping.featured_image_field] = image_value
     return field_data
 
 

@@ -1,6 +1,7 @@
 """Async HTTP client for Webflow Data API v2."""
 from __future__ import annotations
 
+import hashlib
 import logging
 from datetime import datetime
 from typing import Any
@@ -258,3 +259,84 @@ class WebflowClient:
             json_body={"fileName": file_name, "fileHash": file_hash},
         )
         return result if isinstance(result, dict) else {}
+
+    async def upload_asset_bytes(
+        self,
+        site_id: str,
+        *,
+        file_name: str,
+        content_bytes: bytes,
+        mime_type: str = "image/png",
+    ) -> dict[str, Any]:
+        """Two-step asset upload: announce to Webflow, then POST binary to S3."""
+        file_hash = hashlib.md5(content_bytes).hexdigest()
+        meta = await self.create_asset(
+            site_id,
+            file_name=file_name,
+            file_hash=file_hash,
+        )
+        upload_url = str(meta.get("uploadUrl") or "")
+        upload_details = meta.get("uploadDetails")
+        if not upload_url or not isinstance(upload_details, dict):
+            raise CMSAPIError("Webflow asset upload metadata missing uploadUrl")
+
+        form_fields: dict[str, str] = {}
+        for key, value in upload_details.items():
+            if value is not None and key != "uploadUrl":
+                form_fields[key] = str(value)
+
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            try:
+                resp = await client.post(
+                    upload_url,
+                    data=form_fields,
+                    files={"file": (file_name, content_bytes, mime_type)},
+                )
+            except httpx.ConnectError as exc:
+                raise CMSConnectionError(
+                    f"Cannot reach Webflow asset upload URL: {exc}"
+                ) from exc
+            except httpx.TimeoutException as exc:
+                raise CMSConnectionError(
+                    f"Webflow asset upload timeout: {exc}"
+                ) from exc
+
+        if resp.status_code >= 400:
+            raise CMSAPIError(
+                f"Webflow asset binary upload failed ({resp.status_code}): "
+                f"{resp.text[:300]}"
+            )
+
+        asset_url = str(meta.get("hostedUrl") or meta.get("url") or "")
+        asset_id = str(meta.get("id") or "")
+        return {
+            "id": asset_id,
+            "url": asset_url,
+            "fileName": file_name,
+            "raw": meta,
+        }
+
+    async def create_webhook(
+        self,
+        site_id: str,
+        *,
+        trigger_type: str,
+        url: str,
+    ) -> dict[str, Any]:
+        result = await self.request(
+            "POST",
+            f"/sites/{site_id}/webhooks",
+            json_body={"triggerType": trigger_type, "url": url},
+        )
+        return result if isinstance(result, dict) else {}
+
+    async def list_webhooks(self, site_id: str) -> list[dict[str, Any]]:
+        result = await self.request("GET", f"/sites/{site_id}/webhooks")
+        if isinstance(result, dict):
+            webhooks = result.get("webhooks")
+            if isinstance(webhooks, list):
+                return [w for w in webhooks if isinstance(w, dict)]
+        return []
+
+    async def delete_webhook(self, site_id: str, webhook_id: str) -> None:
+        await self.request("DELETE", f"/sites/{site_id}/webhooks/{webhook_id}")

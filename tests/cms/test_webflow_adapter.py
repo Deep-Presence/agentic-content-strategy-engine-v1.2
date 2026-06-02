@@ -253,3 +253,60 @@ class TestProtocol:
     def test_satisfies_protocol(self) -> None:
         adapter = _make_adapter({})
         assert isinstance(adapter, CMSAdapterProtocol)
+
+
+class TestUploadMedia:
+    @pytest.mark.asyncio
+    async def test_upload_media_returns_asset(self) -> None:
+        responses = {
+            ("POST", "/assets"): (
+                200,
+                {
+                    "id": "asset-1",
+                    "uploadUrl": "https://uploads.example/s3",
+                    "hostedUrl": "https://cdn.example/image.png",
+                    "uploadDetails": {
+                        "acl": "public-read",
+                        "bucket": "wf-assets",
+                        "key": "asset-key",
+                    },
+                },
+                None,
+            ),
+        }
+        adapter = _make_adapter(responses)
+
+        async def s3_handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(201, json={"ok": True})
+
+        adapter._client._transport = httpx.MockTransport(s3_handler)
+        # Patch upload URL client separately — upload_asset_bytes uses its own client
+        original_upload = adapter._client.upload_asset_bytes
+
+        async def fake_upload(
+            site_id: str,
+            *,
+            file_name: str,
+            content_bytes: bytes,
+            mime_type: str = "image/png",
+        ) -> dict[str, Any]:
+            return {
+                "id": "asset-1",
+                "url": "https://cdn.example/image.png",
+                "fileName": file_name,
+            }
+
+        adapter._client.upload_asset_bytes = fake_upload  # type: ignore[method-assign]
+
+        from core.cms.models import CMSMediaUpload
+
+        result = await adapter.upload_media(
+            CMSMediaUpload(
+                filename="hero.png",
+                content_bytes=b"fake-image-bytes",
+                mime_type="image/png",
+            )
+        )
+        assert result.cms_id == "asset-1"
+        assert result.url == "https://cdn.example/image.png"
+        adapter._client.upload_asset_bytes = original_upload  # type: ignore[method-assign]

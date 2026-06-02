@@ -10,6 +10,9 @@ import {
   disconnectCMS,
   fetchWebflowCollections,
   fetchWebflowCollectionFields,
+  fetchWebflowSites,
+  selectWebflowSite,
+  startWebflowOAuth,
   configureWebflow,
   fetchGA4Connection,
   startGA4OAuth,
@@ -25,6 +28,8 @@ import type {
   WebflowCollectionFieldsAPI,
   WebflowCollectionSummaryAPI,
   WebflowConfigureRequestAPI,
+  WebflowSiteSummaryAPI,
+  WebflowSelectSiteRequestAPI,
   GA4ConnectionResponseAPI,
   GA4PropertyItemAPI,
   GA4SelectPropertyRequestAPI,
@@ -46,6 +51,9 @@ interface UseIntegrationsDataReturn {
   loadWebflowCollections: () => Promise<WebflowCollectionSummaryAPI[]>;
   loadWebflowCollectionFields: (collectionId: string) => Promise<WebflowCollectionFieldsAPI>;
   saveWebflowConfiguration: (body: WebflowConfigureRequestAPI) => Promise<{ success: boolean; error?: string }>;
+  startWebflowConnect: () => Promise<void>;
+  loadWebflowSites: () => Promise<WebflowSiteSummaryAPI[]>;
+  selectWebflowSite: (body: WebflowSelectSiteRequestAPI) => Promise<{ success: boolean; error?: string }>;
   /** @deprecated Use disconnectCMSConnection */
   disconnectWordPress: () => Promise<void>;
   // GA4 mutations
@@ -159,11 +167,13 @@ export function useIntegrationsData(): UseIntegrationsDataReturn {
 
     // Clean up OAuth redirect params from URL
     const analyticsConnected = searchParams.get('analytics_connected');
+    const webflowConnected = searchParams.get('webflow_connected');
     const oauthError = searchParams.get('error');
-    if (analyticsConnected || oauthError) {
+    if (analyticsConnected || webflowConnected || oauthError) {
       // Remove query params without triggering navigation
       const url = new URL(window.location.href);
       url.searchParams.delete('analytics_connected');
+      url.searchParams.delete('webflow_connected');
       url.searchParams.delete('error');
       // Preserve the tab param
       router.replace(url.pathname + url.search, { scroll: false });
@@ -236,6 +246,36 @@ export function useIntegrationsData(): UseIntegrationsDataReturn {
       return { success: true };
     } catch (err) {
       const msg = err instanceof ApiError ? err.detail : 'Failed to save Webflow configuration';
+      setError(msg);
+      return { success: false, error: msg };
+    }
+  }, [refetch]);
+
+  const startWebflowConnect = useCallback(async () => {
+    try {
+      const returnUrl = window.location.href;
+      const res = await startWebflowOAuth(returnUrl);
+      window.location.href = res.authorization_url;
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.detail : 'Failed to start Webflow connection';
+      setError(msg);
+    }
+  }, []);
+
+  const loadWebflowSites = useCallback(async () => {
+    return fetchWebflowSites();
+  }, []);
+
+  const selectWebflowSiteMutation = useCallback(async (body: WebflowSelectSiteRequestAPI) => {
+    try {
+      const res = await selectWebflowSite(body);
+      if (res.connected) {
+        refetch();
+        return { success: true };
+      }
+      return { success: false, error: res.error || 'Failed to select Webflow site' };
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.detail : 'Failed to select Webflow site';
       setError(msg);
       return { success: false, error: msg };
     }
@@ -317,6 +357,9 @@ export function useIntegrationsData(): UseIntegrationsDataReturn {
     loadWebflowCollections,
     loadWebflowCollectionFields,
     saveWebflowConfiguration,
+    startWebflowConnect,
+    loadWebflowSites,
+    selectWebflowSite: selectWebflowSiteMutation,
     disconnectWordPress,
     startGA4Connect,
     disconnectGA4Connection,

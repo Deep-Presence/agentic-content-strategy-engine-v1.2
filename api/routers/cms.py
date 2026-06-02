@@ -25,7 +25,8 @@ import asyncio
 import logging
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import RedirectResponse
 
 from core.services.cms_cache import (
     get_cached_connection_info,
@@ -54,6 +55,10 @@ from api.schemas.cms import (
     WebflowCollectionSummary,
     WebflowConfigureRequest,
     WebflowConfigureResponse,
+    WebflowAuthorizeResponse,
+    WebflowSiteSummary,
+    WebflowSelectSiteRequest,
+    WebflowSelectSiteResponse,
     WebflowFieldSchemaItem,
     WebflowFieldMappingResponse,
 )
@@ -690,3 +695,154 @@ async def configure_webflow(
         provider_config=result["provider_config"],
         sync_task_id=sync_task_id,
     )
+
+
+# ── 15–18. Webflow OAuth + webhooks (WF-5) ──────────────────────────
+
+
+def _append_param(url: str, param: str) -> str:
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}{param}"
+
+
+@router.get("/webflow/authorize", response_model=WebflowAuthorizeResponse)
+async def webflow_authorize(
+    http_request: Request,
+    return_url: str = Query(default="", description="URL to redirect after OAuth"),
+    company_slug: str = Depends(get_workspace_read_slug),
+    _user: UserProfile = Depends(require_auth),
+    cms_service: Any = Depends(get_cms_service),
+) -> WebflowAuthorizeResponse:
+    """Generate Webflow OAuth consent URL."""
+    secret_key = http_request.app.state.secret_key
+    try:
+        url = cms_service.generate_webflow_authorize_url(
+            secret_key=secret_key,
+            company_slug=company_slug,
+            return_url=return_url,
+        )
+    except CMSError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return WebflowAuthorizeResponse(authorization_url=url)
+
+
+@router.get("/webflow/callback", include_in_schema=False)
+async def webflow_oauth_callback(
+    http_request: Request,
+    code: str = Query(...),
+    state: str = Query(...),
+    cms_service: Any = Depends(get_cms_service),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
+) -> RedirectResponse:
+    """Handle Webflow OAuth redirect — exchange code and store connection."""
+    from core.services.cms_service import CMSService
+
+    secret_key = http_request.app.state.secret_key
+    state_payload = CMSService.verify_webflow_oauth_state(secret_key, state)
+    base_url = cms_service.webflow_oauth_frontend_settings_url
+
+    if state_payload is None:
+        return RedirectResponse(url=_append_param(base_url, "error=invalid_state"))
+
+    company_slug = state_payload["company_slug"]
+    raw_return_url = state_payload.get("return_url") or ""
+
+    from urllib.parse import urlparse
+
+    allowed_origin = urlparse(base_url).netloc
+    parsed_return = urlparse(raw_return_url)
+    if raw_return_url and parsed_return.netloc == allowed_origin:
+        return_url = raw_return_url
+    else:
+        return_url = base_url
+
+    company = await auth_service.get_company_by_slug(company_slug)
+    if company is None:
+        return RedirectResponse(url=_append_param(return_url, "error=company_not_found"))
+
+    try:
+        await cms_service.exchange_webflow_code_and_store(
+            code=code,
+            company_id=str(company.id),
+            company_slug=company_slug,
+            tenant_id=company_slug,
+        )
+    except Exception as exc:
+        logger.exception("Webflow OAuth callback failed for %s: %s", company_slug, exc)
+        return RedirectResponse(url=_append_param(return_url, "error=webflow_oauth_failed"))
+
+    await asyncio.to_thread(invalidate_connection_info, company_slug, company_slug)
+    return RedirectResponse(url=_append_param(return_url, "webflow_connected=true"))
+
+
+@router.get("/webflow/sites", response_model=list[WebflowSiteSummary])
+async def list_webflow_sites(
+    company_slug: str = Depends(get_workspace_read_slug),
+    _user: UserProfile = Depends(require_auth),
+    cms_service: Any = Depends(get_cms_service),
+) -> list[WebflowSiteSummary]:
+    """List Webflow sites for OAuth or token connections."""
+    connection = await _require_webflow_connection(cms_service, company_slug)
+    try:
+        sites = await cms_service.list_webflow_sites(connection)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except CMSError as exc:
+        raise _handle_cms_error(exc)
+    return [WebflowSiteSummary(**s) for s in sites]
+
+
+@router.post("/webflow/select-site", response_model=WebflowSelectSiteResponse)
+async def select_webflow_site(
+    body: WebflowSelectSiteRequest,
+    company_slug: str = Depends(get_workspace_write_slug),
+    _user: UserProfile = Depends(require_auth),
+    cms_service: Any = Depends(get_cms_service),
+) -> WebflowSelectSiteResponse:
+    """Bind a Webflow OAuth connection to a specific site."""
+    connection = await _require_webflow_connection(cms_service, company_slug)
+    try:
+        result = await cms_service.select_webflow_site(
+            company_slug,
+            company_slug,
+            connection,
+            site_id=body.site_id,
+            site_url=body.site_url,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except CMSError as exc:
+        raise _handle_cms_error(exc)
+
+    await asyncio.to_thread(invalidate_connection_info, company_slug, company_slug)
+    return WebflowSelectSiteResponse(**result)
+
+
+@router.post("/webflow/webhook", include_in_schema=False)
+async def webflow_webhook(
+    http_request: Request,
+    cms_service: Any = Depends(get_cms_service),
+) -> dict[str, str]:
+    """Public Webflow webhook receiver for incremental CMS sync."""
+    body = await http_request.body()
+    signature = http_request.headers.get("x-webflow-signature", "")
+    timestamp = http_request.headers.get("x-webflow-timestamp", "")
+
+    if not cms_service.verify_incoming_webflow_webhook(
+        timestamp=timestamp,
+        body=body,
+        signature=signature,
+    ):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+    try:
+        import json
+
+        event = json.loads(body.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
+
+    if isinstance(event, dict):
+        await cms_service.handle_webflow_webhook_event(event)
+
+    return {"status": "ok"}

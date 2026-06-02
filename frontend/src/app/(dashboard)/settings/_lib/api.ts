@@ -12,6 +12,9 @@ import type {
   WebflowCollectionSummaryAPI,
   WebflowConfigureRequestAPI,
   WebflowConfigureResponseAPI,
+  WebflowAuthorizeResponseAPI,
+  WebflowSiteSummaryAPI,
+  WebflowSelectSiteRequestAPI,
   GA4AuthorizeResponseAPI,
   GA4ConnectionResponseAPI,
   GA4PropertiesResponseAPI,
@@ -117,6 +120,35 @@ export function configureWebflow(
 ): Promise<WebflowConfigureResponseAPI> {
   return api.post<WebflowConfigureResponseAPI>(
     '/api/v1/cms/webflow/configure',
+    body,
+    { params: workspaceQueryParams() },
+  );
+}
+
+export function startWebflowOAuth(
+  returnUrl: string,
+): Promise<WebflowAuthorizeResponseAPI> {
+  return api.get<WebflowAuthorizeResponseAPI>(
+    '/api/v1/cms/webflow/authorize',
+    workspaceQueryParams({ return_url: returnUrl }),
+  );
+}
+
+export function fetchWebflowSites(
+  signal?: AbortSignal,
+): Promise<WebflowSiteSummaryAPI[]> {
+  return api.get<WebflowSiteSummaryAPI[]>(
+    '/api/v1/cms/webflow/sites',
+    workspaceQueryParams(),
+    signal,
+  );
+}
+
+export function selectWebflowSite(
+  body: WebflowSelectSiteRequestAPI,
+): Promise<WebflowSelectSiteResponseAPI> {
+  return api.post<WebflowSelectSiteResponseAPI>(
+    '/api/v1/cms/webflow/select-site',
     body,
     { params: workspaceQueryParams() },
   );

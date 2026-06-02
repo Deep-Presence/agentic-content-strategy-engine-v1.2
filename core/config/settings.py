@@ -275,6 +275,11 @@ class Settings(BaseSettings):
     # --- CMS Integration ---
     cms_fernet_key: str | None = None  # Fernet symmetric encryption key for CMS credentials
     auto_prompt_max_pages: int = 50  # Max pages to auto-generate prompts for per CMS sync
+    webflow_oauth_client_id: str | None = None
+    webflow_oauth_client_secret: str | None = None
+    webflow_oauth_redirect_uri: str = "http://localhost:8000/api/v1/cms/webflow/callback"
+    webflow_oauth_frontend_settings_url: str = "http://localhost:3000/settings?tab=integrations"
+    webflow_webhook_public_url: str = "http://localhost:8000/api/v1/cms/webflow/webhook"
 
     # --- Google Analytics (GA4) Integration ---
     google_oauth_client_id: str | None = None

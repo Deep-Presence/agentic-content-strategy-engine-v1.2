@@ -20,7 +20,17 @@ export function getWebflowCollections(
 }
 
 export function isWebflowConfigured(connection: CMSConnectionInfoAPI | null): boolean {
+  if (isWebflowOAuthPendingSite(connection)) return false;
   return getWebflowCollections(connection).some((c) => c.enabled !== false && c.collection_id);
+}
+
+export function isWebflowOAuthPendingSite(
+  connection: CMSConnectionInfoAPI | null,
+): boolean {
+  if (!connection || connection.provider !== 'webflow') return false;
+  const authKind = connection.provider_config?.auth_kind;
+  const siteId = connection.provider_config?.site_id;
+  return authKind === 'oauth' && !siteId;
 }
 
 export function getEnabledWebflowCollections(
