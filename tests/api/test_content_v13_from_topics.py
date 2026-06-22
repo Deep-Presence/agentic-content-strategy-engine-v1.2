@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from tests._support.model_config_service import FailingModelConfigService
 
 # Fixed UUIDs for test fixtures (M2 fix requires valid UUIDs)
 _TA_1 = str(uuid.uuid5(uuid.NAMESPACE_DNS, "ta-1"))
@@ -198,6 +199,32 @@ class TestStartFromTopics:
         assert data["status"] == "started"
         assert data["entry_mode"] == "topic_discovery"
         assert "run_id" in data
+
+    def test_missing_byok_config_blocks_start_before_task_creation(self, client: TestClient):
+        service = FailingModelConfigService()
+        client.app.state.model_config_service = service
+
+        with patch(
+            "api.routers.content_v13.create_task_durable",
+            new_callable=AsyncMock,
+        ) as create_task:
+            resp = client.post(
+                "/api/v1/content/v13/from-topics",
+                json={
+                    "company_name": "Test Co",
+                    "domain": "testco.com",
+                    "effective_slug": "test-co",
+                    "topic_assignment_ids": [_TA_1],
+                },
+            )
+
+        assert resp.status_code == 400
+        detail = resp.json()["detail"]
+        assert detail["code"] == "byok_model_config_required"
+        assert detail["missing_credential"] is True
+        assert "content.brief_builder" in detail["required_agent_keys"]
+        assert "content.brief_builder" in service.preflight_calls[0][1]
+        create_task.assert_not_awaited()
 
     def test_tenant_isolation_403(self, client: TestClient):
         resp = client.post(

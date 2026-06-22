@@ -18,7 +18,13 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from api.auth.dependencies import require_auth
-from api.dependencies import get_auth_service, get_event_bus, get_task_store, get_workspace_service
+from api.dependencies import (
+    get_auth_service,
+    get_event_bus,
+    get_model_config_service,
+    get_task_store,
+    get_workspace_service,
+)
 from api.schemas.content_v13 import (
     ApprovalResponseV13,
     BriefApprovalRequest,
@@ -58,6 +64,8 @@ from core.content_engine.utils import truncate_to_token_limit
 from core.models.content_generation_v13 import ContentGenerationInputV13, EntryMode
 from core.models.organization import UserProfile
 from core.audit import log_hitl_decision, log_pipeline_launch
+from core.model_config.agent_catalog import required_agents_for_pipeline
+from core.model_config.service import ModelConfigService
 from core.services.task_store import ApprovalWindowError, TaskStoreProtocol
 from core.services.workspace_protocol import WorkspaceServiceProtocol
 
@@ -67,6 +75,10 @@ router = APIRouter(prefix="/api/v1/content/v13", tags=["content-v13"])
 
 _SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*(__[a-z0-9][a-z0-9-]*)?$")
 _TD_PRODUCTION_QUEUE_CONFLICT_STATES = frozenset({"content_queued", "briefing"})
+_CONTENT_AGENT_KEYS = [
+    definition.agent_key
+    for definition in required_agents_for_pipeline("content")
+]
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +149,26 @@ async def _try_create_td_batch_records(
             exc_info=True,
         )
         return None, []
+
+
+async def _preflight_content_model_config(
+    model_config_service: ModelConfigService,
+    workspace_id: str,
+) -> None:
+    """Fail closed before launching content agents without workspace BYOK config."""
+    result = await model_config_service.preflight(workspace_id, _CONTENT_AGENT_KEYS)
+    if result.ok:
+        return
+
+    detail = result.model_dump(mode="json")
+    detail.update(
+        {
+            "code": "byok_model_config_required",
+            "message": "Configure an active OpenRouter key before launching content generation.",
+            "required_agent_keys": _CONTENT_AGENT_KEYS,
+        }
+    )
+    raise HTTPException(status_code=400, detail=detail)
 
 
 def _validate_approval_window(
@@ -237,6 +269,7 @@ async def start_content_v13(
     event_bus: EventBusProtocol = Depends(get_event_bus),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
     workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
+    model_config_service: ModelConfigService = Depends(get_model_config_service),
 ) -> PipelineRunResponseV13:
     """Launch the v1.3 content generation pipeline."""
     workspace_scope = await resolve_workspace_scope(
@@ -249,6 +282,10 @@ async def start_content_v13(
         min_roles=("owner", "admin", "member"),
     )
     company_slug = workspace_scope.workspace_slug
+    await _preflight_content_model_config(
+        model_config_service,
+        workspace_scope.workspace_id,
+    )
 
     scope = await _resolve_scope_async(company_slug, body.product_slug, auth_service)
 
@@ -843,6 +880,7 @@ async def start_from_topics(
     event_bus: EventBusProtocol = Depends(get_event_bus),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
     workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
+    model_config_service: ModelConfigService = Depends(get_model_config_service),
 ) -> PipelineRunResponseV13:
     """Launch the TD → GA → CE pipeline for approved topic assignments."""
     # Validate effective_slug format
@@ -859,6 +897,10 @@ async def start_from_topics(
         min_roles=("owner", "admin", "member"),
     )
     company_slug = workspace_scope.workspace_slug
+    await _preflight_content_model_config(
+        model_config_service,
+        workspace_scope.workspace_id,
+    )
 
     # Create task
     task = await create_task_durable(
@@ -1019,6 +1061,7 @@ async def start_from_topics_production(
     event_bus: EventBusProtocol = Depends(get_event_bus),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
     workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
+    model_config_service: ModelConfigService = Depends(get_model_config_service),
 ) -> PipelineRunResponseV13:
     """Launch Content Engine production from pre-computed GA results (Phase 2).
 
@@ -1038,6 +1081,10 @@ async def start_from_topics_production(
         min_roles=("owner", "admin", "member"),
     )
     company_slug = workspace_scope.workspace_slug
+    await _preflight_content_model_config(
+        model_config_service,
+        workspace_scope.workspace_id,
+    )
 
     # Validate that the GA run analysis.json exists
     from core.storage import get_storage_backend

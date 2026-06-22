@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from tests._support.model_config_service import FailingModelConfigService
 
 
 # Fixed UUIDs for test fixtures
@@ -343,6 +344,30 @@ class TestStartFromTopicsProduction:
         assert data["run_id"] == "task-123"
         assert data["topic_runs"][0]["pipeline_task_id"] == "task-123"
         assert data["topic_runs"][0]["topic_assignment_id"] == _TA_1
+
+    def test_missing_byok_config_blocks_start_before_storage_check(self, client: TestClient):
+        service = FailingModelConfigService()
+        client.app.state.model_config_service = service
+
+        with patch("core.storage.get_storage_backend") as get_storage_backend:
+            resp = client.post(
+                "/api/v1/content/v13/from-topics/start-production",
+                json={
+                    "company_name": "Test Co",
+                    "domain": "testco.com",
+                    "effective_slug": "test-co",
+                    "topic_assignment_ids": [_TA_1],
+                    "ga_run_id": _GA_RUN_ID,
+                },
+            )
+
+        assert resp.status_code == 400
+        detail = resp.json()["detail"]
+        assert detail["code"] == "byok_model_config_required"
+        assert detail["missing_credential"] is True
+        assert "content.brief_builder" in detail["required_agent_keys"]
+        assert "content.brief_builder" in service.preflight_calls[0][1]
+        get_storage_backend.assert_not_called()
 
     def test_missing_analysis_404(self, client: TestClient):
         """Missing analysis.json → 404."""

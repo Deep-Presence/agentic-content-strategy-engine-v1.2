@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.tasks.models import TaskStatus
+from tests._support.model_config_service import FailingModelConfigService
 
 
 def _make_pending_task(task_store, stage: str, brief_id: str | None = None):
@@ -79,6 +80,32 @@ class TestStartContentV13:
         assert data["status"] == "started"
         assert data["entry_mode"] == "autonomous"
         assert "run_id" in data
+
+    def test_missing_byok_config_blocks_start_before_task_creation(self, client: TestClient):
+        service = FailingModelConfigService()
+        client.app.state.model_config_service = service
+
+        with patch(
+            "api.routers.content_v13.create_task_durable",
+            new_callable=AsyncMock,
+        ) as create_task:
+            resp = client.post(
+                "/api/v1/content/v13/start",
+                json={
+                    "company_name": "Test Co",
+                    "domain": "testco.com",
+                    "entry_mode": "autonomous",
+                },
+            )
+
+        assert resp.status_code == 400
+        detail = resp.json()["detail"]
+        assert detail["code"] == "byok_model_config_required"
+        assert detail["missing_credential"] is True
+        assert "missing_credential" in detail["errors"]
+        assert "content.brief_builder" in detail["required_agent_keys"]
+        assert "content.brief_builder" in service.preflight_calls[0][1]
+        create_task.assert_not_awaited()
 
     def test_manual_mode(self, client: TestClient):
         with patch("api.routers.content_v13.asyncio.create_task", return_value=MagicMock()):
