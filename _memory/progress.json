@@ -1,9 +1,9 @@
 {
   "current_sprint": "feat/byok-only-model-config",
-  "last_updated": "2026-06-22T22:42:57Z",
+  "last_updated": "2026-06-22T23:06:13Z",
   "test_count": 2162,
   "completed_sprints_summary": {
-    "total_tasks_completed": 53,
+    "total_tasks_completed": 54,
     "sprints": [
       {
         "sprint": "feat/workspace-backend",
@@ -303,6 +303,23 @@
     ]
   },
   "completed": [
+    {
+      "id": "T-byok-topic-discovery-source-c-deep-research",
+      "task": "BYOK Topic Discovery Source C deep research — Source C now resolves `topic_discovery.source_c_deep_research` and passes the workspace OpenRouter key/base URL/model/timeout into the shared Perplexity helper instead of relying on the platform OpenRouter key.",
+      "sprint": "feat/byok-only-model-config",
+      "status": "done",
+      "completed_at": "2026-06-23",
+      "tests_added": 4,
+      "files_modified": [
+        "core/research/tools/perplexity_client.py",
+        "core/topic_discovery/agents.py",
+        "core/topic_discovery/pipeline.py",
+        "tests/research/tools/test_perplexity_client.py",
+        "tests/topic_discovery/test_agents_td.py",
+        "tests/topic_discovery/test_pipeline_td.py"
+      ],
+      "validation": "venv/bin/python -m pytest tests/research/tools/test_perplexity_client.py tests/topic_discovery/test_agents_td.py tests/topic_discovery/test_pipeline_td.py -q (192 passed); shared Perplexity helper compatibility suite for KB/AP/VSG agents (118 passed, 10 pre-existing warnings); git diff --check; py_compile on changed runtime modules"
+    },
     {
       "id": "T-byok-topic-discovery-chat-completions",
       "task": "BYOK Topic Discovery chat completions — workspace-scoped model config now routes Source A/B/D, hierarchy/unified scoring, relevance filtering, legacy topic generation, and subdomain expansion through the workspace OpenRouter credential when workspace context is present.",

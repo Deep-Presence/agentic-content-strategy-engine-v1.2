@@ -656,6 +656,8 @@ async def run_source_c_deep_research(
     revision_note: Optional[str] = None,
     parent_span: Optional[Any] = None,
     company_slug: str = "",
+    workspace_id: str = "",
+    workspace_slug: str = "",
 ) -> SourceResult:
     """Source C: Deep research competitive content landscape via Perplexity."""
     from core.research.tools import perplexity_client
@@ -675,6 +677,16 @@ async def run_source_c_deep_research(
     span = create_span(parent_span, "td-source-c", input_data={"domain": domain, "model": model})
 
     try:
+        resolved = None
+        if workspace_id:
+            resolved = await _resolve_model_config_for_agent(
+                workspace_id=workspace_id,
+                workspace_slug=workspace_slug or company_slug,
+                agent_key="topic_discovery.source_c_deep_research",
+            )
+            model = resolved.model
+            timeout_s = resolved.timeout_s or timeout_s
+
         system_prompt = get_source_c_system_prompt()
         user_prompt = build_source_c_user_prompt(
             company_context, competitor_landscape, domain,
@@ -688,6 +700,17 @@ async def run_source_c_deep_research(
                 query=full_prompt,
                 timeout_s=timeout_s,
                 model=model,
+                pipeline="topic_discovery",
+                pipeline_step="source_c",
+                company_slug=company_slug,
+                api_key=resolved.api_key if resolved is not None else None,
+                base_url=resolved.base_url if resolved is not None else None,
+                workspace_id=workspace_id if resolved is not None else None,
+                agent_key=resolved.agent_key if resolved is not None else "",
+                credential_id=resolved.credential_id if resolved is not None else None,
+                model_config_id=resolved.model_config_id if resolved is not None else None,
+                actual_provider=_actual_provider(model) if resolved is not None else "",
+                workspace_billed=resolved is not None,
             ),
             timeout=timeout_s,
         )

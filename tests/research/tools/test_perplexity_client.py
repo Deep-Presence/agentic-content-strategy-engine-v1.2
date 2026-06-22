@@ -33,6 +33,23 @@ class TestClient:
                 max_retries=0,
             )
 
+    def test_creates_openai_client_with_explicit_workspace_key(self):
+        with patch.object(perplexity_client, "settings") as mock_settings, \
+             patch.object(perplexity_client.openai, "OpenAI") as mock_cls:
+            mock_settings.openrouter_api_key = None
+            mock_settings.openrouter_base_url = "https://platform.invalid"
+            perplexity_client._client(
+                timeout_s=120.0,
+                api_key="sk-workspace",
+                base_url="https://openrouter.workspace/api/v1",
+            )
+            mock_cls.assert_called_once_with(
+                base_url="https://openrouter.workspace/api/v1",
+                api_key="sk-workspace",
+                timeout=120.0,
+                max_retries=0,
+            )
+
 
 # ---------------------------------------------------------------------------
 # research() tests
@@ -293,6 +310,34 @@ class TestResearchCostTracking:
         assert kw["pipeline"] == "knowledge_base"
         assert kw["pipeline_step"] == "kb1_overview"
         assert kw["company_slug"] == "test-co"
+
+    def test_cost_tracked_with_byok_metadata(self):
+        completion = self._make_completion()
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = completion
+
+        with patch.object(perplexity_client, "_client", return_value=mock_client), \
+             patch.object(perplexity_client, "settings") as ms, \
+             patch("core.shared_tools.cost_tracker.track_llm_cost") as mock_track:
+            ms.perplexity_deep_research_model = "sonar-deep-research"
+            perplexity_client.research(
+                "test query",
+                api_key="sk-workspace",
+                base_url="https://openrouter.workspace/api/v1",
+                workspace_id="ws-123",
+                agent_key="topic_discovery.source_c_deep_research",
+                credential_id="cred-123",
+                model_config_id="cfg-123",
+                workspace_billed=True,
+            )
+
+        kw = mock_track.call_args[1]
+        assert kw["workspace_id"] == "ws-123"
+        assert kw["agent_key"] == "topic_discovery.source_c_deep_research"
+        assert kw["credential_id"] == "cred-123"
+        assert kw["model_config_id"] == "cfg-123"
+        assert kw["actual_provider"] == "perplexity"
+        assert kw["workspace_billed"] is True
 
     def test_cost_tracked_with_missing_usage(self):
         completion = self._make_completion()

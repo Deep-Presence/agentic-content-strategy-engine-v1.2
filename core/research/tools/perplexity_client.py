@@ -13,22 +13,27 @@ import openai
 from core.config.settings import settings
 
 
-def _client(timeout_s: float = 300.0):
+def _client(
+    timeout_s: float = 300.0,
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+):
     """Create a sync OpenAI client pointed at OpenRouter.
 
     Args:
         timeout_s: HTTP-level timeout in seconds. Ensures the underlying
             thread terminates when asyncio.wait_for cancels the coroutine.
     """
-    api_key = settings.openrouter_api_key
-    if not api_key:
+    resolved_api_key = api_key or settings.openrouter_api_key
+    if not resolved_api_key:
         raise RuntimeError(
             "OPENROUTER_API_KEY is not set. "
             "Get your key at https://openrouter.ai/settings/keys"
         )
     return openai.OpenAI(
-        base_url=settings.openrouter_base_url,
-        api_key=api_key,
+        base_url=base_url or settings.openrouter_base_url,
+        api_key=resolved_api_key,
         timeout=timeout_s,
         max_retries=0,
     )
@@ -45,6 +50,15 @@ def research(
     pipeline: str = "",
     pipeline_step: str = "",
     company_slug: str = "",
+    api_key: str | None = None,
+    base_url: str | None = None,
+    run_id: str | None = None,
+    workspace_id: str | None = None,
+    agent_key: str = "",
+    credential_id: str | None = None,
+    model_config_id: str | None = None,
+    actual_provider: str = "",
+    workspace_billed: bool = False,
     **kwargs: Any,
 ) -> Tuple[str, Dict[str, int]]:
     """
@@ -57,7 +71,7 @@ def research(
         model: Override the default Perplexity model. If None, uses
             settings.perplexity_deep_research_model.
     """
-    client = _client(timeout_s=timeout_s)
+    client = _client(timeout_s=timeout_s, api_key=api_key, base_url=base_url)
     model = model or settings.perplexity_deep_research_model
 
     # Ensure provider prefix for OpenRouter routing
@@ -102,6 +116,13 @@ def research(
         company_slug=company_slug,
         call_site="core.research.tools.perplexity_client",
         source="openrouter",
+        run_id=run_id,
+        workspace_id=workspace_id,
+        agent_key=agent_key,
+        credential_id=credential_id,
+        model_config_id=model_config_id,
+        actual_provider=actual_provider or (model.split("/", 1)[0] if "/" in model else ""),
+        workspace_billed=workspace_billed,
     )
 
     content = ""

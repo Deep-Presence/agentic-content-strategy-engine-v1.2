@@ -692,6 +692,62 @@ class TestSourceCDeepResearch:
         assert result.error is None
 
     @pytest.mark.asyncio
+    async def test_byok_resolves_model_config_for_source_c(self):
+        response_json = json.dumps({
+            "subdomains": [
+                {"name": "API Security", "description": "desc", "confidence": 0.7},
+            ],
+        })
+        resolved = ResolvedModelConfig(
+            workspace_id="ws-123",
+            workspace_slug="acme",
+            agent_key="topic_discovery.source_c_deep_research",
+            model="perplexity/sonar-deep-research",
+            base_url="https://openrouter.workspace/api/v1",
+            api_key="sk-workspace",
+            credential_id="cred-123",
+            model_config_id="cfg-123",
+            timeout_s=77.0,
+        )
+        with (
+            patch("core.research.tools.perplexity_client") as mock_pplx,
+            patch(
+                "core.topic_discovery.agents._resolve_model_config_for_agent",
+                new_callable=AsyncMock,
+                return_value=resolved,
+            ) as mock_resolve,
+        ):
+            mock_pplx.research = MagicMock(
+                return_value=(response_json, {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3})
+            )
+            result = await run_source_c_deep_research(
+                "Company context",
+                "Competitor data",
+                "cybersecurity",
+                timeout_s=10.0,
+                company_slug="acme",
+                workspace_id="ws-123",
+                workspace_slug="acme",
+            )
+
+        assert len(result.candidates) == 1
+        mock_resolve.assert_awaited_once_with(
+            workspace_id="ws-123",
+            workspace_slug="acme",
+            agent_key="topic_discovery.source_c_deep_research",
+        )
+        call_kwargs = mock_pplx.research.call_args.kwargs
+        assert call_kwargs["model"] == "perplexity/sonar-deep-research"
+        assert call_kwargs["timeout_s"] == 77.0
+        assert call_kwargs["api_key"] == "sk-workspace"
+        assert call_kwargs["base_url"] == "https://openrouter.workspace/api/v1"
+        assert call_kwargs["workspace_id"] == "ws-123"
+        assert call_kwargs["agent_key"] == "topic_discovery.source_c_deep_research"
+        assert call_kwargs["credential_id"] == "cred-123"
+        assert call_kwargs["model_config_id"] == "cfg-123"
+        assert call_kwargs["workspace_billed"] is True
+
+    @pytest.mark.asyncio
     async def test_empty_context_skips_api_call(self):
         """Skip API call when both company_context and competitor_landscape are empty."""
         with patch(

@@ -343,7 +343,7 @@ class TestHappyPath:
             patch(f"{_P}._load_persona_entries", return_value=[("p1", "CFO", "")]),
             patch(f"{_P}.run_source_a_company_brainstorm", return_value=sa) as mock_a,
             patch(f"{_P}.run_source_b_persona_brainstorm", return_value=sb) as mock_b,
-            patch(f"{_P}.run_source_c_deep_research", return_value=sc),
+            patch(f"{_P}.run_source_c_deep_research", return_value=sc) as mock_c,
             patch(f"{_P}.run_source_d_adversarial", return_value=sd) as mock_d,
             patch(f"{_P}.deduplicate_subdomains_with_clusters", return_value=_make_dedup_result(sa.candidates)),
             patch(f"{_P}.compute_all_coverage_metrics", return_value=cov),
@@ -352,7 +352,7 @@ class TestHappyPath:
             from core.topic_discovery.pipeline import run_topic_discovery_pipeline
             await run_topic_discovery_pipeline(td_input, artifacts_root=artifacts_dir)
 
-        for mock_agent in (mock_a, mock_b, mock_d, mock_unified):
+        for mock_agent in (mock_a, mock_b, mock_c, mock_d, mock_unified):
             assert mock_agent.call_args.kwargs["workspace_id"] == "ws-td"
             assert mock_agent.call_args.kwargs["workspace_slug"] == "test-co"
 

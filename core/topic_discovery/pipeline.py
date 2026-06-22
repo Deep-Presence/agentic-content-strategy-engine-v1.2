@@ -461,6 +461,8 @@ async def run_topic_discovery_pipeline(
                 timeout_s=settings.topic_discovery_source_c_timeout_s,
                 revision_note=_revision, parent_span=s1_span,
                 company_slug=company_slug,
+                workspace_id=workspace_id,
+                workspace_slug=workspace_slug,
             )
 
             results_abc = await asyncio.gather(
