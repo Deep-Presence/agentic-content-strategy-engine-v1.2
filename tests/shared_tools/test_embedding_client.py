@@ -74,6 +74,35 @@ class TestEmbedTexts:
         assert len(result) == 2
         assert mock_client.embeddings.create.call_count == 1
 
+    def test_byok_uses_explicit_sync_client_builder(self):
+        texts = ["hello"]
+
+        def fake_create(*, model, input, **kw):
+            return _make_response(input)
+
+        mock_client = _make_mock_client(fake_create)
+
+        with _patch_settings(), \
+             patch("core.shared_tools.embedding_client.build_sync_client_for_key", return_value=mock_client) as mock_build, \
+             patch("core.shared_tools.embedding_client.get_sync_client") as mock_platform:
+            from core.shared_tools.embedding_client import embed_texts
+
+            result = embed_texts(
+                texts,
+                model="openai/text-embedding-3-large",
+                api_key="sk-workspace",
+                base_url="https://openrouter.workspace/api/v1",
+                timeout_s=12.0,
+            )
+
+        assert len(result) == 1
+        mock_build.assert_called_once_with(
+            "sk-workspace",
+            base_url="https://openrouter.workspace/api/v1",
+            timeout_s=12.0,
+        )
+        mock_platform.assert_not_called()
+
     def test_model_prefix_applied(self):
         """Model passed to API should be prefixed for OpenRouter."""
         texts = ["test"]
@@ -216,6 +245,47 @@ class TestEmbedTextsCostTracking:
         assert kw0["prompt_tokens"] == 20  # 2 texts * 10
         assert kw0["completion_tokens"] == 0
         assert kw0["source"] == "openrouter"
+
+    def test_cost_tracked_with_byok_metadata(self):
+        texts = ["hello"]
+
+        def fake_create(*, model, input, **kw):
+            resp = _make_response(input)
+            resp.usage = MagicMock(prompt_tokens=11)
+            return resp
+
+        mock_client = _make_mock_client(fake_create)
+
+        with _patch_settings(), \
+             patch("core.shared_tools.embedding_client.build_sync_client_for_key", return_value=mock_client), \
+             patch("core.shared_tools.cost_tracker.track_llm_cost") as mock_track:
+            from core.shared_tools.embedding_client import embed_texts
+
+            embed_texts(
+                texts,
+                model="openai/text-embedding-3-large",
+                api_key="sk-workspace",
+                pipeline="topic_discovery",
+                pipeline_step="dedup_embedding",
+                company_slug="acme",
+                workspace_id="ws-123",
+                agent_key="shared.embeddings.default",
+                credential_id="cred-123",
+                model_config_id="cfg-123",
+                workspace_billed=True,
+            )
+
+        kw = mock_track.call_args[1]
+        assert kw["model"] == "openai/text-embedding-3-large"
+        assert kw["pipeline"] == "topic_discovery"
+        assert kw["pipeline_step"] == "dedup_embedding"
+        assert kw["company_slug"] == "acme"
+        assert kw["workspace_id"] == "ws-123"
+        assert kw["agent_key"] == "shared.embeddings.default"
+        assert kw["credential_id"] == "cred-123"
+        assert kw["model_config_id"] == "cfg-123"
+        assert kw["actual_provider"] == "openai"
+        assert kw["workspace_billed"] is True
 
     def test_no_cost_tracked_for_empty_input(self):
         with patch("core.shared_tools.cost_tracker.track_llm_cost") as mock_track:

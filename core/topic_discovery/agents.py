@@ -926,6 +926,9 @@ async def deduplicate_subdomains_with_clusters(
     *,
     threshold: float = 0.85,
     parent_span: Optional[Any] = None,
+    company_slug: str = "",
+    workspace_id: str = "",
+    workspace_slug: str = "",
 ) -> DeduplicationResult:
     """Deduplicate subdomains via embedding cosine similarity.
 
@@ -939,13 +942,40 @@ async def deduplicate_subdomains_with_clusters(
 
     from core.shared_tools.embedding_client import embed_texts
 
+    resolved = None
+    if workspace_id:
+        resolved = await _resolve_model_config_for_agent(
+            workspace_id=workspace_id,
+            workspace_slug=workspace_slug or company_slug,
+            agent_key="shared.embeddings.default",
+        )
+
     names = [c.name for c in candidates]
 
     # Batch embeddings
     all_embeddings: List[List[float]] = []
     for i in range(0, len(names), _EMBEDDING_BATCH_SIZE):
         batch = names[i : i + _EMBEDDING_BATCH_SIZE]
-        batch_embeddings = await asyncio.to_thread(embed_texts, batch)
+        if resolved is not None:
+            batch_embeddings = await asyncio.to_thread(
+                embed_texts,
+                batch,
+                model=resolved.model,
+                api_key=resolved.api_key,
+                base_url=resolved.base_url,
+                timeout_s=resolved.timeout_s,
+                pipeline="topic_discovery",
+                pipeline_step="dedup_embedding",
+                company_slug=company_slug,
+                workspace_id=workspace_id,
+                agent_key=resolved.agent_key,
+                credential_id=resolved.credential_id,
+                model_config_id=resolved.model_config_id,
+                actual_provider=_actual_provider(resolved.model),
+                workspace_billed=True,
+            )
+        else:
+            batch_embeddings = await asyncio.to_thread(embed_texts, batch)
         all_embeddings.extend(batch_embeddings)
 
     source_of = [c.source for c in candidates]

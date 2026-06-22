@@ -1,9 +1,9 @@
 {
   "current_sprint": "feat/byok-only-model-config",
-  "last_updated": "2026-06-22T23:06:13Z",
-  "test_count": 2162,
+  "last_updated": "2026-06-22T23:23:28Z",
+  "test_count": 2167,
   "completed_sprints_summary": {
-    "total_tasks_completed": 54,
+    "total_tasks_completed": 55,
     "sprints": [
       {
         "sprint": "feat/workspace-backend",
@@ -303,6 +303,25 @@
     ]
   },
   "completed": [
+    {
+      "id": "T-byok-topic-discovery-embeddings",
+      "task": "BYOK Topic Discovery embeddings — shared sync/async embedding helpers now accept explicit workspace OpenRouter model/key/base URL/timeout plus usage-attribution metadata, and Topic Discovery dedup resolves `shared.embeddings.default` for workspace runs instead of using the platform singleton client.",
+      "sprint": "feat/byok-only-model-config",
+      "status": "done",
+      "completed_at": "2026-06-23",
+      "tests_added": 5,
+      "files_modified": [
+        "core/shared_tools/async_embedding_client.py",
+        "core/shared_tools/embedding_client.py",
+        "core/topic_discovery/agents.py",
+        "core/topic_discovery/pipeline.py",
+        "tests/shared_tools/test_async_embedding_client.py",
+        "tests/shared_tools/test_embedding_client.py",
+        "tests/topic_discovery/test_agents_td.py",
+        "tests/topic_discovery/test_pipeline_td.py"
+      ],
+      "validation": "venv/bin/python -m pytest tests/shared_tools/test_embedding_client.py tests/shared_tools/test_async_embedding_client.py tests/topic_discovery/test_agents_td.py::TestDeduplicateSubdomainsWithClusters tests/topic_discovery/test_pipeline_td.py::TestHappyPath::test_pipeline_passes_workspace_context_to_td_agents -q (36 passed); venv/bin/python -m pytest tests/shared_tools/test_embedding_client.py tests/shared_tools/test_async_embedding_client.py tests/topic_discovery/test_agents_td.py tests/topic_discovery/test_pipeline_td.py -q (204 passed); git diff --check; py_compile on changed runtime and test modules. LangSmith emitted pre-existing network warnings under restricted network, but pytest exited successfully."
+    },
     {
       "id": "T-byok-topic-discovery-source-c-deep-research",
       "task": "BYOK Topic Discovery Source C deep research — Source C now resolves `topic_discovery.source_c_deep_research` and passes the workspace OpenRouter key/base URL/model/timeout into the shared Perplexity helper instead of relying on the platform OpenRouter key.",

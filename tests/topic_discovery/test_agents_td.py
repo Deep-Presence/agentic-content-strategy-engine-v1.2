@@ -1582,6 +1582,64 @@ class TestDeduplicateSubdomainsWithClusters:
         assert result.embeddings == []
         assert result.source_of == []
 
+    @pytest.mark.asyncio
+    async def test_workspace_context_routes_embeddings_through_byok_config(self):
+        candidates = [
+            SubdomainCandidate(name="A", source=TDSource.source_a, round_number=1),
+            SubdomainCandidate(name="B", source=TDSource.source_b, round_number=1),
+        ]
+        resolved = ResolvedModelConfig(
+            agent_key="shared.embeddings.default",
+            model="openai/text-embedding-3-large",
+            api_key="sk-workspace",
+            base_url="https://openrouter.workspace/api/v1",
+            timeout_s=12.0,
+            credential_id="cred-123",
+            model_config_id="cfg-123",
+        )
+
+        with (
+            patch(
+                "core.topic_discovery.agents._resolve_model_config_for_agent",
+                new_callable=AsyncMock,
+                return_value=resolved,
+            ) as mock_resolve,
+            patch(
+                "core.shared_tools.embedding_client.embed_texts",
+                return_value=[[1.0, 0.0], [0.0, 1.0]],
+            ) as mock_embed,
+        ):
+            result = await deduplicate_subdomains_with_clusters(
+                candidates,
+                threshold=0.85,
+                company_slug="acme",
+                workspace_id="ws-123",
+                workspace_slug="acme",
+            )
+
+        assert len(result.kept) == 2
+        mock_resolve.assert_awaited_once_with(
+            workspace_id="ws-123",
+            workspace_slug="acme",
+            agent_key="shared.embeddings.default",
+        )
+        assert mock_embed.call_args.args == (["A", "B"],)
+        assert mock_embed.call_args.kwargs == {
+            "model": "openai/text-embedding-3-large",
+            "api_key": "sk-workspace",
+            "base_url": "https://openrouter.workspace/api/v1",
+            "timeout_s": 12.0,
+            "pipeline": "topic_discovery",
+            "pipeline_step": "dedup_embedding",
+            "company_slug": "acme",
+            "workspace_id": "ws-123",
+            "agent_key": "shared.embeddings.default",
+            "credential_id": "cred-123",
+            "model_config_id": "cfg-123",
+            "actual_provider": "openai",
+            "workspace_billed": True,
+        }
+
 
 class TestComputeAllCoverageMetricsWithClusters:
     """Tests for compute_all_coverage_metrics with dedup_result (new path)."""

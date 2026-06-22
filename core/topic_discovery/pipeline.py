@@ -554,7 +554,12 @@ async def run_topic_discovery_pipeline(
 
             # Deduplicate via embeddings (with cluster metadata for coverage)
             dedup_result = await deduplicate_subdomains_with_clusters(
-                all_candidates, threshold=dedup_threshold, parent_span=s2_span,
+                all_candidates,
+                threshold=dedup_threshold,
+                parent_span=s2_span,
+                company_slug=company_slug,
+                workspace_id=workspace_id,
+                workspace_slug=workspace_slug,
             )
             deduped = dedup_result.kept
             logger.info(

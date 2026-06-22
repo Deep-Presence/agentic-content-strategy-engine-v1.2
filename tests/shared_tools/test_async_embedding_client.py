@@ -79,6 +79,36 @@ class TestAsyncEmbedTexts:
         assert mock_client.embeddings.create.await_count == 1
 
     @pytest.mark.asyncio
+    async def test_byok_uses_explicit_async_client_builder(self):
+        texts = ["hello"]
+
+        async def fake_create(*, model, input, **kw):
+            return _make_response(input)
+
+        mock_client = _make_mock_client(fake_create)
+
+        with _patch_settings(), \
+             patch("core.shared_tools.async_embedding_client.build_async_client_for_key", return_value=mock_client) as mock_build, \
+             patch("core.shared_tools.async_embedding_client.get_async_client") as mock_platform:
+            from core.shared_tools.async_embedding_client import async_embed_texts
+
+            result = await async_embed_texts(
+                texts,
+                model="openai/text-embedding-3-large",
+                api_key="sk-workspace",
+                base_url="https://openrouter.workspace/api/v1",
+                timeout_s=12.0,
+            )
+
+        assert len(result) == 1
+        mock_build.assert_called_once_with(
+            "sk-workspace",
+            base_url="https://openrouter.workspace/api/v1",
+            timeout_s=12.0,
+        )
+        mock_platform.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_multiple_batches(self):
         """Texts exceeding batch_size should split into multiple API calls."""
         texts = [f"text_{i}" for i in range(10)]
@@ -369,6 +399,48 @@ class TestAsyncEmbedTextsCostTracking:
         assert kw0["pipeline_step"] == "async_embed_texts"
         assert kw0["completion_tokens"] == 0
         assert kw0["source"] == "openrouter"
+
+    @pytest.mark.asyncio
+    async def test_cost_tracked_with_byok_metadata(self):
+        texts = ["hello"]
+
+        async def fake_create(*, model, input, **kw):
+            resp = _make_response(input)
+            resp.usage = MagicMock(prompt_tokens=11)
+            return resp
+
+        mock_client = _make_mock_client(fake_create)
+
+        with _patch_settings(), \
+             patch("core.shared_tools.async_embedding_client.build_async_client_for_key", return_value=mock_client), \
+             patch("core.shared_tools.cost_tracker.track_llm_cost") as mock_track:
+            from core.shared_tools.async_embedding_client import async_embed_texts
+
+            await async_embed_texts(
+                texts,
+                model="openai/text-embedding-3-large",
+                api_key="sk-workspace",
+                pipeline="content",
+                pipeline_step="semantic_embedding",
+                company_slug="acme",
+                workspace_id="ws-123",
+                agent_key="shared.embeddings.default",
+                credential_id="cred-123",
+                model_config_id="cfg-123",
+                workspace_billed=True,
+            )
+
+        kw = mock_track.call_args[1]
+        assert kw["model"] == "openai/text-embedding-3-large"
+        assert kw["pipeline"] == "content"
+        assert kw["pipeline_step"] == "semantic_embedding"
+        assert kw["company_slug"] == "acme"
+        assert kw["workspace_id"] == "ws-123"
+        assert kw["agent_key"] == "shared.embeddings.default"
+        assert kw["credential_id"] == "cred-123"
+        assert kw["model_config_id"] == "cfg-123"
+        assert kw["actual_provider"] == "openai"
+        assert kw["workspace_billed"] is True
 
     @pytest.mark.asyncio
     async def test_no_cost_tracked_for_empty_input(self):

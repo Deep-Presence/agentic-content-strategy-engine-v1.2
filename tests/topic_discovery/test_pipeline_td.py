@@ -345,7 +345,7 @@ class TestHappyPath:
             patch(f"{_P}.run_source_b_persona_brainstorm", return_value=sb) as mock_b,
             patch(f"{_P}.run_source_c_deep_research", return_value=sc) as mock_c,
             patch(f"{_P}.run_source_d_adversarial", return_value=sd) as mock_d,
-            patch(f"{_P}.deduplicate_subdomains_with_clusters", return_value=_make_dedup_result(sa.candidates)),
+            patch(f"{_P}.deduplicate_subdomains_with_clusters", return_value=_make_dedup_result(sa.candidates)) as mock_dedup,
             patch(f"{_P}.compute_all_coverage_metrics", return_value=cov),
             patch(f"{_P}.run_unified_hierarchy_and_scoring", return_value=tax) as mock_unified,
         ):
@@ -355,6 +355,8 @@ class TestHappyPath:
         for mock_agent in (mock_a, mock_b, mock_c, mock_d, mock_unified):
             assert mock_agent.call_args.kwargs["workspace_id"] == "ws-td"
             assert mock_agent.call_args.kwargs["workspace_slug"] == "test-co"
+        assert mock_dedup.call_args.kwargs["workspace_id"] == "ws-td"
+        assert mock_dedup.call_args.kwargs["workspace_slug"] == "test-co"
 
     @pytest.mark.asyncio
     async def test_pipeline_writes_manifest(self, td_input, artifacts_dir):
