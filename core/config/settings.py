@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     # OpenRouter (unified LLM routing — centralized cost tracking)
     openrouter_api_key: str | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    allow_platform_openrouter_fallback: bool = False
+    credential_fernet_key: str | None = None
 
     # Perplexity
     perplexity_api_key: str | None = None

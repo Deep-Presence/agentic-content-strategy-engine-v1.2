@@ -113,6 +113,12 @@ def track_llm_cost(
     extra: dict[str, Any] | None = None,
     source: str = "native",
     run_id: str | None = None,
+    workspace_id: str | None = None,
+    agent_key: str = "",
+    credential_id: str | None = None,
+    model_config_id: str | None = None,
+    actual_provider: str = "",
+    workspace_billed: bool = True,
 ) -> None:
     """Emit a structured log event with cost data.  **Never raises.**
 
@@ -142,6 +148,12 @@ def track_llm_cost(
             "company_slug": company_slug,
             "call_site": call_site,
             "source": source,
+            "workspace_id": workspace_id,
+            "agent_key": agent_key,
+            "credential_id": credential_id,
+            "model_config_id": model_config_id,
+            "actual_provider": actual_provider,
+            "workspace_billed": workspace_billed,
         }
         if run_id:
             fields["run_id"] = run_id
@@ -165,6 +177,12 @@ def track_llm_cost(
                 source=source,
                 run_id=run_id,
                 extra_json=extra,
+                workspace_id=workspace_id,
+                agent_key=agent_key,
+                credential_id=credential_id,
+                model_config_id=model_config_id,
+                actual_provider=actual_provider,
+                workspace_billed=workspace_billed,
             ))
         except RuntimeError:
             pass  # no running event loop — log-only, skip DB
@@ -194,6 +212,12 @@ async def _persist_cost_event(
     source: str,
     run_id: str | None,
     extra_json: dict[str, Any] | None,
+    workspace_id: str | None,
+    agent_key: str,
+    credential_id: str | None,
+    model_config_id: str | None,
+    actual_provider: str,
+    workspace_billed: bool,
 ) -> None:
     """Persist a cost event to the DB.  Never raises — catches all errors."""
     try:
@@ -206,7 +230,10 @@ async def _persist_cost_event(
     try:
         from core.db.models.cost import LLMCostEventModel
 
-        parsed_run_id = _uuid.UUID(run_id) if run_id else None
+        parsed_run_id = _parse_uuid(run_id)
+        parsed_workspace_id = _parse_uuid(workspace_id)
+        parsed_credential_id = _parse_uuid(credential_id)
+        parsed_model_config_id = _parse_uuid(model_config_id)
 
         async with factory() as session:
             event = LLMCostEventModel(
@@ -219,6 +246,12 @@ async def _persist_cost_event(
                 completion_tokens=completion_tokens,
                 estimated_cost_usd=estimated_cost_usd,
                 company_slug=company_slug,
+                workspace_id=parsed_workspace_id,
+                agent_key=agent_key or None,
+                credential_id=parsed_credential_id,
+                model_config_id=parsed_model_config_id,
+                actual_provider=actual_provider or None,
+                workspace_billed=workspace_billed,
                 call_site=call_site,
                 source=source,
                 run_id=parsed_run_id,
@@ -231,6 +264,15 @@ async def _persist_cost_event(
             logger.warning("cost_event_db_write_failed", exc_info=True)
         except Exception:  # noqa: BLE001
             pass
+
+
+def _parse_uuid(value: str | None) -> _uuid.UUID | None:
+    if not value:
+        return None
+    try:
+        return _uuid.UUID(str(value))
+    except ValueError:
+        return None
 
 
 # ---------------------------------------------------------------------------

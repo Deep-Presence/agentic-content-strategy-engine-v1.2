@@ -1,5 +1,26 @@
 [
   {
+    "id": "D-BYOK-ONLY-MODEL-CONFIG-SPEC",
+    "timestamp": "2026-06-22",
+    "task": "BYOK-only LLM platform with per-agent workspace model configuration",
+    "decision": "The implementation should use workspace-scoped OpenRouter credentials plus workspace_agent_model_configs keyed by stable agent_key. Product runtime must resolve LLM clients from workspace_id and agent_key, fail closed when the workspace has no active OpenRouter credential, and avoid production fallback to platform-owned OPENROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or Google model keys.",
+    "rationale": "The platform already has workspace membership/auth boundaries and many OpenRouter-centered call sites, but current model selection and credentials are environment-driven. A BYOK-only platform needs workspace-owned billing/configuration, per-agent controls, usage attribution, and explicit remediation of native provider search paths.",
+    "files_affected": [
+      "docs/BYOK_ONLY_MODEL_CONFIG_PLAN.md",
+      "docs/BYOK_ONLY_MODEL_CONFIG_SPEC.md",
+      "core/config/settings.py",
+      "core/shared_tools/openrouter_client.py",
+      "core/content_engine/llm_client.py",
+      "core/shared_tools/cost_tracker.py",
+      "core/gap_analysis/engines/openai_engine.py",
+      "core/gap_analysis/engines/claude.py",
+      "core/gap_analysis/engines/gemini.py",
+      "frontend/src/app/(dashboard)/settings/_components/ModelsTab.tsx"
+    ],
+    "validation": "Planning/spec docs only. Implementation validation is defined in docs/BYOK_ONLY_MODEL_CONFIG_SPEC.md.",
+    "status": "PLANNED"
+  },
+  {
     "id": "D-WORKSPACE-REMAINING-PIPELINES",
     "timestamp": "2026-06-01",
     "task": "Workspace scoping on research + monitoring pipelines (KB, AP, VSG, site audit, onboarding, research orchestrator, daily tracker)",

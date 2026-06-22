@@ -53,6 +53,19 @@ class LLMCostEventModel(UUIDPKMixin, TimestampMixin, Base):
         ForeignKey("workspaces.id", ondelete="SET NULL"),
         nullable=True,
     )
+    agent_key: Mapped[str | None] = mapped_column(String, nullable=True)
+    credential_id: Mapped[_uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("workspace_llm_credentials.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    model_config_id: Mapped[_uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("workspace_agent_model_configs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    actual_provider: Mapped[str | None] = mapped_column(String, nullable=True)
+    workspace_billed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     call_site: Mapped[str] = mapped_column(String, nullable=False, default="")
     source: Mapped[str] = mapped_column(String, nullable=False, default="native")
     run_id: Mapped[_uuid.UUID | None] = mapped_column(

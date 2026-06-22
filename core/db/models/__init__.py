@@ -16,6 +16,7 @@ from core.db.models import (  # noqa: F401
     gap_analysis,
     knowledge_base,
     knowledge_docs,
+    model_config,
     organization,
     pipelines,
     site_audit,

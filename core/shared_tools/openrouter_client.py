@@ -80,6 +80,42 @@ def get_sync_client(timeout_s: float = 300.0) -> OpenAI:
     return _sync_client
 
 
+def build_async_client_for_key(
+    api_key: str,
+    *,
+    base_url: str | None = None,
+    timeout_s: float | None = None,
+) -> AsyncOpenAI:
+    """Build an uncached async OpenRouter client for a workspace BYOK key."""
+    settings = _get_settings()
+    kwargs: dict[str, Any] = {
+        "base_url": base_url or settings.openrouter_base_url,
+        "api_key": api_key,
+        "max_retries": 0,
+    }
+    if timeout_s is not None:
+        kwargs["timeout"] = timeout_s
+    return AsyncOpenAI(**kwargs)
+
+
+def build_sync_client_for_key(
+    api_key: str,
+    *,
+    base_url: str | None = None,
+    timeout_s: float | None = None,
+) -> OpenAI:
+    """Build an uncached sync OpenRouter client for a workspace BYOK key."""
+    settings = _get_settings()
+    kwargs: dict[str, Any] = {
+        "base_url": base_url or settings.openrouter_base_url,
+        "api_key": api_key,
+        "max_retries": 0,
+    }
+    if timeout_s is not None:
+        kwargs["timeout"] = timeout_s
+    return OpenAI(**kwargs)
+
+
 def reset_clients() -> None:
     """Reset cached clients. For test teardown only."""
     global _async_client, _sync_client
@@ -151,5 +187,26 @@ def build_chat_openai_via_openrouter(model: str, **kwargs: Any) -> Any:
         model=prefixed,
         base_url=settings.openrouter_base_url,
         api_key=settings.openrouter_api_key,
+        **kwargs,
+    )
+
+
+def build_chat_openai_for_key(
+    api_key: str,
+    model: str,
+    *,
+    base_url: str | None = None,
+    **kwargs: Any,
+) -> Any:
+    """Build a LangChain ``ChatOpenAI`` instance for a workspace BYOK key."""
+    from langchain_openai import ChatOpenAI
+
+    settings = _get_settings()
+    bare = model.split(":", 1)[-1] if ":" in model else model
+    prefixed = _ensure_model_prefix(bare)
+    return ChatOpenAI(
+        model=prefixed,
+        base_url=base_url or settings.openrouter_base_url,
+        api_key=api_key,
         **kwargs,
     )

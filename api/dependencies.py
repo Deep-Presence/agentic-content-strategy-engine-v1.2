@@ -202,6 +202,46 @@ async def get_workspace_service(
         await session.close()
 
 
+async def get_model_config_service(
+    request: Request,
+) -> AsyncGenerator[Any, None]:
+    """Return the BYOK model config service with proper DB session lifecycle."""
+    service = getattr(request.app.state, "model_config_service", None)
+    if service is not None:
+        yield service
+        return
+
+    sf = getattr(request.app.state, "db_session_factory", None)
+    if sf is None:
+        raise RuntimeError(
+            "DATABASE_URL is required for model configuration service."
+        )
+
+    from core.config.settings import settings
+    from core.db.repositories.model_config_repo import (
+        WorkspaceAgentModelConfigRepository,
+        WorkspaceLLMCredentialRepository,
+    )
+    from core.model_config.credentials import resolve_fernet_key
+    from core.model_config.service import ModelConfigService
+
+    session = sf()
+    try:
+        _ = settings.credential_fernet_key or settings.cms_fernet_key
+        service = ModelConfigService(
+            credential_repo=WorkspaceLLMCredentialRepository(session),
+            config_repo=WorkspaceAgentModelConfigRepository(session),
+            fernet_key=resolve_fernet_key(),
+        )
+        yield service
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+
+
 def _build_db_gap_data_service(request: Request, session: Any) -> GapDataServiceProtocol | None:
     """Construct a DbGapDataService from an existing *session*."""
     try:

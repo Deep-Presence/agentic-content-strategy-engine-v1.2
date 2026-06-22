@@ -91,6 +91,47 @@ class TestGetSyncClient:
             assert client.max_retries == 0
 
 
+class TestBuildClientsForKey:
+    def test_async_client_for_key_uses_supplied_key_without_cache(self):
+        with patch.object(openrouter_client, "AsyncOpenAI") as mock_ctor:
+            with patch.object(openrouter_client, "_get_settings") as mock_settings:
+                mock_settings.return_value.openrouter_base_url = "https://settings.example/v1"
+
+                first = openrouter_client.build_async_client_for_key("sk-or-workspace-1")
+                second = openrouter_client.build_async_client_for_key(
+                    "sk-or-workspace-2",
+                    base_url="https://custom.example/v1",
+                    timeout_s=12.0,
+                )
+
+        assert first is mock_ctor.return_value
+        assert second is mock_ctor.return_value
+        assert mock_ctor.call_args_list[0].kwargs == {
+            "base_url": "https://settings.example/v1",
+            "api_key": "sk-or-workspace-1",
+            "max_retries": 0,
+        }
+        assert mock_ctor.call_args_list[1].kwargs == {
+            "base_url": "https://custom.example/v1",
+            "api_key": "sk-or-workspace-2",
+            "max_retries": 0,
+            "timeout": 12.0,
+        }
+
+    def test_sync_client_for_key_uses_supplied_key_without_cache(self):
+        with patch.object(openrouter_client, "OpenAI") as mock_ctor:
+            with patch.object(openrouter_client, "_get_settings") as mock_settings:
+                mock_settings.return_value.openrouter_base_url = "https://settings.example/v1"
+
+                openrouter_client.build_sync_client_for_key("sk-or-workspace")
+
+        mock_ctor.assert_called_once_with(
+            base_url="https://settings.example/v1",
+            api_key="sk-or-workspace",
+            max_retries=0,
+        )
+
+
 class TestResetClients:
     def test_clears_cached_clients(self):
         with patch.object(openrouter_client, "_get_settings") as mock_settings:
