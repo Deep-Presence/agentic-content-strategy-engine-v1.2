@@ -151,6 +151,9 @@ async def _run_completion(
     timeout_s: float = 120.0,
     response_format: Optional[Dict[str, Any]] = None,
     metadata: Optional[Dict[str, Any]] = None,
+    workspace_id: str = "",
+    workspace_slug: str = "",
+    agent_key: str = "",
 ) -> Tuple[Any, str]:
     """Run OpenRouter completion via the async OpenAI client.
 
@@ -160,21 +163,54 @@ async def _run_completion(
 
     Returns (response, raw_text) tuple.
     """
-    from core.shared_tools.openrouter_client import get_async_client
+    resolved = None
+    if workspace_id and agent_key:
+        resolved = await _resolve_model_config_for_agent(
+            workspace_id=workspace_id,
+            workspace_slug=workspace_slug or (metadata or {}).get("company_slug", ""),
+            agent_key=agent_key,
+        )
 
-    client = get_async_client()
+    if resolved is not None:
+        from core.shared_tools.openrouter_client import build_async_client_for_key
+
+        client = build_async_client_for_key(
+            resolved.api_key,
+            base_url=resolved.base_url,
+            timeout_s=resolved.timeout_s,
+        )
+        effective_model = resolved.model
+        effective_temperature = (
+            resolved.temperature
+            if resolved.temperature is not None
+            else temperature
+        )
+        effective_max_tokens = (
+            resolved.max_tokens
+            if resolved.max_tokens is not None
+            else max_tokens
+        )
+        effective_timeout_s = resolved.timeout_s or timeout_s
+    else:
+        from core.shared_tools.openrouter_client import _ensure_model_prefix, get_async_client
+
+        client = get_async_client()
+        effective_model = _ensure_model_prefix(model)
+        effective_temperature = temperature
+        effective_max_tokens = max_tokens
+        effective_timeout_s = timeout_s
 
     # Build kwargs — only include response_format when explicitly set
     completion_kwargs: Dict[str, Any] = {
-        "model": model,
+        "model": effective_model,
         "messages": list(messages),
-        "temperature": temperature,
-        "max_tokens": max_tokens,
+        "temperature": effective_temperature,
+        "max_tokens": effective_max_tokens,
     }
     if response_format is not None:
         completion_kwargs["response_format"] = response_format
 
-    extra_body: Dict[str, Any] = {}
+    extra_body: Dict[str, Any] = dict(getattr(resolved, "extra_body", None) or {})
     if metadata is not None:
         extra_body["metadata"] = metadata
     if extra_body:
@@ -182,7 +218,7 @@ async def _run_completion(
 
     response = await asyncio.wait_for(
         client.chat.completions.create(**completion_kwargs),
-        timeout=timeout_s,
+        timeout=effective_timeout_s,
     )
 
     # Cost tracking (never raises)
@@ -190,21 +226,62 @@ async def _run_completion(
 
     _meta = metadata or {}
     _usage = getattr(response, "usage", None)
+    raw_response_model = getattr(response, "model", None)
+    response_model = (
+        raw_response_model
+        if isinstance(raw_response_model, str) and raw_response_model
+        else effective_model
+    )
     track_llm_cost(
-        model=model,
+        model=response_model,
         provider="openrouter",
         pipeline=_meta.get("pipeline", ""),
         pipeline_step=_meta.get("pipeline_step", ""),
         prompt_tokens=getattr(_usage, "prompt_tokens", 0) or 0,
         completion_tokens=getattr(_usage, "completion_tokens", 0) or 0,
-        company_slug=_meta.get("company_slug", ""),
+        company_slug=_meta.get("company_slug", workspace_slug),
         call_site="core.topic_discovery.agents",
         source="openrouter",
+        run_id=_meta.get("run_id"),
+        workspace_id=workspace_id if resolved is not None else None,
+        agent_key=agent_key if resolved is not None else "",
+        credential_id=getattr(resolved, "credential_id", None),
+        model_config_id=getattr(resolved, "model_config_id", None),
+        actual_provider=_actual_provider(response_model) if resolved is not None else "",
+        workspace_billed=resolved is not None,
     )
 
     choice = response.choices[0]
     raw_text = _extract_text_content(choice.message.content)
     return response, raw_text
+
+
+async def _resolve_model_config_for_agent(
+    *,
+    workspace_id: str,
+    workspace_slug: str,
+    agent_key: str,
+):
+    from core.db.engine import get_session_factory
+    from core.db.repositories.model_config_repo import (
+        WorkspaceAgentModelConfigRepository,
+        WorkspaceLLMCredentialRepository,
+    )
+    from core.model_config.credentials import resolve_fernet_key
+    from core.model_config.resolver import ModelConfigResolver
+
+    factory = get_session_factory()
+    async with factory() as session:
+        resolver = ModelConfigResolver(
+            credential_repo=WorkspaceLLMCredentialRepository(session),
+            config_repo=WorkspaceAgentModelConfigRepository(session),
+            fernet_key=resolve_fernet_key(),
+        )
+        return await resolver.resolve(workspace_id, workspace_slug, agent_key)
+
+
+def _actual_provider(model: str) -> str:
+    return model.split("/", 1)[0] if "/" in model else ""
 
 
 def _repair_truncated_json(text: str) -> Optional[str]:
@@ -313,6 +390,8 @@ async def run_source_a_company_brainstorm(
     revision_note: Optional[str] = None,
     parent_span: Optional[Any] = None,
     company_slug: str = "",
+    workspace_id: str = "",
+    workspace_slug: str = "",
 ) -> SourceResult:
     """Source A: Company-perspective subdomain brainstorm (iterative expansion)."""
     model = model or settings.topic_discovery_brainstorm_model
@@ -348,6 +427,9 @@ async def run_source_a_company_brainstorm(
                 model=model, messages=messages, timeout_s=timeout_s,
                 response_format={"type": "json_object"},
                 metadata=_meta_a,
+                workspace_id=workspace_id,
+                workspace_slug=workspace_slug,
+                agent_key="topic_discovery.source_a_company",
             )
             log_generation(
                 span, f"round-{round_num}", model,
@@ -451,6 +533,8 @@ async def run_source_b_persona_brainstorm(
     persona_name_to_id: Optional[Dict[str, str]] = None,
     parent_span: Optional[Any] = None,
     company_slug: str = "",
+    workspace_id: str = "",
+    workspace_slug: str = "",
 ) -> SourceResult:
     """Source B: Audience-perspective subdomain brainstorm (iterative expansion)."""
     model = model or settings.topic_discovery_brainstorm_model
@@ -487,6 +571,9 @@ async def run_source_b_persona_brainstorm(
                 model=model, messages=messages, timeout_s=timeout_s,
                 response_format={"type": "json_object"},
                 metadata=_meta_b,
+                workspace_id=workspace_id,
+                workspace_slug=workspace_slug,
+                agent_key="topic_discovery.source_b_persona",
             )
             log_generation(
                 span, f"round-{round_num}", model,
@@ -693,6 +780,8 @@ async def run_source_d_adversarial(
     revision_note: Optional[str] = None,
     parent_span: Optional[Any] = None,
     company_slug: str = "",
+    workspace_id: str = "",
+    workspace_slug: str = "",
 ) -> SourceResult:
     """Source D: Adversarial diversity pass using specialist lenses."""
     model = model or settings.topic_discovery_brainstorm_model
@@ -743,6 +832,9 @@ async def run_source_d_adversarial(
                 model=model, messages=messages, timeout_s=timeout_s,
                 response_format={"type": "json_object"},
                 metadata=_meta_d,
+                workspace_id=workspace_id,
+                workspace_slug=workspace_slug,
+                agent_key="topic_discovery.source_d_adversarial",
             )
             log_generation(
                 span, f"lens-{round_num}-{lens[:20]}", model,
@@ -912,6 +1004,8 @@ async def run_hierarchy_construction(
     model: Optional[str] = None,
     timeout_s: float = 480.0,
     company_slug: str = "",
+    workspace_id: str = "",
+    workspace_slug: str = "",
 ) -> TaxonomyTree:
     """Organize flat subdomains into a hierarchical taxonomy tree via LLM.
 
@@ -941,6 +1035,9 @@ async def run_hierarchy_construction(
         timeout_s=timeout_s,
         response_format={"type": "json_object"},
         metadata=_meta_hier,
+        workspace_id=workspace_id,
+        workspace_slug=workspace_slug,
+        agent_key="topic_discovery.hierarchy_unified_s2",
     )
     parsed = _parse_json_response(raw_text)
     nodes = _extract_taxonomy_nodes(parsed)
@@ -971,6 +1068,9 @@ async def run_hierarchy_construction(
         timeout_s=timeout_s,
         response_format={"type": "json_object"},
         metadata=_meta_hier,
+        workspace_id=workspace_id,
+        workspace_slug=workspace_slug,
+        agent_key="topic_discovery.hierarchy_unified_s2",
     )
     retry_parsed = _parse_json_response(retry_text)
     retry_nodes = _extract_taxonomy_nodes(retry_parsed)
@@ -998,6 +1098,8 @@ async def run_unified_hierarchy_and_scoring(
     timeout_s: float = 600.0,
     parent_span: Optional[Any] = None,
     company_slug: str = "",
+    workspace_id: str = "",
+    workspace_slug: str = "",
 ) -> TaxonomyTree:
     """Unified S2: build hierarchy + score subdomains + persona affinity.
 
@@ -1056,6 +1158,9 @@ async def run_unified_hierarchy_and_scoring(
         max_tokens=32768,
         response_format={"type": "json_object"},
         metadata=_meta_us2,
+        workspace_id=workspace_id,
+        workspace_slug=workspace_slug,
+        agent_key="topic_discovery.hierarchy_unified_s2",
     )
     log_generation(
         span, "hierarchy-scoring", model,
@@ -1104,6 +1209,9 @@ async def run_unified_hierarchy_and_scoring(
         max_tokens=32768,
         response_format={"type": "json_object"},
         metadata=_meta_us2,
+        workspace_id=workspace_id,
+        workspace_slug=workspace_slug,
+        agent_key="topic_discovery.hierarchy_unified_s2",
     )
     log_generation(
         span, "hierarchy-scoring-retry", model,
@@ -1318,6 +1426,8 @@ async def run_relevance_filtering(
     timeout_s: float = 120.0,
     parent_span: Optional[Any] = None,
     company_slug: str = "",
+    workspace_id: str = "",
+    workspace_slug: str = "",
 ) -> List[Dict[str, Any]]:
     """Classify dimension combinations as relevant/marginal/irrelevant."""
     model = model or settings.topic_discovery_dedup_model
@@ -1345,6 +1455,9 @@ async def run_relevance_filtering(
         model=model, messages=messages, temperature=0.3, timeout_s=timeout_s,
         response_format={"type": "json_object"},
         metadata=_meta_rf,
+        workspace_id=workspace_id,
+        workspace_slug=workspace_slug,
+        agent_key="topic_discovery.relevance_filter",
     )
     log_generation(
         span, "relevance-filter", model,
@@ -1375,6 +1488,8 @@ async def run_topic_generation(
     timeout_s: float = 120.0,
     parent_span: Optional[Any] = None,
     company_slug: str = "",
+    workspace_id: str = "",
+    workspace_slug: str = "",
 ) -> List[TopicAssignment]:
     """Generate 2-5 topic assignments for a relevant dimension cell."""
     model = model or settings.topic_discovery_brainstorm_model
@@ -1403,6 +1518,9 @@ async def run_topic_generation(
         model=model, messages=messages, timeout_s=timeout_s,
         response_format={"type": "json_object"},
         metadata=_meta_tg,
+        workspace_id=workspace_id,
+        workspace_slug=workspace_slug,
+        agent_key="topic_discovery.topic_generation",
     )
     log_generation(
         span, "topic-gen", model,
@@ -1452,6 +1570,8 @@ async def run_subdomain_expansion(
     timeout_s: float = 180.0,
     parent_span: Optional[Any] = None,
     company_slug: str = "",
+    workspace_id: str = "",
+    workspace_slug: str = "",
 ) -> List[TopicAssignment]:
     """Expand a single subdomain into topic assignments in ONE LLM call.
 
@@ -1509,6 +1629,9 @@ async def run_subdomain_expansion(
         model=model, messages=messages, timeout_s=timeout_s,
         response_format={"type": "json_object"},
         metadata=_meta_exp,
+        workspace_id=workspace_id,
+        workspace_slug=workspace_slug,
+        agent_key="topic_discovery.subdomain_expansion",
     )
     log_generation(
         span, "expansion", model,

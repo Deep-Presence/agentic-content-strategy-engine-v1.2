@@ -324,6 +324,39 @@ class TestHappyPath:
         assert output.status == TopicDiscoveryStatus.discovery_complete
 
     @pytest.mark.asyncio
+    async def test_pipeline_passes_workspace_context_to_td_agents(self, td_input, artifacts_dir):
+        td_input.workspace_id = "ws-td"
+        sa = _make_source(TDSource.source_a)
+        sb = _make_source(TDSource.source_b)
+        sc = _make_source(TDSource.source_c, 2)
+        sd = _make_source(TDSource.source_d, 2)
+        tax = _make_taxonomy()
+        cov = _make_coverage()
+
+        with (
+            patch(f"{_P}.configure_openrouter"),
+            patch(f"{_P}.create_session", return_value="s"),
+            patch(f"{_P}.create_trace", return_value=MagicMock()),
+            patch(f"{_P}.end_span"),
+            patch(f"{_P}.flush"),
+            patch(f"{_P}.load_persona_profiles", return_value=["## Persona 1\nCFO persona."]),
+            patch(f"{_P}._load_persona_entries", return_value=[("p1", "CFO", "")]),
+            patch(f"{_P}.run_source_a_company_brainstorm", return_value=sa) as mock_a,
+            patch(f"{_P}.run_source_b_persona_brainstorm", return_value=sb) as mock_b,
+            patch(f"{_P}.run_source_c_deep_research", return_value=sc),
+            patch(f"{_P}.run_source_d_adversarial", return_value=sd) as mock_d,
+            patch(f"{_P}.deduplicate_subdomains_with_clusters", return_value=_make_dedup_result(sa.candidates)),
+            patch(f"{_P}.compute_all_coverage_metrics", return_value=cov),
+            patch(f"{_P}.run_unified_hierarchy_and_scoring", return_value=tax) as mock_unified,
+        ):
+            from core.topic_discovery.pipeline import run_topic_discovery_pipeline
+            await run_topic_discovery_pipeline(td_input, artifacts_root=artifacts_dir)
+
+        for mock_agent in (mock_a, mock_b, mock_d, mock_unified):
+            assert mock_agent.call_args.kwargs["workspace_id"] == "ws-td"
+            assert mock_agent.call_args.kwargs["workspace_slug"] == "test-co"
+
+    @pytest.mark.asyncio
     async def test_pipeline_writes_manifest(self, td_input, artifacts_dir):
         """Pipeline A writes manifest to DB via db_write_manifest (no filesystem)."""
         mock_sf = AsyncMock()

@@ -111,6 +111,7 @@ def all_agent_definitions() -> list[AgentDefinition]:
         _agent("topic_discovery.hierarchy_unified_s2", "Unified Hierarchy", "Topic Discovery", "topic_discovery", "hierarchy_unified_s2", s.topic_discovery_unified_s2_model, capabilities=(chat, structured)),
         _agent("topic_discovery.subdomain_expansion", "Subdomain Expansion", "Topic Discovery", "topic_discovery", "subdomain_expansion", s.topic_discovery_unified_s2_model, capabilities=(chat, structured), default_timeout_s=s.topic_discovery_expansion_timeout_s),
         _agent("topic_discovery.relevance_filter", "Relevance Filter", "Topic Discovery", "topic_discovery", "relevance_filter", s.topic_discovery_brainstorm_model, capabilities=(chat, structured)),
+        _agent("topic_discovery.topic_generation", "Topic Generation", "Topic Discovery", "topic_discovery", "topic_generation", s.topic_discovery_brainstorm_model, capabilities=(chat, structured)),
         _agent("topic_discovery.dedup", "Deduplication", "Topic Discovery", "topic_discovery", "dedup", s.topic_discovery_dedup_model, capabilities=(chat, structured)),
         _agent("topic_discovery.cannibalization_embedding", "Cannibalization Embeddings", "Topic Discovery", "topic_discovery", "cannibalization_embedding", s.embedding_model, capabilities=(embeddings,)),
         _agent("research.kb.company_overview", "Company Overview", "Knowledge Base", "research_kb", "company_overview", s.research_kb_company_overview_model, capabilities=(chat, deep_research, web_citations)),

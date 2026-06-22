@@ -323,6 +323,8 @@ async def run_topic_discovery_pipeline(
     slug = _resolve_slug(input_data)
     company_slug = slug
     effective_slug = _resolve_effective_slug(input_data)
+    workspace_id = input_data.workspace_id or ""
+    workspace_slug = effective_slug or company_slug
     auto_approve_cps = set(input_data.auto_approve_checkpoints)
     max_rounds = input_data.max_expansion_rounds or settings.topic_discovery_max_expansion_rounds
     dedup_threshold = input_data.dedup_threshold or settings.topic_discovery_dedup_threshold
@@ -440,6 +442,8 @@ async def run_topic_discovery_pipeline(
                 company_md, max_rounds=max_rounds, timeout_s=timeout_s,
                 revision_note=_revision, parent_span=s1_span,
                 company_slug=company_slug,
+                workspace_id=workspace_id,
+                workspace_slug=workspace_slug,
             )
             source_b_task = run_source_b_persona_brainstorm(
                 persona_summaries, company_md, max_rounds=max_rounds, timeout_s=timeout_s,
@@ -447,6 +451,8 @@ async def run_topic_discovery_pipeline(
                 persona_name_to_id=persona_name_to_id,
                 parent_span=s1_span,
                 company_slug=company_slug,
+                workspace_id=workspace_id,
+                workspace_slug=workspace_slug,
             )
 
             # Source C: deep research competitive content landscape
@@ -493,6 +499,8 @@ async def run_topic_discovery_pipeline(
                 company_md, existing_names, max_rounds=max_rounds, timeout_s=timeout_s,
                 revision_note=_revision, parent_span=s1_span,
                 company_slug=company_slug,
+                workspace_id=workspace_id,
+                workspace_slug=workspace_slug,
             )
             source_results.append(source_d_result)
             if source_d_result.error:
@@ -579,6 +587,8 @@ async def run_topic_discovery_pipeline(
                 timeout_s=600.0,
                 parent_span=s2_span,
                 company_slug=company_slug,
+                workspace_id=workspace_id,
+                workspace_slug=workspace_slug,
             )
 
             # Enrich taxonomy with coverage data
@@ -887,6 +897,8 @@ async def run_topic_expansion_pipeline(
     slug = _resolve_slug(input_data)
     company_slug = slug
     effective_slug = input_data.effective_slug or _resolve_effective_slug(input_data)
+    workspace_id = input_data.workspace_id or ""
+    workspace_slug = effective_slug or company_slug
 
     _emit(event_bus, task_id, "pipeline_start", {
         "pipeline": "topic_expansion",
@@ -1149,6 +1161,8 @@ async def run_topic_expansion_pipeline(
                             timeout_s=settings.topic_discovery_expansion_timeout_s,
                             parent_span=s3_span,
                             company_slug=company_slug,
+                            workspace_id=workspace_id,
+                            workspace_slug=workspace_slug,
                         )
                         break
                     except Exception as llm_exc:

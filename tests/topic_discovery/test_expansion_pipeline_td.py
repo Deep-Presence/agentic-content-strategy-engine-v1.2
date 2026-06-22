@@ -439,6 +439,26 @@ class TestExpansionHappyPath:
         assert output.status == TopicDiscoveryStatus.approved
 
     @pytest.mark.asyncio
+    async def test_expansion_passes_workspace_context_to_agent(self, expansion_input, artifacts_dir, mock_session_factory):
+        expansion_input.workspace_id = "ws-td"
+        _manifest_state.clear()
+        with (
+            _expansion_patches(),
+            patch(f"{_P}.run_subdomain_expansion", return_value=_make_topics()) as mock_expand,
+        ):
+            from core.topic_discovery.pipeline import run_topic_expansion_pipeline
+            await run_topic_expansion_pipeline(
+                expansion_input,
+                artifacts_root=artifacts_dir,
+                session_factory=mock_session_factory,
+            )
+
+        assert mock_expand.call_count == 2
+        for call in mock_expand.call_args_list:
+            assert call.kwargs["workspace_id"] == "ws-td"
+            assert call.kwargs["workspace_slug"] == "test-co"
+
+    @pytest.mark.asyncio
     async def test_expansion_writes_matrix(self, expansion_input, artifacts_dir, mock_session_factory):
         """Pipeline B writes matrix to DB."""
         _manifest_state.clear()

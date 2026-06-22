@@ -20,6 +20,7 @@ from core.models.topic_discovery import (
     TDSource,
     TopicAssignment,
 )
+from core.model_config.schemas import ResolvedModelConfig
 from core.topic_discovery.agents import (
     DeduplicationResult,
     _build_taxonomy_tree,
@@ -1865,3 +1866,86 @@ class TestRunCompletionCostTracking:
         kw = mock_track.call_args[1]
         assert kw["prompt_tokens"] == 0
         assert kw["completion_tokens"] == 0
+
+    @pytest.mark.asyncio
+    async def test_byok_resolution_uses_workspace_client_and_tracks_metadata(self):
+        from core.topic_discovery.agents import _run_completion
+
+        resolved = ResolvedModelConfig(
+            workspace_id="ws-123",
+            workspace_slug="acme",
+            agent_key="topic_discovery.source_a_company",
+            model="anthropic/claude-haiku-4-5",
+            base_url="https://openrouter.test/api/v1",
+            api_key="sk-workspace",
+            credential_id="cred-123",
+            model_config_id="cfg-123",
+            temperature=0.2,
+            max_tokens=1234,
+            timeout_s=42.0,
+            extra_body={"route": "fallback"},
+        )
+        mock_resp = _make_mock_response_with_usage(
+            '{"ok": true}',
+            prompt_tokens=12,
+            completion_tokens=34,
+        )
+        mock_resp.model = "anthropic/claude-haiku-4-5"
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_resp)
+        meta = {
+            "pipeline": "topic_discovery",
+            "pipeline_step": "source_a",
+            "company_slug": "acme",
+            "run_id": "run-123",
+        }
+
+        with (
+            patch(
+                "core.topic_discovery.agents._resolve_model_config_for_agent",
+                new_callable=AsyncMock,
+                return_value=resolved,
+            ) as mock_resolve,
+            patch(
+                "core.shared_tools.openrouter_client.build_async_client_for_key",
+                return_value=mock_client,
+            ) as mock_build,
+            patch("core.shared_tools.openrouter_client.get_async_client") as mock_platform_client,
+            patch("core.shared_tools.cost_tracker.track_llm_cost") as mock_track,
+        ):
+            await _run_completion(
+                model="anthropic/platform-default",
+                messages=[{"role": "user", "content": "hi"}],
+                metadata=meta,
+                workspace_id="ws-123",
+                workspace_slug="acme",
+                agent_key="topic_discovery.source_a_company",
+            )
+
+        mock_resolve.assert_awaited_once_with(
+            workspace_id="ws-123",
+            workspace_slug="acme",
+            agent_key="topic_discovery.source_a_company",
+        )
+        mock_build.assert_called_once_with(
+            "sk-workspace",
+            base_url="https://openrouter.test/api/v1",
+            timeout_s=42.0,
+        )
+        mock_platform_client.assert_not_called()
+        call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["model"] == "anthropic/claude-haiku-4-5"
+        assert call_kwargs["temperature"] == 0.2
+        assert call_kwargs["max_tokens"] == 1234
+        assert call_kwargs["extra_body"] == {
+            "route": "fallback",
+            "metadata": meta,
+        }
+        kw = mock_track.call_args.kwargs
+        assert kw["workspace_id"] == "ws-123"
+        assert kw["agent_key"] == "topic_discovery.source_a_company"
+        assert kw["credential_id"] == "cred-123"
+        assert kw["model_config_id"] == "cfg-123"
+        assert kw["actual_provider"] == "anthropic"
+        assert kw["workspace_billed"] is True
+        assert kw["run_id"] == "run-123"

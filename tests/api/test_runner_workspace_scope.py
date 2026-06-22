@@ -15,6 +15,8 @@ from api.tasks.runner import (
     run_daily_tracker_task,
     run_onboarding_task,
     run_research_orchestrator_task,
+    run_topic_discovery_pipeline_task,
+    run_topic_expansion_pipeline_task,
     run_voice_style_guide_pipeline_task,
 )
 
@@ -72,6 +74,16 @@ class TestRunnerSourceUsesTaskScope:
         source = inspect.getsource(run_daily_tracker_task)
         assert "_task_runner_slugs" in source
         assert "workspace_id=workspace_id" in source
+
+    def test_topic_discovery_runner_passes_workspace_id_to_input(self) -> None:
+        source = inspect.getsource(run_topic_discovery_pipeline_task)
+        assert "workspace_id=workspace_id" in source
+        assert "workspace_id=workspace_id or \"\"" in source
+
+    def test_topic_expansion_runner_passes_workspace_id_to_input(self) -> None:
+        source = inspect.getsource(run_topic_expansion_pipeline_task)
+        assert "workspace_id=workspace_id" in source
+        assert "workspace_id=workspace_id or \"\"" in source
 
 
 @pytest.mark.asyncio

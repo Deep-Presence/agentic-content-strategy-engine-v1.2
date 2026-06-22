@@ -233,6 +233,7 @@ topic_discovery.source_d_adversarial
 topic_discovery.hierarchy_unified_s2
 topic_discovery.subdomain_expansion
 topic_discovery.relevance_filter
+topic_discovery.topic_generation
 topic_discovery.dedup
 topic_discovery.cannibalization_embedding
 
