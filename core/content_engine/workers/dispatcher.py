@@ -101,6 +101,7 @@ async def _run_worker_chain(
             )
         bdir = _brief_dir(artifact_dir, brief.brief_id)
         display_title = title_short + ("..." if len(brief.title) > 60 else "")
+        workspace_id = getattr(input_data, "workspace_id", "") or ""
 
         try:
             # Step 1: Outline
@@ -109,6 +110,8 @@ async def _run_worker_chain(
                 brief=brief,
                 company_context_md=company_context_md,
                 trace=trace,
+                company_slug=getattr(input_data, "company_slug", "") or "",
+                workspace_id=workspace_id,
             )
             (bdir / "outline.json").write_text(
                 json.dumps(outline.model_dump(mode="json"), indent=2, default=str),
@@ -123,6 +126,8 @@ async def _run_worker_chain(
                 style_guide_md=style_guide_md,
                 company_context_md=company_context_md,
                 trace=trace,
+                company_slug=getattr(input_data, "company_slug", "") or "",
+                workspace_id=workspace_id,
             )
             (bdir / "draft.md").write_text(draft.markdown, encoding="utf-8")
 
@@ -134,6 +139,8 @@ async def _run_worker_chain(
                 company_name=input_data.company_name,
                 domain=input_data.domain,
                 trace=trace,
+                company_slug=getattr(input_data, "company_slug", "") or "",
+                workspace_id=workspace_id,
             )
             (bdir / "enriched.md").write_text(enriched.markdown, encoding="utf-8")
 
@@ -144,6 +151,8 @@ async def _run_worker_chain(
                 style_guide_md=style_guide_md,
                 brief=brief,
                 trace=trace,
+                company_slug=getattr(input_data, "company_slug", "") or "",
+                workspace_id=workspace_id,
             )
             (bdir / "formatted.md").write_text(formatted.markdown, encoding="utf-8")
 
@@ -293,6 +302,7 @@ async def _run_worker_chain_v13(
 
     async with semaphore:
         _slug = getattr(input_data, "company_slug", "") or ""
+        _workspace_id = getattr(input_data, "workspace_id", "") or ""
         title_short = brief.title[:60]
         display_title = title_short + ("..." if len(brief.title) > 60 else "")
 
@@ -324,6 +334,7 @@ async def _run_worker_chain_v13(
                 company_context_md=company_context_md,
                 trace=span,
                 company_slug=_slug,
+                workspace_id=_workspace_id,
             )
             outline_json = json.dumps(outline.model_dump(mode="json"), indent=2, default=str)
             if storage:
@@ -351,6 +362,7 @@ async def _run_worker_chain_v13(
                 company_context_md=company_context_md,
                 trace=span,
                 company_slug=_slug,
+                workspace_id=_workspace_id,
             )
             if storage:
                 await persist_stage_artifact(
@@ -375,6 +387,7 @@ async def _run_worker_chain_v13(
                 site_pages=site_pages,
                 trace=span,
                 company_slug=_slug,
+                workspace_id=_workspace_id,
             )
             if storage:
                 await persist_stage_artifact(
@@ -404,6 +417,7 @@ async def _run_worker_chain_v13(
                 domain=input_data.domain,
                 trace=span,
                 company_slug=_slug,
+                workspace_id=_workspace_id,
             )
             if storage:
                 await persist_stage_artifact(

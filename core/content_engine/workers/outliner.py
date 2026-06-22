@@ -9,7 +9,7 @@ import logging
 from typing import Optional
 
 from core.config.settings import settings
-from core.content_engine.llm_client import llm_call
+from core.content_engine.llm_client import llm_call, llm_call_for_agent
 from core.content_engine.prompts.outliner_prompts import (
     OUTLINER_SYSTEM_PROMPT,
     build_outliner_user_prompt,
@@ -27,6 +27,7 @@ async def generate_outline(
     *,
     trace: Optional[object] = None,
     company_slug: str = "",
+    workspace_id: str = "",
 ) -> ContentOutline:
     """Generate a structured outline from a content brief.
 
@@ -74,22 +75,36 @@ async def generate_outline(
     )
 
     try:
-        response = await llm_call(
-            model=model,
-            system=OUTLINER_SYSTEM_PROMPT,
-            user=user_prompt,
-            max_tokens=4096,
-            response_format={"type": "json_object"},
-            metadata={
-                "agent": "outliner",
-                "brief_id": brief.brief_id,
-                "pipeline": "content_engine",
-                "pipeline_step": "outliner",
-                "provider": extract_provider(model),
-                "model": model,
-                "company_slug": company_slug,
-            },
-        )
+        metadata = {
+            "agent": "outliner",
+            "agent_key": "content.worker.outliner",
+            "brief_id": brief.brief_id,
+            "pipeline": "content_engine",
+            "pipeline_step": "outliner",
+            "provider": extract_provider(model),
+            "model": model,
+            "company_slug": company_slug,
+        }
+        if workspace_id:
+            response = await llm_call_for_agent(
+                workspace_id=workspace_id,
+                workspace_slug=company_slug,
+                agent_key="content.worker.outliner",
+                system=OUTLINER_SYSTEM_PROMPT,
+                user=user_prompt,
+                max_tokens=4096,
+                response_format={"type": "json_object"},
+                metadata=metadata,
+            )
+        else:
+            response = await llm_call(
+                model=model,
+                system=OUTLINER_SYSTEM_PROMPT,
+                user=user_prompt,
+                max_tokens=4096,
+                response_format={"type": "json_object"},
+                metadata=metadata,
+            )
 
         raw_text = response.content
 

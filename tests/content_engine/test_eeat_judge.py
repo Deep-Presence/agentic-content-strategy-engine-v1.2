@@ -83,6 +83,30 @@ class TestEvaluateEeat:
         assert result.dimension == "eeat"
 
     @pytest.mark.asyncio
+    async def test_uses_byok_agent_call_when_workspace_present(self, content, brief):
+        from core.content_engine.evaluator.eeat_judge import evaluate_eeat
+
+        resp = _make_llm_response(_eeat_response())
+        with patch("core.content_engine.evaluator.eeat_judge.llm_call_for_agent",
+                   new_callable=AsyncMock, return_value=resp) as mock_byok, \
+             patch("core.content_engine.evaluator.eeat_judge.llm_call",
+                   new_callable=AsyncMock) as mock_legacy:
+            result = await evaluate_eeat(
+                content,
+                brief,
+                company_slug="test-co",
+                workspace_id="workspace-123",
+            )
+
+        assert result.dimension == "eeat"
+        mock_legacy.assert_not_called()
+        mock_byok.assert_awaited_once()
+        kwargs = mock_byok.await_args.kwargs
+        assert kwargs["workspace_id"] == "workspace-123"
+        assert kwargs["agent_key"] == "content.judge.eeat"
+        assert kwargs["metadata"]["agent_key"] == "content.judge.eeat"
+
+    @pytest.mark.asyncio
     async def test_score_parsed(self, content, brief):
         from core.content_engine.evaluator.eeat_judge import evaluate_eeat
 

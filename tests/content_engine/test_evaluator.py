@@ -75,6 +75,60 @@ async def test_evaluate_and_optimize_all_pass(sample_brief, sample_formatted, tm
 
 
 @pytest.mark.asyncio
+async def test_evaluate_and_optimize_passes_workspace_to_llm_judges(
+    sample_brief, sample_formatted, tmp_path
+):
+    input_data = ContentGenerationInput(
+        company_name="TestCo",
+        domain="testco.com",
+        company_slug="test-co",
+        workspace_id="workspace-123",
+        max_revision_cycles=1,
+    )
+
+    with (
+        patch(
+            "core.content_engine.evaluator.loop.evaluate_structural",
+            return_value=DimensionResult(dimension="structural", passed=True, score=0.9),
+        ),
+        patch(
+            "core.content_engine.evaluator.loop.evaluate_semantic",
+            new_callable=AsyncMock,
+            return_value=DimensionResult(dimension="semantic", passed=True, score=0.8),
+        ),
+        patch(
+            "core.content_engine.evaluator.loop.evaluate_style",
+            new_callable=AsyncMock,
+            return_value=DimensionResult(dimension="style", passed=True, score=0.85),
+        ) as mock_style,
+        patch(
+            "core.content_engine.evaluator.loop.evaluate_factual",
+            new_callable=AsyncMock,
+            return_value=DimensionResult(dimension="factual", passed=True, score=0.75),
+        ) as mock_factual,
+        patch(
+            "core.content_engine.evaluator.eeat_judge.evaluate_eeat",
+            new_callable=AsyncMock,
+            return_value=DimensionResult(dimension="eeat", passed=True, score=0.8),
+        ) as mock_eeat,
+    ):
+        await evaluate_and_optimize(
+            content=sample_formatted,
+            brief=sample_brief,
+            company_context_md="",
+            style_guide_md="",
+            input_data=input_data,
+            max_cycles=1,
+            artifact_dir=tmp_path,
+            use_eeat=True,
+        )
+
+    assert mock_style.await_args.kwargs["workspace_id"] == "workspace-123"
+    assert mock_factual.await_args.kwargs["workspace_id"] == "workspace-123"
+    assert mock_eeat.await_args.kwargs["workspace_id"] == "workspace-123"
+
+
+@pytest.mark.asyncio
 async def test_evaluate_and_optimize_revision_triggered(sample_brief, sample_formatted, tmp_path):
     """When a dimension fails, revision should be triggered."""
     input_data = ContentGenerationInput(

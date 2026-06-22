@@ -9,7 +9,7 @@ import logging
 from typing import Optional
 
 from core.config.settings import settings
-from core.content_engine.llm_client import llm_call
+from core.content_engine.llm_client import llm_call, llm_call_for_agent
 from core.content_engine.prompts.style_judge_prompts import (
     STYLE_JUDGE_SYSTEM_PROMPT,
     build_style_judge_user_prompt,
@@ -32,6 +32,7 @@ async def evaluate_style(
     *,
     trace: Optional[object] = None,
     company_slug: str = "",
+    workspace_id: str = "",
 ) -> DimensionResult:
     """Evaluate content style alignment using LLM-as-judge.
 
@@ -65,23 +66,38 @@ async def evaluate_style(
     )
 
     try:
-        response = await llm_call(
-            model=model,
-            system=STYLE_JUDGE_SYSTEM_PROMPT,
-            user=user_prompt,
-            max_tokens=2048,
-            response_format={"type": "json_object"},
-            metadata={
-                "agent": "style_judge",
-                "brief_id": content.brief_id,
-                "pipeline": "content_engine",
-                "pipeline_step": "style_judge",
-                "provider": extract_provider(model),
-                "model": model,
-                "company_slug": company_slug,
-            },
-            max_retries=2,
-        )
+        metadata = {
+            "agent": "style_judge",
+            "agent_key": "content.judge.style",
+            "brief_id": content.brief_id,
+            "pipeline": "content_engine",
+            "pipeline_step": "style_judge",
+            "provider": extract_provider(model),
+            "model": model,
+            "company_slug": company_slug,
+        }
+        if workspace_id:
+            response = await llm_call_for_agent(
+                workspace_id=workspace_id,
+                workspace_slug=company_slug,
+                agent_key="content.judge.style",
+                system=STYLE_JUDGE_SYSTEM_PROMPT,
+                user=user_prompt,
+                max_tokens=2048,
+                response_format={"type": "json_object"},
+                metadata=metadata,
+                max_retries=2,
+            )
+        else:
+            response = await llm_call(
+                model=model,
+                system=STYLE_JUDGE_SYSTEM_PROMPT,
+                user=user_prompt,
+                max_tokens=2048,
+                response_format={"type": "json_object"},
+                metadata=metadata,
+                max_retries=2,
+            )
 
         raw_text = response.content
 

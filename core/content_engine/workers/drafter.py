@@ -11,7 +11,7 @@ import re
 from typing import Optional
 
 from core.config.settings import settings
-from core.content_engine.llm_client import llm_call
+from core.content_engine.llm_client import llm_call, llm_call_for_agent
 from core.content_engine.prompts.drafter_prompts import (
     DRAFTER_SYSTEM_PROMPT,
     REVISION_SYSTEM_PROMPT,
@@ -34,6 +34,7 @@ async def generate_draft(
     *,
     trace: Optional[object] = None,
     company_slug: str = "",
+    workspace_id: str = "",
 ) -> ContentDraft:
     """Generate a full markdown draft from an outline.
 
@@ -79,22 +80,36 @@ async def generate_draft(
     )
 
     try:
-        response = await llm_call(
-            model=model,
-            system=DRAFTER_SYSTEM_PROMPT,
-            user=user_prompt,
-            max_tokens=8192,
-            metadata={
-                "agent": "drafter",
-                "brief_id": brief.brief_id,
-                "pipeline": "content_engine",
-                "pipeline_step": "drafter",
-                "provider": extract_provider(model),
-                "model": model,
-                "company_slug": company_slug,
-            },
-            base_delay=2.0,
-        )
+        metadata = {
+            "agent": "drafter",
+            "agent_key": "content.worker.drafter",
+            "brief_id": brief.brief_id,
+            "pipeline": "content_engine",
+            "pipeline_step": "drafter",
+            "provider": extract_provider(model),
+            "model": model,
+            "company_slug": company_slug,
+        }
+        if workspace_id:
+            response = await llm_call_for_agent(
+                workspace_id=workspace_id,
+                workspace_slug=company_slug,
+                agent_key="content.worker.drafter",
+                system=DRAFTER_SYSTEM_PROMPT,
+                user=user_prompt,
+                max_tokens=8192,
+                metadata=metadata,
+                base_delay=2.0,
+            )
+        else:
+            response = await llm_call(
+                model=model,
+                system=DRAFTER_SYSTEM_PROMPT,
+                user=user_prompt,
+                max_tokens=8192,
+                metadata=metadata,
+                base_delay=2.0,
+            )
 
         raw_text = response.content
 
@@ -146,6 +161,7 @@ async def revise_draft(
     *,
     trace: Optional[object] = None,
     company_slug: str = "",
+    workspace_id: str = "",
 ) -> ContentDraft:
     """Revise an existing draft based on evaluator feedback.
 
@@ -215,22 +231,36 @@ count target. Return the complete revised article in Markdown.
     )
 
     try:
-        response = await llm_call(
-            model=model,
-            system=REVISION_SYSTEM_PROMPT,
-            user=user_prompt,
-            max_tokens=8192,
-            metadata={
-                "agent": "revision_drafter",
-                "brief_id": brief.brief_id,
-                "pipeline": "content_engine",
-                "pipeline_step": "revision_drafter",
-                "provider": extract_provider(model),
-                "model": model,
-                "company_slug": company_slug,
-            },
-            base_delay=2.0,
-        )
+        metadata = {
+            "agent": "revision_drafter",
+            "agent_key": "content.worker.reviser",
+            "brief_id": brief.brief_id,
+            "pipeline": "content_engine",
+            "pipeline_step": "revision_drafter",
+            "provider": extract_provider(model),
+            "model": model,
+            "company_slug": company_slug,
+        }
+        if workspace_id:
+            response = await llm_call_for_agent(
+                workspace_id=workspace_id,
+                workspace_slug=company_slug,
+                agent_key="content.worker.reviser",
+                system=REVISION_SYSTEM_PROMPT,
+                user=user_prompt,
+                max_tokens=8192,
+                metadata=metadata,
+                base_delay=2.0,
+            )
+        else:
+            response = await llm_call(
+                model=model,
+                system=REVISION_SYSTEM_PROMPT,
+                user=user_prompt,
+                max_tokens=8192,
+                metadata=metadata,
+                base_delay=2.0,
+            )
 
         raw_text = response.content
 

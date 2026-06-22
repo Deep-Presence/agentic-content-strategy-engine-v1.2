@@ -9,7 +9,7 @@ import re
 from typing import Optional
 
 from core.config.settings import settings
-from core.content_engine.llm_client import llm_call
+from core.content_engine.llm_client import llm_call, llm_call_for_agent
 from core.content_engine.prompts.formatter_prompts import (
     FORMATTER_SYSTEM_PROMPT,
     build_formatter_user_prompt,
@@ -51,6 +51,7 @@ async def format_content(
     brief: Optional[ContentBrief] = None,
     trace: Optional[object] = None,
     company_slug: str = "",
+    workspace_id: str = "",
 ) -> FormattedContent:
     """Format and polish enriched content using Haiku 4.5.
 
@@ -85,21 +86,34 @@ async def format_content(
     )
 
     try:
-        response = await llm_call(
-            model=model,
-            system=FORMATTER_SYSTEM_PROMPT,
-            user=user_prompt,
-            max_tokens=8192,
-            metadata={
-                "agent": "formatter",
-                "brief_id": enriched.brief_id,
-                "pipeline": "content_engine",
-                "pipeline_step": "formatter",
-                "provider": extract_provider(model),
-                "model": model,
-                "company_slug": company_slug,
-            },
-        )
+        metadata = {
+            "agent": "formatter",
+            "agent_key": "content.formatter",
+            "brief_id": enriched.brief_id,
+            "pipeline": "content_engine",
+            "pipeline_step": "formatter",
+            "provider": extract_provider(model),
+            "model": model,
+            "company_slug": company_slug,
+        }
+        if workspace_id:
+            response = await llm_call_for_agent(
+                workspace_id=workspace_id,
+                workspace_slug=company_slug,
+                agent_key="content.formatter",
+                system=FORMATTER_SYSTEM_PROMPT,
+                user=user_prompt,
+                max_tokens=8192,
+                metadata=metadata,
+            )
+        else:
+            response = await llm_call(
+                model=model,
+                system=FORMATTER_SYSTEM_PROMPT,
+                user=user_prompt,
+                max_tokens=8192,
+                metadata=metadata,
+            )
 
         raw_text = response.content
 
