@@ -21,6 +21,8 @@ import random
 from typing import Any, Dict, List, Optional
 
 from core.models.content_generation_v13 import LLMResponse
+from core.model_config.resolver import ModelConfigResolver
+from core.model_config.schemas import ResolvedModelConfig
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +182,158 @@ async def llm_call(
                 )
 
     raise last_error  # type: ignore[misc]
+
+
+async def llm_call_for_agent(
+    *,
+    workspace_id: str,
+    workspace_slug: str,
+    agent_key: str,
+    system: str,
+    user: str,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
+    response_format: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    resolver: ModelConfigResolver | None = None,
+    max_retries: int = 3,
+    base_delay: float = 1.0,
+) -> LLMResponse:
+    """Make a BYOK OpenRouter call by resolving workspace + agent config."""
+    resolved = await _resolve_for_agent(
+        workspace_id=workspace_id,
+        workspace_slug=workspace_slug,
+        agent_key=agent_key,
+        resolver=resolver,
+    )
+    from core.shared_tools.openrouter_client import build_async_client_for_key
+
+    client = build_async_client_for_key(
+        resolved.api_key,
+        base_url=resolved.base_url,
+        timeout_s=resolved.timeout_s,
+    )
+    effective_max_tokens = (
+        max_tokens
+        if max_tokens is not None
+        else resolved.max_tokens
+        if resolved.max_tokens is not None
+        else 4096
+    )
+    effective_temperature = (
+        temperature
+        if temperature is not None
+        else resolved.temperature
+        if resolved.temperature is not None
+        else 0.0
+    )
+
+    messages: List[Dict[str, str]] = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+    kwargs: Dict[str, Any] = {
+        "model": resolved.model,
+        "messages": messages,
+        "max_tokens": effective_max_tokens,
+        "temperature": effective_temperature,
+    }
+    extra_body: Dict[str, Any] = dict(resolved.extra_body or {})
+    if metadata:
+        extra_body["metadata"] = metadata
+    if extra_body:
+        kwargs["extra_body"] = extra_body
+    if response_format is not None:
+        kwargs["response_format"] = response_format
+
+    last_error: Optional[Exception] = None
+    for attempt in range(max_retries):
+        try:
+            response = await client.chat.completions.create(**kwargs)
+            choice = response.choices[0]
+            usage = response.usage
+            _meta = metadata or {}
+            response_model = response.model or resolved.model
+            track_llm_cost(
+                model=response_model,
+                provider="openrouter",
+                pipeline=_meta.get("pipeline", ""),
+                pipeline_step=_meta.get("pipeline_step", ""),
+                prompt_tokens=usage.prompt_tokens if usage else 0,
+                completion_tokens=usage.completion_tokens if usage else 0,
+                company_slug=_meta.get("company_slug", workspace_slug),
+                call_site="core.content_engine.llm_client.llm_call_for_agent",
+                source="openrouter",
+                run_id=_meta.get("run_id"),
+                workspace_id=workspace_id,
+                agent_key=agent_key,
+                credential_id=resolved.credential_id,
+                model_config_id=resolved.model_config_id,
+                actual_provider=_actual_provider(response_model),
+                workspace_billed=True,
+            )
+            return LLMResponse(
+                content=choice.message.content or "",
+                model=response_model,
+                input_tokens=usage.prompt_tokens if usage else 0,
+                output_tokens=usage.completion_tokens if usage else 0,
+                total_tokens=usage.total_tokens if usage else 0,
+                finish_reason=choice.finish_reason or "",
+            )
+        except Exception as exc:
+            last_error = exc
+            if attempt < max_retries - 1:
+                delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
+                logger.warning(
+                    "BYOK LLM call failed (attempt %d/%d, agent=%s, model=%s): %s. Retrying in %.1fs",
+                    attempt + 1,
+                    max_retries,
+                    agent_key,
+                    resolved.model,
+                    exc,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+            else:
+                logger.error(
+                    "BYOK LLM call failed after %d attempts (agent=%s, model=%s): %s",
+                    max_retries,
+                    agent_key,
+                    resolved.model,
+                    exc,
+                )
+    raise last_error  # type: ignore[misc]
+
+
+async def _resolve_for_agent(
+    *,
+    workspace_id: str,
+    workspace_slug: str,
+    agent_key: str,
+    resolver: ModelConfigResolver | None,
+) -> ResolvedModelConfig:
+    if resolver is not None:
+        return await resolver.resolve(workspace_id, workspace_slug, agent_key)
+
+    from core.db.engine import get_session_factory
+    from core.db.repositories.model_config_repo import (
+        WorkspaceAgentModelConfigRepository,
+        WorkspaceLLMCredentialRepository,
+    )
+    from core.model_config.credentials import resolve_fernet_key
+
+    factory = get_session_factory()
+    async with factory() as session:
+        default_resolver = ModelConfigResolver(
+            credential_repo=WorkspaceLLMCredentialRepository(session),
+            config_repo=WorkspaceAgentModelConfigRepository(session),
+            fernet_key=resolve_fernet_key(),
+        )
+        return await default_resolver.resolve(workspace_id, workspace_slug, agent_key)
+
+
+def _actual_provider(model: str) -> str:
+    return model.split("/", 1)[0] if "/" in model else ""
 
 
 # ---------------------------------------------------------------------------

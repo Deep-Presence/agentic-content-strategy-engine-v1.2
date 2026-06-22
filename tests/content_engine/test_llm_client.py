@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from core.content_engine.llm_client import _ensure_model_prefix
+from core.model_config.schemas import ResolvedModelConfig
 
 # Backward-compatible import alias
 from core.content_engine.llm_client import _ensure_litellm_model
@@ -325,6 +326,180 @@ class TestLlmCallCostTracking:
                     max_retries=2, base_delay=0.01,
                 )
         mock_track.assert_not_called()
+
+
+class FakeModelConfigResolver:
+    def __init__(self, resolved: ResolvedModelConfig) -> None:
+        self.resolved = resolved
+        self.calls = []
+
+    async def resolve(
+        self,
+        workspace_id: str,
+        workspace_slug: str,
+        agent_key: str,
+    ) -> ResolvedModelConfig:
+        self.calls.append((workspace_id, workspace_slug, agent_key))
+        return self.resolved
+
+
+class TestLlmCallForAgent:
+    """Verify BYOK runtime calls resolve workspace credentials and agent config."""
+
+    @pytest.mark.asyncio
+    async def test_uses_resolved_workspace_key_and_tracks_byok_metadata(self):
+        from core.content_engine.llm_client import llm_call_for_agent
+
+        resolved = ResolvedModelConfig(
+            workspace_id="workspace-1",
+            workspace_slug="test-co",
+            agent_key="content.brief_builder",
+            model="anthropic/claude-sonnet-4-6",
+            base_url="https://openrouter.test/api/v1",
+            api_key="sk-or-workspace",
+            credential_id="cred-1",
+            model_config_id="cfg-1",
+            temperature=0.2,
+            max_tokens=1234,
+            timeout_s=12.0,
+            extra_body={"provider": {"require_parameters": True}},
+        )
+        resolver = FakeModelConfigResolver(resolved)
+        mock_resp = _mock_openai_response(
+            content="BYOK output",
+            model="anthropic/claude-sonnet-4-6",
+            prompt_tokens=10,
+            completion_tokens=20,
+        )
+        mock_client = _mock_async_client(mock_resp)
+        metadata = {
+            "pipeline": "content_engine",
+            "pipeline_step": "brief_builder",
+            "company_slug": "test-co",
+            "run_id": "00000000-0000-0000-0000-000000000001",
+        }
+
+        with patch(
+            "core.shared_tools.openrouter_client.build_async_client_for_key",
+            return_value=mock_client,
+        ) as mock_factory, patch(
+            "core.content_engine.llm_client.track_llm_cost"
+        ) as mock_track, patch(
+            "core.shared_tools.openrouter_client.get_async_client"
+        ) as legacy_factory:
+            result = await llm_call_for_agent(
+                workspace_id="workspace-1",
+                workspace_slug="test-co",
+                agent_key="content.brief_builder",
+                system="sys",
+                user="usr",
+                metadata=metadata,
+                resolver=resolver,  # type: ignore[arg-type]
+            )
+
+        assert result.content == "BYOK output"
+        assert resolver.calls == [
+            ("workspace-1", "test-co", "content.brief_builder")
+        ]
+        mock_factory.assert_called_once_with(
+            "sk-or-workspace",
+            base_url="https://openrouter.test/api/v1",
+            timeout_s=12.0,
+        )
+        legacy_factory.assert_not_called()
+        call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["model"] == "anthropic/claude-sonnet-4-6"
+        assert call_kwargs["max_tokens"] == 1234
+        assert call_kwargs["temperature"] == 0.2
+        assert call_kwargs["extra_body"] == {
+            "provider": {"require_parameters": True},
+            "metadata": metadata,
+        }
+
+        mock_track.assert_called_once()
+        cost_kwargs = mock_track.call_args.kwargs
+        assert cost_kwargs["workspace_id"] == "workspace-1"
+        assert cost_kwargs["agent_key"] == "content.brief_builder"
+        assert cost_kwargs["credential_id"] == "cred-1"
+        assert cost_kwargs["model_config_id"] == "cfg-1"
+        assert cost_kwargs["workspace_billed"] is True
+        assert cost_kwargs["actual_provider"] == "anthropic"
+        assert cost_kwargs["prompt_tokens"] == 10
+        assert cost_kwargs["completion_tokens"] == 20
+
+    @pytest.mark.asyncio
+    async def test_request_overrides_runtime_options_only(self):
+        from core.content_engine.llm_client import llm_call_for_agent
+
+        resolved = ResolvedModelConfig(
+            workspace_id="workspace-1",
+            workspace_slug="test-co",
+            agent_key="content.brief_builder",
+            model="anthropic/claude-sonnet-4-6",
+            base_url="https://openrouter.test/api/v1",
+            api_key="sk-or-workspace",
+            credential_id="cred-1",
+            temperature=0.2,
+            max_tokens=1234,
+        )
+        mock_client = _mock_async_client(_mock_openai_response())
+
+        with patch(
+            "core.shared_tools.openrouter_client.build_async_client_for_key",
+            return_value=mock_client,
+        ), patch("core.content_engine.llm_client.track_llm_cost"):
+            await llm_call_for_agent(
+                workspace_id="workspace-1",
+                workspace_slug="test-co",
+                agent_key="content.brief_builder",
+                system="sys",
+                user="usr",
+                max_tokens=99,
+                temperature=0.7,
+                resolver=FakeModelConfigResolver(resolved),  # type: ignore[arg-type]
+            )
+
+        call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["max_tokens"] == 99
+        assert call_kwargs["temperature"] == 0.7
+
+    @pytest.mark.asyncio
+    async def test_retries_transient_failures(self):
+        from core.content_engine.llm_client import llm_call_for_agent
+
+        resolved = ResolvedModelConfig(
+            workspace_id="workspace-1",
+            workspace_slug="test-co",
+            agent_key="content.brief_builder",
+            model="anthropic/claude-sonnet-4-6",
+            base_url="https://openrouter.test/api/v1",
+            api_key="sk-or-workspace",
+            credential_id="cred-1",
+        )
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(
+            side_effect=[Exception("Transient"), _mock_openai_response(content="OK")]
+        )
+
+        with patch(
+            "core.shared_tools.openrouter_client.build_async_client_for_key",
+            return_value=mock_client,
+        ), patch(
+            "core.content_engine.llm_client.asyncio.sleep", new_callable=AsyncMock
+        ), patch("core.content_engine.llm_client.track_llm_cost"):
+            result = await llm_call_for_agent(
+                workspace_id="workspace-1",
+                workspace_slug="test-co",
+                agent_key="content.brief_builder",
+                system="sys",
+                user="usr",
+                resolver=FakeModelConfigResolver(resolved),  # type: ignore[arg-type]
+                max_retries=2,
+                base_delay=0.01,
+            )
+
+        assert result.content == "OK"
+        assert mock_client.chat.completions.create.call_count == 2
 
 
 # ═══════════════════════════════════════════════════════════════════════
