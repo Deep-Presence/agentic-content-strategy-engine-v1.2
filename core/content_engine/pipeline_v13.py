@@ -545,6 +545,7 @@ async def _rebrief_and_rerun(
     """
     try:
         _slug = getattr(input_data, "company_slug", "") or ""
+        _workspace_id = getattr(input_data, "workspace_id", "") or ""
 
         # Extract worker contexts from the blueprint's gap_context.
         # gap_context is a WorkerQueryContext Pydantic model — use attribute access,
@@ -587,6 +588,7 @@ async def _rebrief_and_rerun(
             parent_span=parent_span,
             brief_id_overrides=[rebrief_id],
             company_slug=_slug,
+            workspace_id=_workspace_id,
         )
         new_blueprints = [bp for bp in new_blueprints if bp is not None]
 
@@ -890,6 +892,7 @@ async def _run_pipeline_stages(
     """Internal stage execution — called by run_content_generation_v13 inside try/except."""
 
     _company_slug = slug.split("__")[0]  # company slug for company-wide SSE
+    workspace_id = getattr(input_data, "workspace_id", "") or ""
 
     # Initialize StorageBackend early — needed for Stage 0 artifact loading (CX-1 fix)
     from core.storage import get_storage_backend as _get_storage_backend
@@ -943,6 +946,7 @@ async def _run_pipeline_stages(
                 max_topics=input_data.max_topics,
                 parent_span=stage1_span,
                 company_slug=slug,
+                workspace_id=workspace_id,
             )
 
             # Save planner output
@@ -995,6 +999,7 @@ async def _run_pipeline_stages(
                     parent_span=stage1_span,
                     user_feedback=topic_feedback,
                     company_slug=slug,
+                    workspace_id=workspace_id,
                 )
                 if storage:
                     storage.write(planner_key, planner_output.model_dump_json(indent=2))
@@ -1131,6 +1136,7 @@ async def _run_pipeline_stages(
                 max_concurrent=input_data.max_concurrent_workers,
                 parent_span=stage2_span,
                 company_slug=slug,
+                workspace_id=workspace_id,
             )
             blueprints = [bp for bp in blueprints if bp is not None]
 
@@ -1239,6 +1245,7 @@ async def _run_pipeline_stages(
                                 parent_span=stage2_span,
                                 brief_id_overrides=[bp.brief_id],
                                 company_slug=slug,
+                                workspace_id=workspace_id,
                             )
                             revised = [r for r in revised if r is not None]
                             if revised:
@@ -1445,6 +1452,7 @@ async def _run_pipeline_stages(
             parent_span=pipeline_trace,
             brief_id_overrides=[_manual_brief_id],
             company_slug=slug,
+            workspace_id=workspace_id,
         )
         blueprints = [bp for bp in blueprints if bp is not None]
 
@@ -1543,6 +1551,7 @@ async def _run_pipeline_stages(
                             parent_span=pipeline_trace,
                             brief_id_overrides=[bp.brief_id],
                             company_slug=slug,
+                            workspace_id=workspace_id,
                         )
                         revised = [r for r in revised if r is not None]
                         if revised:
@@ -1663,6 +1672,7 @@ async def _run_pipeline_stages(
                 parent_span=pipeline_trace,
                 company_slug=slug,
                 brief_id_overrides=_td_overrides,
+                workspace_id=workspace_id,
             )
 
             # TD-title-fix: Preserve original topic titles from TopicAssignment.
@@ -1824,6 +1834,7 @@ async def _run_pipeline_stages(
                                     parent_span=pipeline_trace,
                                     brief_id_overrides=[bp.brief_id],
                                     company_slug=slug,
+                                    workspace_id=workspace_id,
                                 )
                                 revised = [r for r in revised if r is not None]
                                 if revised:

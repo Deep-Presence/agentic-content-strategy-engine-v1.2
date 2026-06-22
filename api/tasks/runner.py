@@ -859,6 +859,7 @@ async def run_content_v13_pipeline_task(
         )
 
     bind_context(task_id=task_id, pipeline_name="content_v13", company_slug=company_slug, run_id=str(run_id) if run_id else None)
+    input_data.workspace_id = _task.workspace_id or ""
 
     # Obtain async Redis client for pipeline state writes (non-blocking)
     # + sync Redis client for error-path cleanup (sync file ops anyway)
@@ -1766,6 +1767,7 @@ async def run_td_content_pipeline_task(
                 session_factory=session_factory,
                 run_id=run_id,
                 company_id=company_id,
+                workspace_id=workspace_id,
             )
 
             result = {
@@ -2279,6 +2281,7 @@ async def run_td_content_production_task(
                 company_id=company_id,
                 td_resume_payload=td_resume_payload,
                 td_resume_approval=td_resume_approval,
+                workspace_id=workspace_id,
             )
 
             result = {

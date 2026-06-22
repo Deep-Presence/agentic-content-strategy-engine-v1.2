@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from core.models.gap_analysis import GapReport
-from core.models.content_generation import ContentGenerationOutput
+from core.models.content_generation import ContentGenerationOutput, ContentPiece
 from core.models.topic_discovery import (
     BuyerStage,
     IntentType,
@@ -342,7 +342,7 @@ class TestContentProductionOnly:
         mock_output = ContentGenerationOutput(
             company_slug="test-co",
             total_briefs=1,
-            pieces=[],
+            pieces=[ContentPiece(brief_id="brief-001", title="Test")],
         )
 
         with patch(
@@ -352,12 +352,14 @@ class TestContentProductionOnly:
         ) as mock_storage_factory, patch(
             "core.orchestration.td_content_orchestrator._cleanup_ga_phase_redis",
         ) as mock_cleanup, patch(
+            "core.orchestration.td_content_orchestrator._update_ga_phase_status",
+        ), patch(
             "core.orchestration.td_content_orchestrator.PersonaStorage",
         ) as mock_ps, patch(
             "core.content_engine.pipeline_v13.run_content_generation_v13",
             new_callable=AsyncMock,
             return_value=mock_output,
-        ), patch(
+        ) as mock_ce, patch(
             "core.orchestration.td_content_orchestrator._update_assignment_statuses_db",
             new_callable=AsyncMock,
         ):
@@ -373,10 +375,12 @@ class TestContentProductionOnly:
                 domain="test.co",
                 ga_run_id=ga_run_id,
                 session_factory=mock_sf,
+                workspace_id="workspace-123",
             )
 
         assert output is mock_output
         mock_cleanup.assert_called_once_with("test-co", ["ta-1"])
+        assert mock_ce.call_args[0][0].workspace_id == "workspace-123"
 
     @pytest.mark.asyncio
     async def test_requires_session_factory(self) -> None:
@@ -400,7 +404,7 @@ class TestContentProductionOnly:
         mock_output = ContentGenerationOutput(
             company_slug="test-co",
             total_briefs=1,
-            pieces=[],
+            pieces=[ContentPiece(brief_id="brief-001", title="Test")],
         )
 
         with patch(
@@ -409,6 +413,8 @@ class TestContentProductionOnly:
             "core.storage.get_storage_backend",
         ) as mock_storage_factory, patch(
             "core.orchestration.td_content_orchestrator._cleanup_ga_phase_redis",
+        ), patch(
+            "core.orchestration.td_content_orchestrator._update_ga_phase_status",
         ), patch(
             "core.orchestration.td_content_orchestrator.PersonaStorage",
         ) as mock_ps, patch(
@@ -433,7 +439,7 @@ class TestContentProductionOnly:
                 session_factory=mock_sf,
             )
 
-        mock_update.assert_called_once()
-        call_args = mock_update.call_args[0]
+        assert mock_update.await_count == 2
+        call_args = mock_update.await_args_list[-1].args
         assert call_args[1] == ["ta-1"]
         assert call_args[2] == TopicAssignmentStatus.content_produced

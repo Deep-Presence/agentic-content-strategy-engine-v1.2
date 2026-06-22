@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 
 from core.config.settings import settings
 from core.content_engine.context_router import format_worker_context_as_markdown
-from core.content_engine.llm_client import llm_call
+from core.content_engine.llm_client import llm_call, llm_call_for_agent
 from core.content_engine.prompts.brief_builder_prompts import (
     BRIEF_BUILDER_SYSTEM_PROMPT,
     build_brief_builder_user_prompt,
@@ -45,6 +45,7 @@ async def build_brief(
     brief_id: str = "brief-001",
     parent_span: Optional[Any] = None,
     company_slug: str = "",
+    workspace_id: str = "",
 ) -> ContentBlueprint:
     """Build a detailed content blueprint from full query context.
 
@@ -97,25 +98,42 @@ async def build_brief(
     last_parse_error: Exception | None = None
 
     for parse_attempt in range(_MAX_PARSE_RETRIES + 1):
-        response = await llm_call(
-            model=model,
-            system=BRIEF_BUILDER_SYSTEM_PROMPT,
-            user=user_prompt,
-            max_tokens=8192,
-            temperature=0.0 if parse_attempt == 0 else 0.1,
-            response_format={"type": "json_object"},
-            metadata={
-                "agent": "brief_builder",
-                "brief_id": brief_id,
-                "cluster": topic_selection.cluster_name,
-                "parse_attempt": parse_attempt,
-                "pipeline": "content_engine",
-                "pipeline_step": "brief_builder",
-                "provider": extract_provider(model),
-                "model": model,
-                "company_slug": company_slug,
-            },
-        )
+        metadata = {
+            "agent": "brief_builder",
+            "agent_key": "content.brief_builder",
+            "brief_id": brief_id,
+            "cluster": topic_selection.cluster_name,
+            "parse_attempt": parse_attempt,
+            "pipeline": "content_engine",
+            "pipeline_step": "brief_builder",
+            "provider": extract_provider(model),
+            "model": model,
+            "company_slug": company_slug,
+        }
+        if workspace_id:
+            response = await llm_call_for_agent(
+                workspace_id=workspace_id,
+                workspace_slug=company_slug,
+                agent_key="content.brief_builder",
+                system=BRIEF_BUILDER_SYSTEM_PROMPT,
+                user=user_prompt,
+                max_tokens=8192,
+                temperature=0.0 if parse_attempt == 0 else 0.1,
+                response_format={"type": "json_object"},
+                metadata=metadata,
+            )
+        else:
+            # Direct/CLI calls keep the legacy platform client until the platform
+            # entrypoints enforce workspace-scoped BYOK preflight.
+            response = await llm_call(
+                model=model,
+                system=BRIEF_BUILDER_SYSTEM_PROMPT,
+                user=user_prompt,
+                max_tokens=8192,
+                temperature=0.0 if parse_attempt == 0 else 0.1,
+                response_format={"type": "json_object"},
+                metadata=metadata,
+            )
 
         try:
             blueprint = safe_parse(response.content, ContentBlueprint)
@@ -180,6 +198,7 @@ async def build_briefs_parallel(
     parent_span: Optional[Any] = None,
     brief_id_overrides: Optional[List[str]] = None,
     company_slug: str = "",
+    workspace_id: str = "",
 ) -> List[ContentBlueprint]:
     """Build briefs for multiple topics in parallel using semaphore control.
 
@@ -241,6 +260,7 @@ async def build_briefs_parallel(
                     brief_id=brief_id,
                     parent_span=span,
                     company_slug=company_slug,
+                    workspace_id=workspace_id,
                 )
             except Exception as exc:
                 logger.error(

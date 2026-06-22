@@ -43,6 +43,9 @@ class ContentGenerationInput(BaseModel):
     # When set, overrides the company_name-derived slug for artifact paths.
     # Empty string means "derive from company_name" (backward-compatible default).
     company_slug: str = ""
+    # Workspace scope for BYOK model configuration. Empty string preserves
+    # direct/CLI pipeline invocations that do not have workspace context.
+    workspace_id: str = ""
 
 
 # ---------------------------------------------------------------------------

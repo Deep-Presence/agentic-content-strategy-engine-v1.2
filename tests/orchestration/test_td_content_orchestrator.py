@@ -251,6 +251,7 @@ class TestRunTDToContentPipeline:
                 company_name="Test Co",
                 domain="test.co",
                 session_factory=mock_sf,
+                workspace_id="workspace-123",
             )
 
         assert output is mock_output
@@ -265,3 +266,4 @@ class TestRunTDToContentPipeline:
         ce_input = mock_ce.call_args[0][0]
         assert ce_input.entry_mode == EntryMode.TOPIC_DISCOVERY
         assert ce_input.topic_assignment_ids == ["ta-1"]
+        assert ce_input.workspace_id == "workspace-123"

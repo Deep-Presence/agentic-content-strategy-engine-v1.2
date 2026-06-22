@@ -53,6 +53,7 @@ def _make_input(
     auto_approve: bool = True,
     skip_stages: list | None = None,
     manual_prompt: str | None = None,
+    workspace_id: str = "",
 ) -> ContentGenerationInputV13:
     """Build a minimal ContentGenerationInputV13 with tmp_path artifacts."""
     # Create dummy artifacts
@@ -74,6 +75,7 @@ def _make_input(
         skip_stages=skip_stages or [],
         manual_prompt=manual_prompt,
         max_topics=3,
+        workspace_id=workspace_id,
     )
 
 
@@ -187,6 +189,35 @@ class TestAutonomousMode:
         assert result.company_slug == "test-co"
         assert result.total_briefs == 1
         assert result.total_approved == 1
+
+    @pytest.mark.asyncio
+    async def test_autonomous_mode_passes_workspace_to_planner_and_brief_builder(self, tmp_path):
+        input_data = _make_input(tmp_path, workspace_id="workspace-123")
+        blueprint = _make_blueprint()
+        formatted = _make_formatted()
+        history = RevisionHistory(brief_id="brief-001", final_passed=True)
+
+        with patch("core.content_engine.pipeline_v13.select_topics",
+                   new_callable=AsyncMock, return_value=_make_planner_output()) as mock_select, \
+             patch("core.content_engine.pipeline_v13.run_hitl_checkpoint",
+                   new_callable=AsyncMock, side_effect=[
+                       {"topic_decision": "approve", "approved_topic_ranks": [0]},
+                       {"brief_decision": "approve"},
+                       {"content_decision": "approve", "finalized": True},
+                   ]), \
+             patch("core.content_engine.pipeline_v13.extract_scorecard", return_value=MagicMock()), \
+             patch("core.content_engine.pipeline_v13.extract_worker_context",
+                   return_value={"q-001": WorkerQueryContext(query_gap={"query_id": "q-001"})}), \
+             patch("core.content_engine.pipeline_v13.build_briefs_parallel",
+                   new_callable=AsyncMock, return_value=[blueprint]) as mock_build, \
+             patch("core.content_engine.workers.dispatcher.dispatch_workers_v13",
+                   new_callable=AsyncMock, return_value=([(formatted.brief_id, formatted)], [])), \
+             patch("core.content_engine.evaluator.loop.evaluate_and_optimize",
+                   new_callable=AsyncMock, return_value=(formatted, history, "pass")):
+            await run_content_generation_v13(input_data)
+
+        assert mock_select.await_args.kwargs["workspace_id"] == "workspace-123"
+        assert mock_build.await_args.kwargs["workspace_id"] == "workspace-123"
 
     @pytest.mark.asyncio
     async def test_topic_rejection_stops_pipeline(self, tmp_path):

@@ -87,6 +87,32 @@ class TestBuildBrief:
         assert isinstance(result, ContentBrief)
 
     @pytest.mark.asyncio
+    async def test_uses_byok_agent_call_when_workspace_present(self, context, topic):
+        from core.content_engine.brief_builder import build_brief
+
+        resp = _make_llm_response(_blueprint_json())
+        with patch("core.content_engine.brief_builder.llm_call_for_agent",
+                   new_callable=AsyncMock, return_value=resp) as mock_byok, \
+             patch("core.content_engine.brief_builder.llm_call",
+                   new_callable=AsyncMock) as mock_legacy:
+            result = await build_brief(
+                context,
+                topic,
+                brief_id="brief-001",
+                company_slug="test-co",
+                workspace_id="workspace-123",
+            )
+
+        assert result.brief_id == "brief-001"
+        mock_legacy.assert_not_called()
+        mock_byok.assert_awaited_once()
+        kwargs = mock_byok.await_args.kwargs
+        assert kwargs["workspace_id"] == "workspace-123"
+        assert kwargs["workspace_slug"] == "test-co"
+        assert kwargs["agent_key"] == "content.brief_builder"
+        assert kwargs["metadata"]["agent_key"] == "content.brief_builder"
+
+    @pytest.mark.asyncio
     async def test_brief_id_set_correctly(self, context, topic):
         from core.content_engine.brief_builder import build_brief
 
@@ -157,6 +183,30 @@ class TestBuildBriefsParallel:
             results = await build_briefs_parallel(contexts=contexts, topics=topics)
 
         assert len(results) == 2
+
+    @pytest.mark.asyncio
+    async def test_parallel_passes_workspace_to_build_brief(self):
+        from core.content_engine.brief_builder import build_briefs_parallel
+
+        contexts = {
+            "q-001": WorkerQueryContext(query_gap={"query_id": "q-001"}),
+        }
+        topics = [TopicSelection(rank=1, query_ids=["q-001"])]
+        blueprint = ContentBlueprint(brief_id="brief-001", title="Test")
+
+        with patch("core.content_engine.brief_builder.build_brief",
+                   new_callable=AsyncMock, return_value=blueprint) as mock_build:
+            results = await build_briefs_parallel(
+                contexts=contexts,
+                topics=topics,
+                company_slug="test-co",
+                workspace_id="workspace-123",
+            )
+
+        assert results == [blueprint]
+        mock_build.assert_awaited_once()
+        assert mock_build.await_args.kwargs["company_slug"] == "test-co"
+        assert mock_build.await_args.kwargs["workspace_id"] == "workspace-123"
 
     @pytest.mark.asyncio
     async def test_missing_context_preserved_as_none(self):

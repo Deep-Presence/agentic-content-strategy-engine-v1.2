@@ -198,6 +198,7 @@ async def run_td_to_content_pipeline(
     session_factory: async_sessionmaker = None,  # type: ignore[assignment]
     run_id: Optional[uuid.UUID] = None,
     company_id: Optional[uuid.UUID] = None,
+    workspace_id: Optional[str] = None,
 ) -> ContentGenerationOutput:
     """Orchestrate TD → scoped GA → CE as a single pipeline.
 
@@ -225,6 +226,7 @@ async def run_td_to_content_pipeline(
         session_factory: Optional DB session factory.
         run_id: Optional pipeline run UUID.
         company_id: Optional company UUID.
+        workspace_id: Optional workspace UUID for BYOK model configuration.
 
     Returns:
         ContentGenerationOutput with pieces tagged by topic_assignment_id.
@@ -330,6 +332,7 @@ async def run_td_to_content_pipeline(
         product_slug=product_slug,
         product_name=product_name,
         product_description=product_description,
+        workspace_id=workspace_id or "",
         # Use scoped analysis for CE
         analysis_json_path=str(
             _PROJECT_ROOT / "artifacts" / "gap_analysis" / effective_slug
@@ -559,6 +562,7 @@ async def run_td_content_production_only(
     company_id: Optional[uuid.UUID] = None,
     td_resume_payload: Optional[dict[str, Any]] = None,
     td_resume_approval: Optional[dict[str, Any]] = None,
+    workspace_id: Optional[str] = None,
 ) -> ContentGenerationOutput:
     """Phase 2: Run Content Engine from pre-computed GA results.
 
@@ -625,6 +629,7 @@ async def run_td_content_production_only(
         product_slug=product_slug,
         product_name=product_name,
         product_description=product_description,
+        workspace_id=workspace_id or "",
         analysis_json_path=str(
             _PROJECT_ROOT / "artifacts" / "gap_analysis" / effective_slug
             / "topic_scoped" / ga_run_id / "analysis.json"

@@ -77,6 +77,30 @@ class TestSelectTopics:
         assert len(result.selections) == 2
 
     @pytest.mark.asyncio
+    async def test_uses_byok_agent_call_when_workspace_present(self, sample_scorecard):
+        from core.content_engine.strategic_planner import select_topics
+
+        resp = _make_llm_response(_planner_output_json())
+        with patch("core.content_engine.strategic_planner.llm_call_for_agent",
+                   new_callable=AsyncMock, return_value=resp) as mock_byok, \
+             patch("core.content_engine.strategic_planner.llm_call",
+                   new_callable=AsyncMock) as mock_legacy:
+            result = await select_topics(
+                sample_scorecard,
+                company_slug="test-co",
+                workspace_id="workspace-123",
+            )
+
+        assert len(result.selections) == 2
+        mock_legacy.assert_not_called()
+        mock_byok.assert_awaited_once()
+        kwargs = mock_byok.await_args.kwargs
+        assert kwargs["workspace_id"] == "workspace-123"
+        assert kwargs["workspace_slug"] == "test-co"
+        assert kwargs["agent_key"] == "content.strategic_planner"
+        assert kwargs["metadata"]["agent_key"] == "content.strategic_planner"
+
+    @pytest.mark.asyncio
     async def test_topic_ranking(self, sample_scorecard):
         from core.content_engine.strategic_planner import select_topics
 
