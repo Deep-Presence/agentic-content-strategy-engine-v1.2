@@ -9,10 +9,11 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 from typing import List, Tuple
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from core.models.content_generation_v13 import LLMResponse
 from core.models.reddit_hil import DraftNotification, RedditThread
 
 
@@ -105,6 +106,48 @@ class TestLlmSelectAndDraft:
         assert isinstance(results[0], DraftNotification)
         assert results[0].fit_score == pytest.approx(0.9)
         assert "helpful reply" in results[0].draft_markdown
+
+    def test_workspace_context_uses_byok_agent_wrapper(self) -> None:
+        from core.reddit_hil.graph import _llm_select_and_draft
+
+        response = LLMResponse(
+            content=_valid_json_response(),
+            model="google/gemini-3-flash-preview",
+            input_tokens=111,
+            output_tokens=44,
+            total_tokens=155,
+        )
+
+        with (
+            patch(
+                "core.content_engine.llm_client.llm_call_for_agent",
+                new_callable=AsyncMock,
+                return_value=response,
+            ) as mock_call,
+            patch(f"{_GRAPH_MOD}._get_llm") as mock_legacy,
+            patch(f"{_COST_MOD}.track_llm_cost") as mock_track,
+        ):
+            results = _llm_select_and_draft(
+                company_md="# Company",
+                persona_md="# Persona",
+                style_md="# Style",
+                candidates=_make_candidates(),
+                top_k=3,
+                workspace_id="ws-123",
+                workspace_slug="ramp",
+            )
+
+        assert len(results) == 1
+        mock_legacy.assert_not_called()
+        mock_track.assert_not_called()
+        mock_call.assert_awaited_once()
+        kwargs = mock_call.call_args.kwargs
+        assert kwargs["workspace_id"] == "ws-123"
+        assert kwargs["workspace_slug"] == "ramp"
+        assert kwargs["agent_key"] == "reddit_hil.ranking_drafting"
+        assert kwargs["metadata"]["pipeline"] == "reddit_hil"
+        assert kwargs["metadata"]["pipeline_step"] == "select_and_draft"
+        assert kwargs["metadata"]["company_slug"] == "ramp"
 
     def test_empty_content_raises(self) -> None:
         from core.reddit_hil.graph import _llm_select_and_draft

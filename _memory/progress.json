@@ -1,9 +1,9 @@
 {
   "current_sprint": "feat/byok-only-model-config",
-  "last_updated": "2026-06-23T00:34:50Z",
-  "test_count": 2177,
+  "last_updated": "2026-06-23T00:43:00Z",
+  "test_count": 2178,
   "completed_sprints_summary": {
-    "total_tasks_completed": 57,
+    "total_tasks_completed": 58,
     "sprints": [
       {
         "sprint": "feat/workspace-backend",
@@ -303,6 +303,21 @@
     ]
   },
   "completed": [
+    {
+      "id": "T-byok-reddit-hil-ranking-drafting",
+      "task": "BYOK Reddit HIL ranking/drafting - RedditMonitorInput now carries workspace context and the draft-selection LLM step resolves `reddit_hil.ranking_drafting` through the workspace BYOK model wrapper when workspace_id is present. The legacy ChatOpenAI OpenRouter builder remains only for no-workspace direct CLI/test callers.",
+      "sprint": "feat/byok-only-model-config",
+      "status": "done",
+      "completed_at": "2026-06-23",
+      "tests_added": 1,
+      "files_modified": [
+        "core/models/reddit_hil.py",
+        "core/reddit_hil/graph.py",
+        "core/reddit_hil/cli.py",
+        "tests/reddit_hil/test_graph_reddit_hil.py"
+      ],
+      "validation": "venv/bin/python -m pytest tests/reddit_hil/test_graph_reddit_hil.py tests/model_config/test_agent_catalog.py -q (13 passed); git diff --check; py_compile on changed runtime and test modules."
+    },
     {
       "id": "T-byok-daily-tracker-generators",
       "task": "BYOK Daily Tracker generators - query fanout and content-to-prompt generation now route through workspace model config when task workspace context exists. Fanout generation and CMS auto-prompt runners pass persisted task workspace scope into the generators; legacy direct-call OpenRouter singleton paths remain only for callers without workspace context. Daily Tracker platform engines remain Phase 4 native-provider remediation.",

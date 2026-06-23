@@ -20,6 +20,14 @@ class RedditMonitorInput(BaseModel):
         ...,
         description="Lowercase, dash-separated. Used for defaults + cache paths.",
     )
+    workspace_id: str = Field(
+        default="",
+        description="Workspace id used for BYOK model resolution.",
+    )
+    workspace_slug: str = Field(
+        default="",
+        description="Workspace slug used for BYOK model resolution.",
+    )
 
     # Artifact paths (DeepAgents/FilesystemBackend virtual paths)
     company_context_path: str
@@ -73,5 +81,4 @@ class DraftNotification(BaseModel):
     why_match: str
     draft_markdown: str
     metadata: Dict[str, str] = Field(default_factory=dict)
-
 
