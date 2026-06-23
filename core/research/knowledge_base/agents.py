@@ -313,6 +313,41 @@ async def run_brand_perception_agent(
         user_prompt = build_brand_perception_user_prompt(
             input_data, upstream_docs, revision_note=revision_note,
         )
+        bp_model = settings.research_kb_brand_perception_model
+        _bp_meta = {
+            "pipeline": "knowledge_base",
+            "pipeline_step": "brand_perception",
+            "provider": "openrouter" if input_data.workspace_id else "anthropic",
+            "model": bp_model,
+            "company_slug": input_data.company_slug or "",
+        }
+
+        if input_data.workspace_id:
+            from core.content_engine.llm_client import llm_call_for_agent
+
+            response = await llm_call_for_agent(
+                workspace_id=input_data.workspace_id,
+                workspace_slug=input_data.workspace_slug or input_data.company_slug or "",
+                agent_key="research.kb.brand_perception",
+                system=system_prompt,
+                user=user_prompt,
+                max_tokens=8192,
+                metadata=_bp_meta,
+            )
+            result_md = response.content
+            log_generation(
+                span, "brand-perception/byok", response.model or bp_model,
+                user_prompt[:2000], result_md[:2000],
+                metadata={**_bp_meta, "model": response.model or bp_model},
+            )
+            end_span(span, output={"word_count": len(result_md.split()) if result_md else 0})
+            return KBAgentResult(
+                doc_type=KBDocType.BRAND_PERCEPTION,
+                content_md=result_md,
+                word_count=len(result_md.split()) if result_md else 0,
+                execution_time_s=time.time() - start,
+                is_partial=False,
+            )
 
         client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         messages = [{"role": "user", "content": user_prompt}]
@@ -332,14 +367,6 @@ async def run_brand_perception_agent(
             ),
             timeout=timeout_s,
         )
-        bp_model = settings.research_kb_brand_perception_model
-        _bp_meta = {
-            "pipeline": "knowledge_base",
-            "pipeline_step": "brand_perception",
-            "provider": "anthropic",
-            "model": bp_model,
-            "company_slug": input_data.company_slug or "",
-        }
         from core.shared_tools.cost_tracker import extract_usage_anthropic_sdk, track_llm_cost
 
         _pt, _ct = extract_usage_anthropic_sdk(response)

@@ -458,6 +458,46 @@ class TestAuthorDiscovery:
         mock_litellm.acompletion.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_workspace_context_uses_byok_agent_wrapper(
+        self, vsg_input: VoiceStyleGuideInput, company_context_md: str, persona_mds: list[str],
+    ) -> None:
+        from core.models.content_generation_v13 import LLMResponse
+
+        byok_input = vsg_input.model_copy(
+            update={"workspace_id": "ws-123", "workspace_slug": "ramp"}
+        )
+        response = LLMResponse(
+            content=VALID_AUTHORS_JSON,
+            model="anthropic/claude-sonnet-4-6",
+            input_tokens=13,
+            output_tokens=9,
+            total_tokens=22,
+        )
+
+        with (
+            patch(
+                "core.content_engine.llm_client.llm_call_for_agent",
+                new_callable=AsyncMock,
+                return_value=response,
+            ) as mock_call,
+            patch("core.research.voice_style_guide.agents.litellm") as mock_litellm,
+        ):
+            briefs, elapsed = await asyncio.wait_for(
+                _import_and_run_discovery(byok_input, company_context_md, persona_mds),
+                timeout=10,
+            )
+
+        assert len(briefs) == 3
+        assert elapsed > 0
+        mock_litellm.acompletion.assert_not_called()
+        mock_call.assert_awaited_once()
+        kwargs = mock_call.await_args.kwargs
+        assert kwargs["workspace_id"] == "ws-123"
+        assert kwargs["workspace_slug"] == "ramp"
+        assert kwargs["agent_key"] == "research.vsg.author_discovery"
+        assert kwargs["metadata"]["pipeline_step"] == "author_discovery"
+
+    @pytest.mark.asyncio
     async def test_retry_on_malformed_json(
         self, vsg_input: VoiceStyleGuideInput, company_context_md: str, persona_mds: list[str],
     ) -> None:

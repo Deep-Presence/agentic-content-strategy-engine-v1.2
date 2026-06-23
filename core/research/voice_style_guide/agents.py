@@ -88,6 +88,20 @@ def _extract_assistant_continuation_content(response: Any, fallback_text: str) -
     return fallback_text
 
 
+def _messages_to_system_user(messages: List[Dict[str, Any]]) -> Tuple[str, str]:
+    """Flatten a role-based conversation into a system prompt and user payload."""
+    system = ""
+    user_parts: List[str] = []
+    for message in messages:
+        role = str(message.get("role") or "user")
+        content = message.get("content") or ""
+        if role == "system" and not system:
+            system = str(content)
+            continue
+        user_parts.append(f"{role.upper()}:\n{content}")
+    return system, "\n\n".join(user_parts)
+
+
 async def _run_discovery_completion(
     *,
     model: str,
@@ -434,36 +448,62 @@ async def run_author_discovery(
         )
 
         model = settings.voice_style_guide_discovery_model
-        api_key = settings.anthropic_api_key
-
-        # Web search tool for real-time author verification.
-        # Incompatible with response_format=json_object (citations conflict),
-        # so we rely on the system prompt for JSON instruction instead.
-        _web_search_tool = {
-            "type": "web_search_20250305",
-            "name": "web_search",
-            "max_uses": 5,
-        }
-
         _disc_meta = {
             "pipeline": "voice_style_guide",
             "pipeline_step": "author_discovery",
-            "provider": extract_provider(model),
+            "provider": "openrouter" if input_data.workspace_id else extract_provider(model),
             "model": model,
             "company_slug": input_data.company_slug or "",
         }
-        _, raw_text = await _run_discovery_completion(
-            model=model,
-            api_key=api_key,
-            messages=[
+
+        async def _run_discovery_messages(
+            messages: List[Dict[str, Any]],
+            *,
+            pipeline_step: str,
+        ) -> str:
+            if input_data.workspace_id:
+                from core.content_engine.llm_client import llm_call_for_agent
+
+                call_system, call_user = _messages_to_system_user(messages)
+                response = await llm_call_for_agent(
+                    workspace_id=input_data.workspace_id,
+                    workspace_slug=input_data.workspace_slug or input_data.company_slug or "",
+                    agent_key="research.vsg.author_discovery",
+                    system=call_system,
+                    user=call_user,
+                    temperature=0.7,
+                    max_tokens=8192,
+                    metadata={**_disc_meta, "pipeline_step": pipeline_step},
+                )
+                return response.content
+
+            api_key = settings.anthropic_api_key
+            # Web search tool for real-time author verification.
+            # Incompatible with response_format=json_object (citations conflict),
+            # so we rely on the system prompt for JSON instruction instead.
+            web_search_tool = {
+                "type": "web_search_20250305",
+                "name": "web_search",
+                "max_uses": 5,
+            }
+            _, text = await _run_discovery_completion(
+                model=model,
+                api_key=api_key,
+                messages=messages,
+                temperature=0.7,
+                max_tokens=8192,
+                tools=[web_search_tool],
+                timeout_s=timeout_s,
+                metadata={**_disc_meta, "pipeline_step": pipeline_step},
+            )
+            return text
+
+        raw_text = await _run_discovery_messages(
+            [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.7,
-            max_tokens=8192,
-            tools=[_web_search_tool],
-            timeout_s=timeout_s,
-            metadata=_disc_meta,
+            pipeline_step="author_discovery",
         )
         log_generation(
             span, "vsg-author-discovery", model,
@@ -490,20 +530,14 @@ async def run_author_discovery(
                 f"{{title, type, relevance}}), selection_rationale, per_persona_resonance."
             )
             try:
-                _, retry_text = await _run_discovery_completion(
-                    model=model,
-                    api_key=api_key,
-                    messages=[
+                retry_text = await _run_discovery_messages(
+                    [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                         {"role": "assistant", "content": raw_text},
                         {"role": "user", "content": repair_prompt},
                     ],
-                    temperature=0.7,
-                    max_tokens=8192,
-                    tools=[_web_search_tool],
-                    timeout_s=timeout_s,
-                    metadata=_disc_meta,
+                    pipeline_step="author_discovery_repair",
                 )
                 logger.info(
                     "Author discovery retry response length=%d, first 500 chars: %s",

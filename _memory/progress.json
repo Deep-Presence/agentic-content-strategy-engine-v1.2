@@ -1,9 +1,9 @@
 {
   "current_sprint": "feat/byok-only-model-config",
-  "last_updated": "2026-06-23T01:27:23Z",
-  "test_count": 2186,
+  "last_updated": "2026-06-23T01:39:25Z",
+  "test_count": 2188,
   "completed_sprints_summary": {
-    "total_tasks_completed": 60,
+    "total_tasks_completed": 61,
     "sprints": [
       {
         "sprint": "feat/workspace-backend",
@@ -303,6 +303,21 @@
     ]
   },
   "completed": [
+    {
+      "id": "T-byok-research-native-provider-remediation",
+      "task": "BYOK research native-provider remediation - workspace-backed KB brand perception now resolves `research.kb.brand_perception` through the BYOK wrapper instead of Anthropic SDK, and workspace-backed VSG author discovery resolves `research.vsg.author_discovery` through the BYOK wrapper instead of LiteLLM/native Anthropic tool calls. Legacy no-workspace branches remain for direct test/CLI compatibility until final enforcement cleanup.",
+      "sprint": "feat/byok-only-model-config",
+      "status": "done",
+      "completed_at": "2026-06-23",
+      "tests_added": 2,
+      "files_modified": [
+        "core/research/knowledge_base/agents.py",
+        "core/research/voice_style_guide/agents.py",
+        "tests/research/knowledge_base/test_agents.py",
+        "tests/research/voice_style_guide/test_agents_vsg.py"
+      ],
+      "validation": "venv/bin/python -m pytest tests/research/knowledge_base/test_agents.py tests/research/voice_style_guide/test_agents_vsg.py tests/model_config/test_agent_catalog.py -q (85 passed, 8 pre-existing async/mock and LangGraph deprecation warnings); git diff --check; py_compile on changed runtime and test modules."
+    },
     {
       "id": "T-byok-gap-daily-search-remediation",
       "task": "BYOK Gap/Daily Tracker search remediation - workspace-backed Gap S3 and Daily Tracker platform runs now filter native OpenAI/Claude/Gemini search engines and run only OpenRouter-routed Perplexity through workspace model config (`gap.search.perplexity` and `daily_tracker.platform.perplexity`). Perplexity fails closed if workspace context is present without a resolved BYOK client, and cost tracking receives workspace/agent/credential/model-config metadata.",

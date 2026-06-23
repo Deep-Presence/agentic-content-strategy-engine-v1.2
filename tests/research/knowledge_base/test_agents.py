@@ -353,6 +353,47 @@ class TestRunBrandPerceptionAgent:
         assert call_kwargs.kwargs.get("api_key") is not None or call_kwargs[1].get("api_key") is not None
 
     @pytest.mark.asyncio
+    async def test_workspace_context_uses_byok_agent_wrapper(
+        self, kb_input: KnowledgeBaseInput, upstream_docs: Dict[str, str],
+    ) -> None:
+        from core.models.content_generation_v13 import LLMResponse
+        from core.research.knowledge_base.agents import run_brand_perception_agent
+
+        byok_input = kb_input.model_copy(
+            update={"workspace_id": "ws-123", "workspace_slug": "test-co"}
+        )
+        response = LLMResponse(
+            content="# Brand Perception\n\nWorkspace-backed result.",
+            model="anthropic/claude-sonnet-4-6",
+            input_tokens=11,
+            output_tokens=7,
+            total_tokens=18,
+        )
+
+        with (
+            patch(
+                "core.content_engine.llm_client.llm_call_for_agent",
+                new_callable=AsyncMock,
+                return_value=response,
+            ) as mock_call,
+            patch(f"{_ANTHROPIC_PATCH}.AsyncAnthropic") as mock_native,
+        ):
+            result = await run_brand_perception_agent(
+                byok_input, upstream_docs, timeout_s=10,
+            )
+
+        assert result.error is None
+        assert result.doc_type == KBDocType.BRAND_PERCEPTION
+        assert "Workspace-backed result" in result.content_md
+        mock_native.assert_not_called()
+        mock_call.assert_awaited_once()
+        kwargs = mock_call.await_args.kwargs
+        assert kwargs["workspace_id"] == "ws-123"
+        assert kwargs["workspace_slug"] == "test-co"
+        assert kwargs["agent_key"] == "research.kb.brand_perception"
+        assert kwargs["metadata"]["pipeline_step"] == "brand_perception"
+
+    @pytest.mark.asyncio
     async def test_pause_turn_continuation(
         self, kb_input: KnowledgeBaseInput, upstream_docs: Dict[str, str],
     ) -> None:
