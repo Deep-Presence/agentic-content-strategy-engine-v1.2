@@ -5,8 +5,8 @@ query variants across 6 intent axes via a single structured OpenRouter call.
 These variants are stored as child ``tracked_prompts`` rows and tracked daily
 alongside the parent prompt.
 
-Uses the shared OpenRouter client (``core.shared_tools.openrouter_client``),
-matching the pattern established by ``core.content_engine.llm_client``.
+Uses workspace BYOK routing when workspace context is supplied, with the
+legacy shared OpenRouter client retained for older tests and direct callers.
 
 Does NOT:
     - Persist prompts (caller's responsibility via PromptLibraryService)
@@ -103,8 +103,8 @@ def _build_user_prompt(
 class QueryFanoutService:
     """Generates intent-axis query variants from a parent prompt via OpenRouter.
 
-    Uses the shared ``get_async_client()`` client and ``track_llm_cost()``
-    for unified cost tracking.
+    Uses workspace BYOK routing when workspace context is supplied. The legacy
+    shared OpenRouter client path is retained for older tests/direct callers.
 
     Constructor args match settings defaults — callers can override per-call
     or inject from ``core.config.settings``.
@@ -131,6 +131,9 @@ class QueryFanoutService:
         brand_category: str = "",
         competitors: list[str] | None = None,
         target_count: int = 15,
+        workspace_id: str = "",
+        workspace_slug: str = "",
+        company_slug: str = "",
     ) -> FanoutGenerationResult:
         """Generate query variants for a parent prompt.
 
@@ -148,7 +151,7 @@ class QueryFanoutService:
             ``FanoutGenerationResult`` with generated queries and token usage.
 
         Raises:
-            RuntimeError: If OpenRouter API key is not configured.
+            RuntimeError: If OpenRouter/BYOK API key is not configured.
             Exception: If all retries exhausted.
         """
         from core.shared_tools.openrouter_client import (
@@ -158,8 +161,6 @@ class QueryFanoutService:
         from core.shared_tools.cost_tracker import track_llm_cost
 
         model = _ensure_model_prefix(self._model)
-        client = get_async_client()
-
         user_prompt = _build_user_prompt(
             parent_text,
             brand_name,
@@ -185,46 +186,76 @@ class QueryFanoutService:
 
         for attempt in range(self._max_retries):
             try:
-                response = await client.chat.completions.create(**kwargs)
+                if workspace_id:
+                    from core.content_engine.llm_client import llm_call_for_agent
 
-                choice = response.choices[0]
-                usage = response.usage
-                raw_content = choice.message.content or "{}"
+                    response = await llm_call_for_agent(
+                        workspace_id=workspace_id,
+                        workspace_slug=workspace_slug or company_slug,
+                        agent_key="daily_tracker.fanout",
+                        system=_SYSTEM_PROMPT,
+                        user=user_prompt,
+                        max_tokens=self._max_tokens,
+                        temperature=self._temperature,
+                        response_format={"type": "json_object"},
+                        metadata={
+                            "pipeline": "daily_tracker",
+                            "pipeline_step": "fanout_generation",
+                            "company_slug": company_slug or workspace_slug,
+                        },
+                        max_retries=1,
+                        base_delay=self._base_delay,
+                    )
+                    raw_content = response.content or "{}"
+                    token_usage = {
+                        "prompt_tokens": response.input_tokens,
+                        "completion_tokens": response.output_tokens,
+                        "total_tokens": response.total_tokens,
+                    }
+                    response_model = response.model or model
+                else:
+                    client = get_async_client()
+                    response = await client.chat.completions.create(**kwargs)
 
-                # Cost tracking (never raises)
-                track_llm_cost(
-                    model=response.model or model,
-                    provider="openrouter",
-                    pipeline="daily_tracker",
-                    pipeline_step="fanout_generation",
-                    prompt_tokens=usage.prompt_tokens if usage else 0,
-                    completion_tokens=usage.completion_tokens if usage else 0,
-                    company_slug="",
-                    call_site="core.daily_tracker.query_fanout",
-                    source="openrouter",
-                )
+                    choice = response.choices[0]
+                    usage = response.usage
+                    raw_content = choice.message.content or "{}"
+
+                    # Cost tracking (never raises)
+                    track_llm_cost(
+                        model=response.model or model,
+                        provider="openrouter",
+                        pipeline="daily_tracker",
+                        pipeline_step="fanout_generation",
+                        prompt_tokens=usage.prompt_tokens if usage else 0,
+                        completion_tokens=usage.completion_tokens if usage else 0,
+                        company_slug=company_slug,
+                        call_site="core.daily_tracker.query_fanout",
+                        source="openrouter",
+                    )
+
+                    token_usage = {
+                        "prompt_tokens": usage.prompt_tokens if usage else 0,
+                        "completion_tokens": usage.completion_tokens if usage else 0,
+                        "total_tokens": usage.total_tokens if usage else 0,
+                    }
+                    response_model = response.model or model
 
                 # Parse JSON response
                 queries = self._parse_response(raw_content)
-
-                token_usage = {
-                    "prompt_tokens": usage.prompt_tokens if usage else 0,
-                    "completion_tokens": usage.completion_tokens if usage else 0,
-                    "total_tokens": usage.total_tokens if usage else 0,
-                }
 
                 logger.info(
                     "Fanout generation completed: %d queries from '%s' "
                     "(model=%s, tokens=%s)",
                     len(queries),
                     parent_text[:60],
-                    model,
+                    response_model,
                     token_usage.get("total_tokens", 0),
                 )
 
                 return FanoutGenerationResult(
                     queries=queries,
-                    model_used=response.model or model,
+                    model_used=response_model,
                     token_usage=token_usage,
                 )
 

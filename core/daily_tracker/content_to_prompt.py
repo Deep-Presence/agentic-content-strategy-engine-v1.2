@@ -2,7 +2,7 @@
 
 Given a published content page's metadata, generates k AI visibility tracking
 prompts spanning buyer stages (TOFU/MOFU/BOFU) and intent types using a single
-structured LLM call via OpenRouter.
+structured LLM call via workspace BYOK routing when workspace context exists.
 
 Architecture follows ``QueryFanoutService`` — pure generation, no DB access.
 Caller (orchestrator) handles dedup, persistence, and approval flow.
@@ -125,9 +125,8 @@ def compute_content_hash(page: PageContext) -> str:
 class ContentToPromptService:
     """Generates AI visibility prompts from content inventory page metadata.
 
-    Uses the shared OpenRouter client (``core.shared_tools.openrouter_client``)
-    and ``track_llm_cost()`` for cost tracking.  Architecture mirrors
-    ``QueryFanoutService``.
+    Uses workspace BYOK routing when workspace context is supplied. The legacy
+    shared OpenRouter client path is retained for older tests/direct callers.
     """
 
     def __init__(
@@ -151,6 +150,9 @@ class ContentToPromptService:
         brand_category: str = "",
         competitors: list[str] | None = None,
         k: int = 6,
+        workspace_id: str = "",
+        workspace_slug: str = "",
+        company_slug: str = "",
     ) -> PagePromptGenerationResult:
         """Generate k visibility prompts for a single page.
 
@@ -168,7 +170,7 @@ class ContentToPromptService:
             PagePromptGenerationResult with generated prompts.
 
         Raises:
-            RuntimeError: If OpenRouter API key is not configured.
+            RuntimeError: If OpenRouter/BYOK API key is not configured.
             Exception: If all retries exhausted.
         """
         from core.shared_tools.openrouter_client import (
@@ -178,8 +180,6 @@ class ContentToPromptService:
         from core.shared_tools.cost_tracker import track_llm_cost
 
         model = _ensure_model_prefix(self._model)
-        client = get_async_client()
-
         system_prompt = _SYSTEM_PROMPT.replace("{k}", str(k))
         user_prompt = _build_user_prompt(
             page, brand_name, brand_category, competitors or [], k,
@@ -202,45 +202,75 @@ class ContentToPromptService:
 
         for attempt in range(self._max_retries):
             try:
-                response = await client.chat.completions.create(**kwargs)
+                if workspace_id:
+                    from core.content_engine.llm_client import llm_call_for_agent
 
-                choice = response.choices[0]
-                usage = response.usage
-                raw_content = choice.message.content or "{}"
+                    response = await llm_call_for_agent(
+                        workspace_id=workspace_id,
+                        workspace_slug=workspace_slug or company_slug,
+                        agent_key="daily_tracker.content_to_prompt",
+                        system=system_prompt,
+                        user=user_prompt,
+                        max_tokens=self._max_tokens,
+                        temperature=self._temperature,
+                        response_format={"type": "json_object"},
+                        metadata={
+                            "pipeline": "content_to_prompt",
+                            "pipeline_step": "generate_prompts",
+                            "company_slug": company_slug or workspace_slug,
+                        },
+                        max_retries=1,
+                        base_delay=self._base_delay,
+                    )
+                    raw_content = response.content or "{}"
+                    token_usage = {
+                        "prompt_tokens": response.input_tokens,
+                        "completion_tokens": response.output_tokens,
+                        "total_tokens": response.total_tokens,
+                    }
+                    response_model = response.model or model
+                else:
+                    client = get_async_client()
+                    response = await client.chat.completions.create(**kwargs)
 
-                track_llm_cost(
-                    model=response.model or model,
-                    provider="openrouter",
-                    pipeline="content_to_prompt",
-                    pipeline_step="generate_prompts",
-                    prompt_tokens=usage.prompt_tokens if usage else 0,
-                    completion_tokens=usage.completion_tokens if usage else 0,
-                    company_slug="",
-                    call_site="core.daily_tracker.content_to_prompt",
-                    source="openrouter",
-                )
+                    choice = response.choices[0]
+                    usage = response.usage
+                    raw_content = choice.message.content or "{}"
+
+                    track_llm_cost(
+                        model=response.model or model,
+                        provider="openrouter",
+                        pipeline="content_to_prompt",
+                        pipeline_step="generate_prompts",
+                        prompt_tokens=usage.prompt_tokens if usage else 0,
+                        completion_tokens=usage.completion_tokens if usage else 0,
+                        company_slug=company_slug,
+                        call_site="core.daily_tracker.content_to_prompt",
+                        source="openrouter",
+                    )
+
+                    token_usage = {
+                        "prompt_tokens": usage.prompt_tokens if usage else 0,
+                        "completion_tokens": usage.completion_tokens if usage else 0,
+                        "total_tokens": usage.total_tokens if usage else 0,
+                    }
+                    response_model = response.model or model
 
                 prompts = self._parse_response(raw_content)
-
-                token_usage = {
-                    "prompt_tokens": usage.prompt_tokens if usage else 0,
-                    "completion_tokens": usage.completion_tokens if usage else 0,
-                    "total_tokens": usage.total_tokens if usage else 0,
-                }
 
                 logger.info(
                     "Content-to-prompt generation completed: %d prompts for '%s' "
                     "(model=%s, tokens=%s)",
                     len(prompts),
                     page.title[:60],
-                    model,
+                    response_model,
                     token_usage.get("total_tokens", 0),
                 )
 
                 return PagePromptGenerationResult(
                     inventory_id=page.inventory_id,
                     prompts=prompts,
-                    model_used=response.model or model,
+                    model_used=response_model,
                     token_usage=token_usage,
                 )
 
@@ -270,6 +300,9 @@ class ContentToPromptService:
         competitors: list[str] | None = None,
         k: int = 6,
         concurrency: int = 8,
+        workspace_id: str = "",
+        workspace_slug: str = "",
+        company_slug: str = "",
     ) -> list[PagePromptGenerationResult]:
         """Generate prompts for multiple pages with bounded concurrency.
 
@@ -291,7 +324,14 @@ class ContentToPromptService:
             async with sem:
                 try:
                     return await self.generate_prompts_for_page(
-                        page, brand_name, brand_category, competitors, k,
+                        page,
+                        brand_name,
+                        brand_category,
+                        competitors,
+                        k,
+                        workspace_id=workspace_id,
+                        workspace_slug=workspace_slug,
+                        company_slug=company_slug,
                     )
                 except Exception as exc:
                     logger.error(

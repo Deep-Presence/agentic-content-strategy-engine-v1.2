@@ -21,6 +21,7 @@ def _make_event_bus() -> MagicMock:
 
 def _make_task_store() -> MagicMock:
     task_store = MagicMock()
+    task_store.get_task = MagicMock(return_value=None)
     task_store.update_task = MagicMock()
     task_store.release_slug_lock = MagicMock()
     task_store.remove_task_handle = MagicMock()
@@ -85,6 +86,11 @@ async def test_run_fanout_generation_task_enqueues_cannibalization_recompute():
     impacted_inventory_ids = [uuid.uuid4()]
     session_factory, session = _make_session_factory()
     task_store = _make_task_store()
+    task_store.get_task.return_value = SimpleNamespace(
+        company_slug="test-co",
+        product_slug=None,
+        workspace_id="ws-123",
+    )
     event_bus = _make_event_bus()
 
     tracked_prompt_repo = MagicMock()
@@ -136,6 +142,10 @@ async def test_run_fanout_generation_task_enqueues_cannibalization_recompute():
         )
 
     session.commit.assert_awaited_once()
+    fanout_service.generate_fanout.assert_awaited_once()
+    assert fanout_service.generate_fanout.await_args.kwargs["workspace_id"] == "ws-123"
+    assert fanout_service.generate_fanout.await_args.kwargs["workspace_slug"] == "test-co"
+    assert fanout_service.generate_fanout.await_args.kwargs["company_slug"] == "test-co"
     mock_spawn.assert_awaited_once()
     assert mock_spawn.await_args.kwargs["source"] == "daily_tracker_fanout_generation"
     assert mock_spawn.await_args.kwargs["inventory_ids"] == impacted_inventory_ids

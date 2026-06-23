@@ -277,6 +277,30 @@ class TestRunForPages:
         assert metadata["intent_type"] == "commercial"
         assert create_call.kwargs["source"] == "content_inventory"
 
+    @pytest.mark.asyncio
+    async def test_passes_workspace_context_to_generator(
+        self, orchestrator, mock_generator, mock_inventory_repo,
+    ):
+        page_id = uuid.uuid4()
+        mock_inventory_repo.get_by_id = AsyncMock(return_value=_make_inventory_item(id=page_id))
+        mock_generator.generate_prompts_batch = AsyncMock(
+            return_value=[_make_gen_result(str(page_id), prompts=[])]
+        )
+
+        await orchestrator.run_for_pages(
+            company_id="test-co",
+            company_uuid=None,
+            page_ids=[page_id],
+            brand_name="Brand",
+            workspace_id="ws-123",
+            workspace_slug="test-co",
+        )
+
+        kwargs = mock_generator.generate_prompts_batch.await_args.kwargs
+        assert kwargs["workspace_id"] == "ws-123"
+        assert kwargs["workspace_slug"] == "test-co"
+        assert kwargs["company_slug"] == "test-co"
+
 
 # ── regenerate_for_page tests ─────��───────────────────────────────────
 

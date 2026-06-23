@@ -253,18 +253,28 @@ def _task_runner_slugs(
     fallback_company_slug: str | None = None,
 ) -> tuple[str, str | None, str | None]:
     """Resolve slug scope from persisted task state, not stale request bodies."""
+    task_company_slug = getattr(task, "company_slug", None) if task else None
+    task_product_slug = getattr(task, "product_slug", None) if task else None
+    task_workspace_id = getattr(task, "workspace_id", None) if task else None
+    request_company_name = getattr(request, company_name_attr, None) if request else None
+    request_product_slug = getattr(request, "product_slug", None) if request else None
+
     company_slug = (
-        task.company_slug
-        if task and task.company_slug
+        task_company_slug
+        if isinstance(task_company_slug, str) and task_company_slug
         else fallback_company_slug
-        or _derive_slug(getattr(request, company_name_attr, None) or "")
+        or _derive_slug(request_company_name if isinstance(request_company_name, str) else "")
     )
     product_slug = (
-        task.product_slug
-        if task and task.product_slug
-        else getattr(request, "product_slug", None)
+        task_product_slug
+        if isinstance(task_product_slug, str) and task_product_slug
+        else request_product_slug if isinstance(request_product_slug, str) else None
     )
-    workspace_id = task.workspace_id if task else None
+    workspace_id = (
+        task_workspace_id
+        if isinstance(task_workspace_id, str) and task_workspace_id
+        else None
+    )
     return company_slug, product_slug, workspace_id
 
 
@@ -3150,6 +3160,12 @@ async def run_fanout_generation_task(
         task_store: Task persistence store.
         event_bus: SSE event bus for real-time progress streaming.
     """
+    _task = _task_or_none(task_store, task_id)
+    task_company_slug, _product_slug, workspace_id = _task_runner_slugs(
+        _task, None, fallback_company_slug=company_slug,
+    )
+    company_slug = task_company_slug
+
     session_factory: Any = None
     bind_context(task_id=task_id, pipeline_name="fanout_generation", company_slug=company_slug)
     try:
@@ -3190,6 +3206,9 @@ async def run_fanout_generation_task(
             brand_category=brand_category,
             competitors=competitors,
             target_count=settings.daily_tracker_fanout_target_count,
+            workspace_id=workspace_id or "",
+            workspace_slug=company_slug,
+            company_slug=company_slug,
         )
 
         # Persist fanout queries as tracked_prompts children
@@ -3264,6 +3283,12 @@ async def run_cms_sync_task(
     for any **newly discovered** pages (capped at ``auto_prompt_max_pages``).
     Prompt generation failures do NOT fail the overall sync task.
     """
+    _task = _task_or_none(task_store, task_id)
+    task_company_slug, _product_slug, workspace_id = _task_runner_slugs(
+        _task, None, fallback_company_slug=company_slug,
+    )
+    company_slug = task_company_slug
+
     bind_context(task_id=task_id, pipeline_name="cms_sync", company_slug=company_slug)
     task_store.update_task(task_id, status=TaskStatus.RUNNING, current_step="sync")
     event_bus.publish(task_id, "pipeline_start", {"pipeline": "cms_sync"})
@@ -3325,6 +3350,8 @@ async def run_cms_sync_task(
                 await _run_auto_prompt_generation(
                     task_id=task_id,
                     company_slug=company_slug,
+                    workspace_id=workspace_id or "",
+                    workspace_slug=company_slug,
                     new_page_ids=new_page_ids,
                     session_factory=session_factory,
                     event_bus=event_bus,
@@ -3378,6 +3405,8 @@ async def _run_auto_prompt_generation(
     event_bus: EventBusProtocol,
     task_store: TaskStoreProtocol,
     result: dict[str, Any],
+    workspace_id: str = "",
+    workspace_slug: str = "",
 ) -> None:
     """Generate AI visibility prompts for newly discovered pages.
 
@@ -3450,6 +3479,8 @@ async def _run_auto_prompt_generation(
                 brand_name=brand_name,
                 k=6,
                 auto_approve=True,
+                workspace_id=workspace_id,
+                workspace_slug=workspace_slug or company_slug,
             )
 
             await session.commit()

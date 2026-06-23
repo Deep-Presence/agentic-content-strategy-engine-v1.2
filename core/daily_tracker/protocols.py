@@ -104,6 +104,9 @@ class QueryFanoutServiceProtocol(Protocol):
         brand_category: str = "",
         competitors: list[str] | None = None,
         target_count: int = 15,
+        workspace_id: str = "",
+        workspace_slug: str = "",
+        company_slug: str = "",
     ) -> FanoutGenerationResult: ...
 
 

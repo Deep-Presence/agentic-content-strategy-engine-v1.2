@@ -256,6 +256,52 @@ class TestGenerateForPage:
         assert result.token_usage["total_tokens"] == 300
 
     @pytest.mark.asyncio
+    async def test_workspace_context_uses_byok_llm_wrapper(
+        self, service: ContentToPromptService, sample_page: PageContext,
+    ):
+        llm_output = _make_llm_response([
+            {"query_text": "What is AP automation?", "buyer_stage": "tofu", "intent_type": "informational"},
+        ])
+        response = MagicMock(
+            content=llm_output,
+            model="anthropic/claude-sonnet-4-6",
+            input_tokens=11,
+            output_tokens=22,
+            total_tokens=33,
+        )
+
+        with (
+            patch(
+                "core.content_engine.llm_client.llm_call_for_agent",
+                new_callable=AsyncMock,
+                return_value=response,
+            ) as mock_call,
+            patch("core.shared_tools.openrouter_client.get_async_client") as mock_platform,
+        ):
+            result = await service.generate_prompts_for_page(
+                sample_page,
+                "Ramp",
+                "Finance",
+                ["Brex"],
+                k=6,
+                workspace_id="ws-123",
+                workspace_slug="ramp",
+                company_slug="ramp",
+            )
+
+        assert len(result.prompts) == 1
+        assert result.model_used == "anthropic/claude-sonnet-4-6"
+        assert result.token_usage["total_tokens"] == 33
+        mock_platform.assert_not_called()
+        mock_call.assert_awaited_once()
+        kwargs = mock_call.call_args.kwargs
+        assert kwargs["workspace_id"] == "ws-123"
+        assert kwargs["workspace_slug"] == "ramp"
+        assert kwargs["agent_key"] == "daily_tracker.content_to_prompt"
+        assert kwargs["metadata"]["pipeline_step"] == "generate_prompts"
+        assert kwargs["metadata"]["company_slug"] == "ramp"
+
+    @pytest.mark.asyncio
     async def test_retries_on_failure(self, sample_page: PageContext):
         svc = ContentToPromptService(model="test", max_retries=2, base_delay=0.01)
 

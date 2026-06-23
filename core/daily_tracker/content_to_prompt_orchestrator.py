@@ -73,6 +73,8 @@ class ContentToPromptOrchestrator:
         competitors: list[str] | None = None,
         k: int = 6,
         auto_approve: bool = True,
+        workspace_id: str = "",
+        workspace_slug: str = "",
     ) -> ContentToPromptRunResult:
         """Generate and persist prompts for the given content inventory pages.
 
@@ -86,6 +88,8 @@ class ContentToPromptOrchestrator:
             k: Number of prompts per page (4-12, default 6).
             auto_approve: If True, prompts are immediately active. If False,
                 prompts are created as inactive + link.approved=False.
+            workspace_id: Workspace id used for BYOK model resolution.
+            workspace_slug: Workspace slug used for BYOK model resolution.
 
         Returns:
             ContentToPromptRunResult summary.
@@ -128,6 +132,9 @@ class ContentToPromptOrchestrator:
             brand_category,
             competitors,
             k=k,
+            workspace_id=workspace_id,
+            workspace_slug=workspace_slug,
+            company_slug=company_id,
         )
 
         # 3. Dedup + persist per page
@@ -251,6 +258,8 @@ class ContentToPromptOrchestrator:
         competitors: list[str] | None = None,
         k: int = 6,
         auto_approve: bool = True,
+        workspace_id: str = "",
+        workspace_slug: str = "",
     ) -> ContentToPromptRunResult:
         """Re-generate prompts for a page. Deletes old non-edited links first.
 
@@ -295,4 +304,6 @@ class ContentToPromptOrchestrator:
             competitors=competitors,
             k=k,
             auto_approve=auto_approve,
+            workspace_id=workspace_id,
+            workspace_slug=workspace_slug,
         )
