@@ -588,7 +588,15 @@ async def run_gap_analysis(
                         else visualization_paths,
                     )
                 else:
-                    report = await generate_gap_report(analysis, queries, enriched, trace_span=s8_span, company_slug=slug)
+                    report = await generate_gap_report(
+                        analysis,
+                        queries,
+                        enriched,
+                        trace_span=s8_span,
+                        company_slug=slug,
+                        workspace_id=input_data.workspace_id,
+                        workspace_slug=input_data.workspace_slug,
+                    )
                     report.visualization_paths = list(visualization_paths.values())
                     save_report(report, storage, ga_prefix, analysis=analysis)
                 s8_elapsed = time.monotonic() - step_start
@@ -724,6 +732,8 @@ async def run_topic_scoped_gap_analysis(
             product_slug=base_input.product_slug,
             product_description=base_input.product_description,
             company_slug=slug,
+            workspace_id=base_input.workspace_id,
+            workspace_slug=base_input.workspace_slug,
             storage=storage,
         )
         storage.write(

@@ -380,17 +380,10 @@ async def run_gap_pipeline_task(
     artifact paths from disk, and constructs GapAnalysisInput internally.
     """
     _task = _task_or_none(task_store, task_id)
-    company_slug = (
-        _task.company_slug
-        if _task and _task.company_slug
-        else _derive_slug(request.company_name)
+    company_slug, product_slug, workspace_id = _task_runner_slugs(
+        _task,
+        request,
     )
-    product_slug = (
-        _task.product_slug
-        if _task and _task.product_slug
-        else getattr(request, "product_slug", None)
-    )
-    workspace_id = _task.workspace_id if _task else None
     scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
 
     # Resolve DB context for Phase 4 persistence
@@ -444,6 +437,8 @@ async def run_gap_pipeline_task(
                 company_name=request.company_name,
                 domain=domain,
                 company_slug=scope.effective_slug,  # artifact dir uses effective slug
+                workspace_id=workspace_id or "",
+                workspace_slug=scope.company_slug,
                 seed_urls=request.seed_urls or [f"https://{domain}/"],
                 company_context_path=resolved["company_context_path"],
                 persona_paths=resolved["persona_paths"],

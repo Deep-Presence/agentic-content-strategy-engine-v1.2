@@ -47,6 +47,47 @@ class TestAsyncCallOpenAI:
         assert result == "test report output"
         assert isinstance(usage, dict)
 
+    @pytest.mark.asyncio
+    async def test_workspace_context_uses_byok_agent_wrapper(self):
+        """Workspace-backed report generation uses the BYOK agent wrapper."""
+        from core.models.content_generation_v13 import LLMResponse
+        from core.gap_analysis.steps.s8_generate_report import _call_openai
+
+        response = LLMResponse(
+            content='{"executive_summary": "ok", "recommendations": []}',
+            model="openai/gpt-5.2",
+            input_tokens=33,
+            output_tokens=11,
+            total_tokens=44,
+        )
+
+        with (
+            patch(
+                "core.content_engine.llm_client.llm_call_for_agent",
+                new_callable=AsyncMock,
+                return_value=response,
+            ) as mock_call,
+            patch("core.shared_tools.openrouter_client.get_async_client") as mock_platform,
+        ):
+            result, usage = await _call_openai(
+                "prompt",
+                "gpt-5.2",
+                workspace_id="ws-123",
+                workspace_slug="ramp",
+                company_slug="ramp",
+            )
+
+        assert result == '{"executive_summary": "ok", "recommendations": []}'
+        assert usage["total_tokens"] == 44
+        mock_platform.assert_not_called()
+        mock_call.assert_awaited_once()
+        kwargs = mock_call.call_args.kwargs
+        assert kwargs["workspace_id"] == "ws-123"
+        assert kwargs["workspace_slug"] == "ramp"
+        assert kwargs["agent_key"] == "gap.report_generation"
+        assert kwargs["metadata"]["pipeline_step"] == "s8_report"
+        assert kwargs["metadata"]["company_slug"] == "ramp"
+
 
 class TestAsyncGenerateGapReport:
     """Tests for async generate_gap_report."""

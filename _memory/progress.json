@@ -1,9 +1,9 @@
 {
   "current_sprint": "feat/byok-only-model-config",
-  "last_updated": "2026-06-23T00:43:00Z",
-  "test_count": 2178,
+  "last_updated": "2026-06-23T01:00:31Z",
+  "test_count": 2181,
   "completed_sprints_summary": {
-    "total_tasks_completed": 58,
+    "total_tasks_completed": 59,
     "sprints": [
       {
         "sprint": "feat/workspace-backend",
@@ -303,6 +303,24 @@
     ]
   },
   "completed": [
+    {
+      "id": "T-byok-gap-query-report-generation",
+      "task": "BYOK Gap Analysis query/report generation - GapAnalysisInput now carries workspace context, task runner persists workspace scope into Gap runs, S2 seed/fill/topic query generation resolves `gap.query_generation`, and S8 executive report generation resolves `gap.report_generation` through the workspace BYOK model wrapper. Native Gap search engines remain Phase 4 provider remediation.",
+      "sprint": "feat/byok-only-model-config",
+      "status": "done",
+      "completed_at": "2026-06-23",
+      "tests_added": 3,
+      "files_modified": [
+        "api/tasks/runner.py",
+        "core/models/gap_analysis.py",
+        "core/gap_analysis/pipeline.py",
+        "core/gap_analysis/steps/s2_generate_queries.py",
+        "core/gap_analysis/steps/s8_generate_report.py",
+        "tests/gap_analysis/steps/test_s2_generate_queries.py",
+        "tests/gap_analysis/steps/test_s8_generate_report.py"
+      ],
+      "validation": "venv/bin/python -m pytest tests/gap_analysis/steps/test_s2_generate_queries.py tests/gap_analysis/steps/test_s8_generate_report.py tests/api/test_runner_workspace_scope.py tests/gap_analysis/test_pipeline.py tests/gap_analysis/test_topic_scoped_pipeline.py tests/api/test_gap_runner.py -q (80 passed); git diff --check; py_compile on changed runtime and test modules. LangSmith emitted restricted-network warnings after pytest, but tests exited successfully."
+    },
     {
       "id": "T-byok-reddit-hil-ranking-drafting",
       "task": "BYOK Reddit HIL ranking/drafting - RedditMonitorInput now carries workspace context and the draft-selection LLM step resolves `reddit_hil.ranking_drafting` through the workspace BYOK model wrapper when workspace_id is present. The legacy ChatOpenAI OpenRouter builder remains only for no-workspace direct CLI/test callers.",

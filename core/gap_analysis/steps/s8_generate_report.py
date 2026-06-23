@@ -23,7 +23,35 @@ from core.storage.backends.base import StorageBackend
 logger = logging.getLogger(__name__)
 
 
-async def _call_openai(prompt: str, model: str) -> tuple[str, dict[str, int]]:
+async def _call_openai(
+    prompt: str,
+    model: str,
+    *,
+    workspace_id: str = "",
+    workspace_slug: str = "",
+    company_slug: str = "",
+) -> tuple[str, dict[str, int]]:
+    if workspace_id:
+        from core.content_engine.llm_client import llm_call_for_agent
+
+        response = await llm_call_for_agent(
+            workspace_id=workspace_id,
+            workspace_slug=workspace_slug or company_slug,
+            agent_key="gap.report_generation",
+            system="You write B2B gap-analysis executive summaries and return valid JSON only.",
+            user=prompt,
+            metadata={
+                "pipeline": "gap_analysis",
+                "pipeline_step": "s8_report",
+                "company_slug": company_slug or workspace_slug,
+            },
+        )
+        return response.content, {
+            "prompt_tokens": response.input_tokens,
+            "completion_tokens": response.output_tokens,
+            "total_tokens": response.total_tokens,
+        }
+
     from core.shared_tools.openrouter_client import get_async_client, _ensure_model_prefix
     from core.shared_tools.cost_tracker import track_llm_cost
 
@@ -383,6 +411,8 @@ async def generate_gap_report(
     *,
     trace_span: Optional[Any] = None,
     company_slug: str = "",
+    workspace_id: str = "",
+    workspace_slug: str = "",
 ) -> GapReport:
     model_name = model or settings.gap_analysis_report_model
 
@@ -394,7 +424,16 @@ async def generate_gap_report(
     llm_prompt = _build_llm_summary_prompt(analysis)
     try:
         t0 = time.monotonic()
-        llm_response, _s8_usage = await _call_openai(llm_prompt, model_name)
+        if workspace_id:
+            llm_response, _s8_usage = await _call_openai(
+                llm_prompt,
+                model_name,
+                workspace_id=workspace_id,
+                workspace_slug=workspace_slug,
+                company_slug=company_slug,
+            )
+        else:
+            llm_response, _s8_usage = await _call_openai(llm_prompt, model_name)
         llm_payload = _extract_json(llm_response)
         executive_summary = llm_payload.get("executive_summary", "")
         recommendations = llm_payload.get("recommendations", [])
@@ -402,7 +441,7 @@ async def generate_gap_report(
         logger.info("S8 LLM summary: model=%s, elapsed=%.1fs, recommendations=%d", model_name, elapsed, len(recommendations))
         if trace_span:
             log_generation(trace_span, "s8-executive-summary", model_name, llm_prompt[:500], llm_response[:500], usage=_s8_usage,
-                           metadata={"pipeline": "gap_analysis", "pipeline_step": "s8_report", "provider": "openai", "model": model_name,
+                           metadata={"pipeline": "gap_analysis", "pipeline_step": "s8_report", "provider": "openrouter", "model": model_name,
                                      "company_slug": company_slug})
     except Exception as exc:
         logger.warning("S8 LLM summary generation failed: %s", exc)

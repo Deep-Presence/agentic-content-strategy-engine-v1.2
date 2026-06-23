@@ -98,6 +98,14 @@ class GapAnalysisInput(BaseModel):
     company_slug: Optional[str] = Field(
         default=None, description="If omitted, derived from company_name."
     )
+    workspace_id: str = Field(
+        default="",
+        description="Workspace id used for BYOK model resolution.",
+    )
+    workspace_slug: str = Field(
+        default="",
+        description="Workspace slug used for BYOK model resolution.",
+    )
     seed_urls: List[HttpUrl] = Field(
         default_factory=list, description="Seed URLs for crawling company assets."
     )
