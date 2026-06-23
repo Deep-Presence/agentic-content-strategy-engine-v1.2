@@ -27,6 +27,9 @@ async def extract_competitor_registry_json(
     company_name: str = "",
     model: str | None = None,
     parent_span: Any = None,
+    company_slug: str = "",
+    workspace_id: str = "",
+    workspace_slug: str = "",
 ) -> Optional[Dict[str, Any]]:
     """Extract structured competitor data from markdown via LLM.
 
@@ -49,7 +52,7 @@ async def extract_competitor_registry_json(
 
     try:
         from core.config.settings import settings
-        from core.content_engine.llm_client import llm_call
+        from core.content_engine.llm_client import llm_call, llm_call_for_agent
         from core.models.knowledge_base import CompetitorRegistryStructured
         from core.research.prompts.competitor_extractor import (
             build_competitor_extractor_user_prompt,
@@ -61,18 +64,31 @@ async def extract_competitor_registry_json(
         system_prompt = get_competitor_extractor_system_prompt()
         user_prompt = build_competitor_extractor_user_prompt(content_md, company_name)
 
-        response = await llm_call(
-            model=extraction_model,
-            system=system_prompt,
-            user=user_prompt,
-            max_tokens=4096,
-            temperature=0.0,
-            metadata={
-                "pipeline": "knowledge_base",
-                "pipeline_step": "competitor_extraction",
-                "company_slug": company_name,
-            },
-        )
+        metadata = {
+            "pipeline": "knowledge_base",
+            "pipeline_step": "competitor_extraction",
+            "company_slug": company_slug or company_name,
+        }
+        if workspace_id:
+            response = await llm_call_for_agent(
+                workspace_id=workspace_id,
+                workspace_slug=workspace_slug or company_slug or company_name,
+                agent_key="research.kb.competitor_extractor",
+                system=system_prompt,
+                user=user_prompt,
+                max_tokens=4096,
+                temperature=0.0,
+                metadata=metadata,
+            )
+        else:
+            response = await llm_call(
+                model=extraction_model,
+                system=system_prompt,
+                user=user_prompt,
+                max_tokens=4096,
+                temperature=0.0,
+                metadata=metadata,
+            )
 
         # Log generation to LangSmith with full token/cost metadata
         from core.shared_tools.tracing import log_generation
@@ -88,7 +104,7 @@ async def extract_competitor_registry_json(
                 "pipeline_step": "competitor_extraction",
                 "provider": "anthropic",
                 "model": response.model or extraction_model,
-                "company_slug": company_name,
+                "company_slug": company_slug or company_name,
             },
             usage={
                 "prompt_tokens": response.input_tokens,

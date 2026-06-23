@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.config.settings import settings
+from core.model_config.runtime import actual_provider, resolve_model_config_for_agent
 from core.shared_tools.openrouter_client import get_async_client, _ensure_model_prefix
 from core.models.audience_persona import (
     AudiencePersonaInput,
@@ -39,6 +40,72 @@ _MIN_BRIEFS = 3
 
 # Regex to strip markdown code fences from LLM JSON responses.
 _CODE_FENCE_RE = re.compile(r"^```(?:json)?\s*\n(.*?)\n```\s*$", re.DOTALL)
+
+
+async def _run_persona_suggester_completion(
+    *,
+    input_data: AudiencePersonaInput,
+    system_prompt: str,
+    user_prompt: str,
+    model: str,
+    pipeline_step: str,
+    timeout_s: float,
+) -> str:
+    """Run the persona suggester through BYOK when workspace context exists."""
+    metadata = {
+        "pipeline": "audience_persona",
+        "pipeline_step": pipeline_step,
+        "provider": "google",
+        "model": model,
+        "company_slug": input_data.company_slug or "",
+    }
+    if input_data.workspace_id:
+        from core.content_engine.llm_client import llm_call_for_agent
+
+        response = await llm_call_for_agent(
+            workspace_id=input_data.workspace_id,
+            workspace_slug=input_data.workspace_slug or input_data.company_slug or "",
+            agent_key="research.ap.suggester",
+            system=system_prompt,
+            user=user_prompt,
+            response_format={"type": "json_object"},
+            temperature=0.7,
+            max_tokens=4096,
+            metadata=metadata,
+        )
+        return response.content
+
+    client = get_async_client()
+    response = await asyncio.wait_for(
+        client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.7,
+            max_tokens=4096,
+            extra_body={"metadata": metadata},
+        ),
+        timeout=timeout_s,
+    )
+
+    from core.shared_tools.cost_tracker import track_llm_cost
+
+    _usage = getattr(response, "usage", None)
+    track_llm_cost(
+        model=model,
+        provider="openrouter",
+        pipeline="audience_persona",
+        pipeline_step=pipeline_step,
+        prompt_tokens=getattr(_usage, "prompt_tokens", 0) or 0,
+        completion_tokens=getattr(_usage, "completion_tokens", 0) or 0,
+        company_slug=input_data.company_slug or "",
+        call_site="core.research.audience_persona.agents",
+        source="openrouter",
+    )
+    return response.choices[0].message.content or ""
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +246,6 @@ async def run_persona_suggester(
     start = time.time()
 
     try:
-        client = get_async_client()
         model = _ensure_model_prefix(settings.audience_persona_suggester_model)
 
         system_prompt = get_persona_suggester_system_prompt().format(
@@ -197,38 +263,14 @@ async def run_persona_suggester(
             "company_slug": input_data.company_slug or "",
         }
 
-        response = await asyncio.wait_for(
-            client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                response_format={"type": "json_object"},
-                temperature=0.7,
-                max_tokens=4096,
-                extra_body={"metadata": _meta},
-            ),
-            timeout=timeout_s,
-        )
-
-        # Cost tracking (never raises)
-        from core.shared_tools.cost_tracker import track_llm_cost
-
-        _usage = getattr(response, "usage", None)
-        track_llm_cost(
+        raw_text = await _run_persona_suggester_completion(
+            input_data=input_data,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
             model=model,
-            provider="openrouter",
-            pipeline="audience_persona",
             pipeline_step="persona_suggester",
-            prompt_tokens=getattr(_usage, "prompt_tokens", 0) or 0,
-            completion_tokens=getattr(_usage, "completion_tokens", 0) or 0,
-            company_slug=input_data.company_slug or "",
-            call_site="core.research.audience_persona.agents",
-            source="openrouter",
+            timeout_s=timeout_s,
         )
-
-        raw_text = response.choices[0].message.content or ""
         log_generation(
             span, "persona-suggester", model,
             user_prompt[:2000], raw_text[:2000],
@@ -249,33 +291,14 @@ async def run_persona_suggester(
                 f"Each must have: persona_name, tagline, description, rationale (list of strings)."
             )
             try:
-                retry_response = await asyncio.wait_for(
-                    client.chat.completions.create(
-                        model=model,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": repair_prompt},
-                        ],
-                        response_format={"type": "json_object"},
-                        temperature=0.7,
-                        max_tokens=4096,
-                        extra_body={"metadata": _meta},
-                    ),
-                    timeout=timeout_s,
-                )
-                _retry_usage = getattr(retry_response, "usage", None)
-                track_llm_cost(
+                retry_text = await _run_persona_suggester_completion(
+                    input_data=input_data,
+                    system_prompt=system_prompt,
+                    user_prompt=repair_prompt,
                     model=model,
-                    provider="openrouter",
-                    pipeline="audience_persona",
                     pipeline_step="persona_suggester_retry",
-                    prompt_tokens=getattr(_retry_usage, "prompt_tokens", 0) or 0,
-                    completion_tokens=getattr(_retry_usage, "completion_tokens", 0) or 0,
-                    company_slug=input_data.company_slug or "",
-                    call_site="core.research.audience_persona.agents",
-                    source="openrouter",
+                    timeout_s=timeout_s,
                 )
-                retry_text = retry_response.choices[0].message.content or ""
                 retry_cleaned = _strip_code_fences(retry_text)
                 retry_raw = _parse_json_array(retry_cleaned)
                 retry_briefs, retry_errors = _validate_briefs(retry_raw, input_data.max_personas)
@@ -356,24 +379,52 @@ async def run_persona_profile_generator(
         )
         full_prompt = f"{system_prompt}\n\n{user_prompt}"
 
+        resolved = None
+        if input_data.workspace_id:
+            resolved = await resolve_model_config_for_agent(
+                workspace_id=input_data.workspace_id,
+                workspace_slug=input_data.workspace_slug or input_data.company_slug or "",
+                agent_key="research.ap.profile_generator",
+            )
+        effective_model = (
+            resolved.model
+            if resolved is not None
+            else settings.audience_persona_generator_model
+        )
+        resolved_timeout = getattr(resolved, "timeout_s", None) if resolved is not None else None
+        effective_timeout_s = (
+            resolved_timeout if isinstance(resolved_timeout, (int, float)) else timeout_s
+        )
         result_md, _pplx_usage = await asyncio.wait_for(
             asyncio.to_thread(
                 perplexity_client.research,
                 query=full_prompt,
-                timeout_s=timeout_s,
+                timeout_s=effective_timeout_s,
+                model=effective_model,
+                pipeline="audience_persona",
+                pipeline_step="persona_generator",
+                company_slug=input_data.company_slug or "",
+                api_key=getattr(resolved, "api_key", None),
+                base_url=getattr(resolved, "base_url", None),
+                workspace_id=input_data.workspace_id if resolved is not None else None,
+                agent_key="research.ap.profile_generator" if resolved is not None else "",
+                credential_id=getattr(resolved, "credential_id", None),
+                model_config_id=getattr(resolved, "model_config_id", None),
+                actual_provider=actual_provider(effective_model) if resolved is not None else "",
+                workspace_billed=resolved is not None,
             ),
-            timeout=timeout_s,
+            timeout=effective_timeout_s,
         )
 
         log_generation(
             span, f"persona-generator-{brief.persona_name}",
-            settings.audience_persona_generator_model,
+            effective_model,
             full_prompt[:2000], result_md[:2000] if result_md else "",
             metadata={
                 "pipeline": "audience_persona",
                 "pipeline_step": "persona_generator",
                 "provider": "perplexity",
-                "model": settings.audience_persona_generator_model,
+                "model": effective_model,
                 "company_slug": input_data.company_slug or "",
             },
             usage=_pplx_usage,

@@ -124,7 +124,7 @@ def all_agent_definitions() -> list[AgentDefinition]:
         _agent("research.ap.suggester", "Persona Suggester", "Audience Persona", "research_ap", "suggester", s.audience_persona_suggester_model, capabilities=(chat, structured)),
         _agent("research.ap.profile_generator", "Persona Profile Generator", "Audience Persona", "research_ap", "profile_generator", s.audience_persona_generator_model, capabilities=(chat, deep_research, web_citations)),
         _agent("research.vsg.author_discovery", "Author Discovery", "Voice Style Guide", "research_vsg", "author_discovery", s.voice_style_guide_discovery_model, capabilities=(chat, web_citations)),
-        _agent("research.vsg.author_research", "Author Research", "Voice Style Guide", "research_vsg", "author_research", s.voice_style_guide_discovery_model, capabilities=(chat, web_citations)),
+        _agent("research.vsg.author_research", "Author Research", "Voice Style Guide", "research_vsg", "author_research", s.perplexity_deep_research_model, capabilities=(chat, deep_research, web_citations)),
         _agent("research.vsg.synthesis", "Voice Synthesis", "Voice Style Guide", "research_vsg", "synthesis", s.voice_style_guide_synthesis_model, capabilities=(chat, structured)),
         _agent("daily_tracker.fanout", "Query Fanout", "Daily Tracker", "daily_tracker", "fanout", s.daily_tracker_fanout_model, capabilities=(chat, structured), default_temperature=s.daily_tracker_fanout_temperature),
         _agent("daily_tracker.content_to_prompt", "Content To Prompt", "Daily Tracker", "daily_tracker", "content_to_prompt", s.daily_tracker_fanout_model, capabilities=(chat, structured), default_temperature=s.daily_tracker_fanout_temperature),

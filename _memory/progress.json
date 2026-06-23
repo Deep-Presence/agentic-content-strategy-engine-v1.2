@@ -1,9 +1,9 @@
 {
   "current_sprint": "feat/byok-only-model-config",
-  "last_updated": "2026-06-22T23:23:28Z",
-  "test_count": 2167,
+  "last_updated": "2026-06-23T00:06:50Z",
+  "test_count": 2174,
   "completed_sprints_summary": {
-    "total_tasks_completed": 55,
+    "total_tasks_completed": 56,
     "sprints": [
       {
         "sprint": "feat/workspace-backend",
@@ -303,6 +303,35 @@
     ]
   },
   "completed": [
+    {
+      "id": "T-byok-research-artifact-agents",
+      "task": "BYOK research artifact agents - KB/AP/VSG input contracts now carry workspace context; KB Perplexity agents, KB synthesis, KB competitor extraction, AP suggester/profile generator, and VSG author research/synthesis resolve workspace OpenRouter configs. Native KB brand-perception and VSG author-discovery web-search tool paths remain separate provider-behavior work.",
+      "sprint": "feat/byok-only-model-config",
+      "status": "done",
+      "completed_at": "2026-06-23",
+      "tests_added": 7,
+      "files_modified": [
+        "api/tasks/runner.py",
+        "core/model_config/__init__.py",
+        "core/model_config/agent_catalog.py",
+        "core/model_config/runtime.py",
+        "core/models/audience_persona.py",
+        "core/models/knowledge_base.py",
+        "core/models/research_orchestrator.py",
+        "core/models/voice_style_guide.py",
+        "core/research/audience_persona/agents.py",
+        "core/research/knowledge_base/agents.py",
+        "core/research/knowledge_base/extraction.py",
+        "core/research/knowledge_base/pipeline.py",
+        "core/research/orchestrator.py",
+        "core/research/voice_style_guide/agents.py",
+        "tests/research/audience_persona/test_agents_ap.py",
+        "tests/research/knowledge_base/test_agents.py",
+        "tests/research/knowledge_base/test_competitor_extraction.py",
+        "tests/research/voice_style_guide/test_agents_vsg.py"
+      ],
+      "validation": "venv/bin/python -m pytest targeted BYOK research-agent tests -q (7 passed); venv/bin/python -m pytest tests/research/audience_persona/test_agents_ap.py tests/research/voice_style_guide/test_agents_vsg.py tests/research/knowledge_base/test_agents.py tests/research/knowledge_base/test_competitor_extraction.py -q (141 passed, 10 pre-existing warnings); venv/bin/python -m pytest tests/model_config/test_agent_catalog.py tests/research/knowledge_base/test_pipeline_kb.py tests/research/audience_persona/test_pipeline_ap.py tests/research/voice_style_guide/test_pipeline_vsg.py tests/research/test_orchestrator.py tests/api/test_runner_workspace_scope.py -q (184 passed); git diff --check; py_compile on changed runtime and test modules; progress.json validated as JSON. LangSmith emitted restricted-network upload warnings after pytest, but tests exited successfully."
+    },
     {
       "id": "T-byok-topic-discovery-embeddings",
       "task": "BYOK Topic Discovery embeddings — shared sync/async embedding helpers now accept explicit workspace OpenRouter model/key/base URL/timeout plus usage-attribution metadata, and Topic Discovery dedup resolves `shared.embeddings.default` for workspace runs instead of using the platform singleton client.",

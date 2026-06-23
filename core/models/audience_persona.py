@@ -139,6 +139,8 @@ class AudiencePersonaInput(BaseModel):
     company_name: str
     domain: Optional[str] = None
     company_slug: Optional[str] = None
+    workspace_id: str = ""
+    workspace_slug: str = ""
     product_slug: Optional[str] = None
     product_name: Optional[str] = None
     max_personas: int = Field(default=5, ge=3, le=7)

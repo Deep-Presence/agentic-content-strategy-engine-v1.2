@@ -112,6 +112,8 @@ class VoiceStyleGuideInput(BaseModel):
     company_name: str
     domain: Optional[str] = None
     company_slug: Optional[str] = None
+    workspace_id: str = ""
+    workspace_slug: str = ""
     product_slug: Optional[str] = None
     product_name: Optional[str] = None
     max_authors: int = Field(default=VSG_MAX_AUTHORS_LIMIT, ge=VSG_MIN_AUTHORS, le=VSG_MAX_AUTHORS_LIMIT)

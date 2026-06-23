@@ -232,6 +232,34 @@ class TestExtractCompetitorRegistryJson:
         assert result["extraction_model"] == "anthropic/claude-haiku-4-5"
         assert "T" in result["extraction_timestamp"]  # ISO format
 
+    @pytest.mark.asyncio
+    async def test_workspace_context_uses_byok_llm_wrapper(self):
+        response_json = json.dumps(SAMPLE_COMPETITOR_JSON)
+
+        with (
+            patch("core.content_engine.llm_client.llm_call_for_agent", new_callable=AsyncMock, return_value=_make_llm_response(response_json)) as mock_call,
+            patch("core.content_engine.llm_client.llm_call", new_callable=AsyncMock) as mock_platform,
+        ):
+            from core.research.knowledge_base.extraction import (
+                extract_competitor_registry_json,
+            )
+
+            result = await extract_competitor_registry_json(
+                SAMPLE_MARKDOWN,
+                company_name="Webflow",
+                company_slug="webflow",
+                workspace_id="ws-123",
+                workspace_slug="webflow",
+            )
+
+        assert result is not None
+        mock_platform.assert_not_called()
+        mock_call.assert_awaited_once()
+        assert mock_call.call_args.kwargs["workspace_id"] == "ws-123"
+        assert mock_call.call_args.kwargs["workspace_slug"] == "webflow"
+        assert mock_call.call_args.kwargs["agent_key"] == "research.kb.competitor_extractor"
+        assert mock_call.call_args.kwargs["metadata"]["company_slug"] == "webflow"
+
 
 # ── Model Tests ───────────────────────────────────────────────────
 

@@ -182,6 +182,8 @@ class KnowledgeBaseInput(BaseModel):
     domain: Optional[str] = None
     company_slug: Optional[str] = None
     company_id: Optional[str] = None
+    workspace_id: str = ""
+    workspace_slug: str = ""
     product_slug: Optional[str] = None
     product_name: Optional[str] = None
     seed_urls: List[str] = Field(default_factory=list)

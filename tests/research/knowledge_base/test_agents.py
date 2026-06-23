@@ -70,6 +70,49 @@ class TestRunCompanyOverviewAgent:
         assert result.execution_time_s > 0
 
     @pytest.mark.asyncio
+    async def test_workspace_context_routes_perplexity_through_byok_config(
+        self, kb_input: KnowledgeBaseInput, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from core.research.knowledge_base.agents import run_company_overview_agent
+
+        byok_input = kb_input.model_copy(
+            update={"workspace_id": "ws-123", "workspace_slug": "test-co"}
+        )
+        resolved = MagicMock(
+            model="perplexity/sonar-deep-research",
+            api_key="sk-workspace",
+            base_url="https://openrouter.workspace/api/v1",
+            credential_id="cred-123",
+            model_config_id="cfg-123",
+        )
+        mock_client = MagicMock()
+        mock_client.research = MagicMock(return_value=("# Company Overview\n\nGreat content.", {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}))
+        monkeypatch.setattr(_PERPLEXITY_PATCH, mock_client)
+
+        with patch(
+            f"{_TRACING_PATCH_BASE}.resolve_model_config_for_agent",
+            new_callable=AsyncMock,
+            return_value=resolved,
+        ) as mock_resolve:
+            result = await run_company_overview_agent(byok_input, timeout_s=10)
+
+        assert result.error is None
+        mock_resolve.assert_awaited_once_with(
+            workspace_id="ws-123",
+            workspace_slug="test-co",
+            agent_key="research.kb.company_overview",
+        )
+        kwargs = mock_client.research.call_args.kwargs
+        assert kwargs["model"] == "perplexity/sonar-deep-research"
+        assert kwargs["api_key"] == "sk-workspace"
+        assert kwargs["base_url"] == "https://openrouter.workspace/api/v1"
+        assert kwargs["workspace_id"] == "ws-123"
+        assert kwargs["agent_key"] == "research.kb.company_overview"
+        assert kwargs["credential_id"] == "cred-123"
+        assert kwargs["model_config_id"] == "cfg-123"
+        assert kwargs["workspace_billed"] is True
+
+    @pytest.mark.asyncio
     async def test_timeout_returns_error(self, kb_input: KnowledgeBaseInput, monkeypatch: pytest.MonkeyPatch) -> None:
         from core.research.knowledge_base.agents import run_company_overview_agent
 
@@ -969,6 +1012,52 @@ class TestSynthesisAgentDeltaMode:
         mock_full_user.assert_called_once()
         mock_delta_sys.assert_not_called()
         mock_delta_user.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_workspace_context_uses_byok_chat_model(
+        self, kb_input: KnowledgeBaseInput, tmp_path: Path,
+    ) -> None:
+        from core.research.knowledge_base.agents import run_synthesis_agent
+
+        byok_input = kb_input.model_copy(
+            update={"workspace_id": "ws-123", "workspace_slug": "test-co"}
+        )
+        resolved = MagicMock(
+            model="anthropic/claude-sonnet-4-5",
+            api_key="sk-workspace",
+            base_url="https://openrouter.workspace/api/v1",
+            temperature=None,
+            max_tokens=None,
+            credential_id="cred-123",
+            model_config_id="cfg-123",
+        )
+
+        with (
+            patch(f"{_AGENTS_MOD}.create_react_agent", return_value=_mock_synthesis_agent()),
+            patch(f"{_AGENTS_MOD}.resolve_model_config_for_agent", new_callable=AsyncMock, return_value=resolved) as mock_resolve,
+            patch(f"{_AGENTS_MOD}.build_chat_openai_for_key", return_value=MagicMock()) as mock_byok_builder,
+            patch(f"{_AGENTS_MOD}.build_chat_openai_via_openrouter") as mock_platform_builder,
+        ):
+            result = await run_synthesis_agent(
+                input_data=byok_input,
+                kb_base_dir=tmp_path,
+                available_docs={"company_overview": "p1", "customer_reviews": "p2", "competitor_registry": "p3"},
+                missing_docs=[],
+                timeout_s=10,
+            )
+
+        assert result.error is None
+        mock_resolve.assert_awaited_once_with(
+            workspace_id="ws-123",
+            workspace_slug="test-co",
+            agent_key="research.kb.synthesis",
+        )
+        mock_byok_builder.assert_called_once_with(
+            "sk-workspace",
+            "anthropic/claude-sonnet-4-5",
+            base_url="https://openrouter.workspace/api/v1",
+        )
+        mock_platform_builder.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_delta_mode_min_3_docs_still_required(

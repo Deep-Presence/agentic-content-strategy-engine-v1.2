@@ -532,6 +532,54 @@ class TestAuthorResearch:
         assert result.execution_time_s > 0
 
     @pytest.mark.asyncio
+    async def test_workspace_context_routes_author_research_through_byok_config(
+        self, author_brief: AuthorBrief, vsg_input: VoiceStyleGuideInput, company_context_md: str,
+    ) -> None:
+        byok_input = vsg_input.model_copy(
+            update={"workspace_id": "ws-123", "workspace_slug": "ramp"}
+        )
+        resolved = MagicMock(
+            model="perplexity/sonar-deep-research",
+            api_key="sk-workspace",
+            base_url="https://openrouter.workspace/api/v1",
+            credential_id="cred-123",
+            model_config_id="cfg-123",
+        )
+        mock_md = "# Morgan Housel Style Analysis"
+
+        with (
+            patch(
+                "core.research.voice_style_guide.agents.resolve_model_config_for_agent",
+                new_callable=AsyncMock,
+                return_value=resolved,
+            ) as mock_resolve,
+            patch(
+                "core.research.voice_style_guide.agents.perplexity_client.research",
+                return_value=(mock_md, {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}),
+            ) as mock_research,
+        ):
+            result = await asyncio.wait_for(
+                _import_and_run_research(author_brief, byok_input, company_context_md, "Persona summaries"),
+                timeout=10,
+            )
+
+        assert result.error is None
+        mock_resolve.assert_awaited_once_with(
+            workspace_id="ws-123",
+            workspace_slug="ramp",
+            agent_key="research.vsg.author_research",
+        )
+        kwargs = mock_research.call_args.kwargs
+        assert kwargs["model"] == "perplexity/sonar-deep-research"
+        assert kwargs["api_key"] == "sk-workspace"
+        assert kwargs["base_url"] == "https://openrouter.workspace/api/v1"
+        assert kwargs["workspace_id"] == "ws-123"
+        assert kwargs["agent_key"] == "research.vsg.author_research"
+        assert kwargs["credential_id"] == "cred-123"
+        assert kwargs["model_config_id"] == "cfg-123"
+        assert kwargs["workspace_billed"] is True
+
+    @pytest.mark.asyncio
     async def test_timeout_returns_error(
         self, author_brief: AuthorBrief, vsg_input: VoiceStyleGuideInput, company_context_md: str,
     ) -> None:
@@ -605,6 +653,37 @@ class TestVoiceSynthesis:
         # Verify max_tokens=8192 was passed
         call_kwargs = mock_or_client.chat.completions.create.call_args
         assert call_kwargs.kwargs.get("max_tokens") == 8192
+
+    @pytest.mark.asyncio
+    async def test_workspace_context_uses_byok_llm_wrapper(
+        self, vsg_input: VoiceStyleGuideInput, company_context_md: str, persona_mds: list[str],
+    ) -> None:
+        byok_input = vsg_input.model_copy(
+            update={"workspace_id": "ws-123", "workspace_slug": "ramp"}
+        )
+        response = MagicMock(
+            content="# Voice Style Guide\n\nClear and direct.",
+            model="anthropic/claude-sonnet-4-5",
+        )
+        author_mds = {"morgan-housel": "# Morgan Housel analysis..."}
+
+        with (
+            patch("core.content_engine.llm_client.llm_call_for_agent", new_callable=AsyncMock, return_value=response) as mock_call,
+            patch("core.shared_tools.openrouter_client.get_async_client") as mock_platform,
+        ):
+            guide_md, elapsed = await asyncio.wait_for(
+                _import_and_run_synthesis(author_mds, company_context_md, persona_mds, byok_input),
+                timeout=10,
+            )
+
+        assert "Voice Style Guide" in guide_md
+        assert elapsed > 0
+        mock_platform.assert_not_called()
+        mock_call.assert_awaited_once()
+        assert mock_call.call_args.kwargs["workspace_id"] == "ws-123"
+        assert mock_call.call_args.kwargs["workspace_slug"] == "ramp"
+        assert mock_call.call_args.kwargs["agent_key"] == "research.vsg.synthesis"
+        assert mock_call.call_args.kwargs["metadata"]["pipeline_step"] == "voice_synthesis"
 
     @pytest.mark.asyncio
     async def test_timeout_returns_empty(

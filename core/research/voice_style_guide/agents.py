@@ -19,6 +19,7 @@ except ImportError:
     litellm = None  # type: ignore[assignment]
 
 from core.config.settings import settings
+from core.model_config.runtime import actual_provider, resolve_model_config_for_agent
 from core.models.voice_style_guide import (
     VSG_MIN_AUTHORS,
     AuthorBrief,
@@ -571,24 +572,52 @@ async def run_author_research(
         )
         full_prompt = f"{system_prompt}\n\n{user_prompt}"
 
+        resolved = None
+        if input_data.workspace_id:
+            resolved = await resolve_model_config_for_agent(
+                workspace_id=input_data.workspace_id,
+                workspace_slug=input_data.workspace_slug or input_data.company_slug or "",
+                agent_key="research.vsg.author_research",
+            )
+        effective_model = (
+            resolved.model
+            if resolved is not None
+            else settings.perplexity_deep_research_model
+        )
+        resolved_timeout = getattr(resolved, "timeout_s", None) if resolved is not None else None
+        effective_timeout_s = (
+            resolved_timeout if isinstance(resolved_timeout, (int, float)) else timeout_s
+        )
         result_md, _pplx_usage = await asyncio.wait_for(
             asyncio.to_thread(
                 perplexity_client.research,
                 query=full_prompt,
-                timeout_s=timeout_s,
+                timeout_s=effective_timeout_s,
+                model=effective_model,
+                pipeline="voice_style_guide",
+                pipeline_step="author_research",
+                company_slug=input_data.company_slug or "",
+                api_key=getattr(resolved, "api_key", None),
+                base_url=getattr(resolved, "base_url", None),
+                workspace_id=input_data.workspace_id if resolved is not None else None,
+                agent_key="research.vsg.author_research" if resolved is not None else "",
+                credential_id=getattr(resolved, "credential_id", None),
+                model_config_id=getattr(resolved, "model_config_id", None),
+                actual_provider=actual_provider(effective_model) if resolved is not None else "",
+                workspace_billed=resolved is not None,
             ),
-            timeout=timeout_s,
+            timeout=effective_timeout_s,
         )
 
         log_generation(
             span, f"vsg-author-research-{brief.author_id}",
-            settings.perplexity_deep_research_model,
+            effective_model,
             full_prompt[:2000], result_md[:2000] if result_md else "",
             metadata={
                 "pipeline": "voice_style_guide",
                 "pipeline_step": "author_research",
                 "provider": "perplexity",
-                "model": settings.perplexity_deep_research_model,
+                "model": effective_model,
                 "company_slug": input_data.company_slug or "",
             },
             usage=_pplx_usage,
@@ -651,7 +680,6 @@ async def run_voice_synthesis(
         )
 
         model = settings.voice_style_guide_synthesis_model
-        api_key = settings.anthropic_api_key
 
         _synth_meta = {
             "pipeline": "voice_style_guide",
@@ -660,25 +688,41 @@ async def run_voice_synthesis(
             "model": model,
             "company_slug": input_data.company_slug or "",
         }
-        from core.shared_tools.openrouter_client import get_async_client
-        or_client = get_async_client()
-        response = await asyncio.wait_for(
-            or_client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
+        if input_data.workspace_id:
+            from core.content_engine.llm_client import llm_call_for_agent
+
+            response = await llm_call_for_agent(
+                workspace_id=input_data.workspace_id,
+                workspace_slug=input_data.workspace_slug or input_data.company_slug or "",
+                agent_key="research.vsg.synthesis",
+                system=system_prompt,
+                user=user_prompt,
                 temperature=0.3,
                 max_tokens=8192,
-                extra_body={"metadata": _synth_meta},
-            ),
-            timeout=timeout_s,
-        )
-
-        guide_md = response.choices[0].message.content or ""
+                metadata=_synth_meta,
+            )
+            guide_md = response.content
+            response_model = response.model or model
+        else:
+            from core.shared_tools.openrouter_client import get_async_client
+            or_client = get_async_client()
+            response = await asyncio.wait_for(
+                or_client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=0.3,
+                    max_tokens=8192,
+                    extra_body={"metadata": _synth_meta},
+                ),
+                timeout=timeout_s,
+            )
+            guide_md = response.choices[0].message.content or ""
+            response_model = getattr(response, "model", None) or model
         log_generation(
-            span, "vsg-voice-synthesis", model,
+            span, "vsg-voice-synthesis", response_model,
             user_prompt[:2000], guide_md[:2000],
             metadata=_synth_meta,
         )

@@ -216,15 +216,19 @@ def _should_skip_vsg(
 
 def _build_kb_input(
     input_data: ResearchOrchestratorInput,
-    effective_slug: str,
+    company_slug: str,
+    effective_slug: str | None = None,
 ) -> Any:
     """Build KnowledgeBaseInput from orchestrator input."""
     from core.models.knowledge_base import KnowledgeBaseInput
 
+    effective_slug = effective_slug or company_slug
     return KnowledgeBaseInput(
         company_name=input_data.company_name,
         domain=input_data.domain or None,
         company_slug=effective_slug,
+        workspace_id=input_data.workspace_id,
+        workspace_slug=input_data.workspace_slug or company_slug,
         product_slug=input_data.product_slug,
         product_name=input_data.product_name,
         seed_urls=input_data.seed_urls,
@@ -248,6 +252,8 @@ def _build_ap_input(
         company_name=input_data.company_name,
         domain=input_data.domain or None,
         company_slug=company_slug,
+        workspace_id=input_data.workspace_id,
+        workspace_slug=input_data.workspace_slug or company_slug,
         product_slug=input_data.product_slug,
         product_name=input_data.product_name,
         max_personas=input_data.max_personas,
@@ -269,6 +275,8 @@ def _build_vsg_input(
         company_name=input_data.company_name,
         domain=input_data.domain or None,
         company_slug=company_slug,
+        workspace_id=input_data.workspace_id,
+        workspace_slug=input_data.workspace_slug or company_slug,
         product_slug=input_data.product_slug,
         product_name=input_data.product_name,
         max_authors=input_data.max_authors,
@@ -518,7 +526,7 @@ async def _run_kb_stage(
 ) -> Tuple[Any, Dict[str, Any]]:
     from core.research.knowledge_base.pipeline import run_knowledge_base_pipeline
 
-    kb_input = _build_kb_input(input_data, effective_slug)
+    kb_input = _build_kb_input(input_data, company_slug, effective_slug)
     output = await run_knowledge_base_pipeline(
         kb_input,
         task_id=task_id,

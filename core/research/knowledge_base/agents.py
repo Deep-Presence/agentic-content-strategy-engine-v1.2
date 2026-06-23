@@ -17,9 +17,13 @@ from core.storage.backends.base import StorageBackend
 import anthropic
 from langgraph.prebuilt import create_react_agent
 
-from core.shared_tools.openrouter_client import build_chat_openai_via_openrouter
+from core.shared_tools.openrouter_client import (
+    build_chat_openai_for_key,
+    build_chat_openai_via_openrouter,
+)
 
 from core.config.settings import settings
+from core.model_config.runtime import actual_provider, resolve_model_config_for_agent
 from core.models.knowledge_base import KBAgentResult, KBDocType, KnowledgeBaseInput
 from core.research.knowledge_base.tools import make_read_file_tool
 from core.research.prompts.brand_perception import (
@@ -114,6 +118,9 @@ async def _run_perplexity_agent(
     span_name: str = "agent",
     model: Optional[str] = None,
     company_slug: str = "",
+    workspace_id: str = "",
+    workspace_slug: str = "",
+    agent_key: str = "",
 ) -> KBAgentResult:
     """Shared runner for Perplexity-based agents."""
     span = create_span(
@@ -123,14 +130,37 @@ async def _run_perplexity_agent(
     )
     start = time.time()
     try:
+        resolved = None
+        if workspace_id and agent_key:
+            resolved = await resolve_model_config_for_agent(
+                workspace_id=workspace_id,
+                workspace_slug=workspace_slug or company_slug,
+                agent_key=agent_key,
+            )
+        effective_model = resolved.model if resolved is not None else model
+        resolved_timeout = getattr(resolved, "timeout_s", None) if resolved is not None else None
+        effective_timeout_s = (
+            resolved_timeout if isinstance(resolved_timeout, (int, float)) else timeout_s
+        )
         result_md, _pplx_usage = await asyncio.wait_for(
             asyncio.to_thread(
-                perplexity_client.research, query=full_prompt, timeout_s=timeout_s,
-                model=model,
+                perplexity_client.research, query=full_prompt, timeout_s=effective_timeout_s,
+                model=effective_model,
+                pipeline="knowledge_base",
+                pipeline_step=doc_type.value,
+                company_slug=company_slug,
+                api_key=getattr(resolved, "api_key", None),
+                base_url=getattr(resolved, "base_url", None),
+                workspace_id=workspace_id if resolved is not None else None,
+                agent_key=agent_key if resolved is not None else "",
+                credential_id=getattr(resolved, "credential_id", None),
+                model_config_id=getattr(resolved, "model_config_id", None),
+                actual_provider=actual_provider(effective_model or "") if resolved is not None else "",
+                workspace_billed=resolved is not None,
             ),
-            timeout=timeout_s,
+            timeout=effective_timeout_s,
         )
-        _effective_model = model or settings.perplexity_deep_research_model
+        _effective_model = effective_model or settings.perplexity_deep_research_model
         _kb_meta = {
             "pipeline": "knowledge_base",
             "pipeline_step": doc_type.value,
@@ -184,6 +214,9 @@ async def run_company_overview_agent(
         KBDocType.COMPANY_OVERVIEW, full_prompt, parent_span, timeout_s, "company-overview",
         model=settings.research_kb_company_overview_model,
         company_slug=input_data.company_slug or "",
+        workspace_id=input_data.workspace_id,
+        workspace_slug=input_data.workspace_slug,
+        agent_key="research.kb.company_overview",
     )
 
 
@@ -201,6 +234,9 @@ async def run_customer_reviews_agent(
         KBDocType.CUSTOMER_REVIEWS, full_prompt, parent_span, timeout_s, "customer-reviews",
         model=settings.research_kb_customer_reviews_model,
         company_slug=input_data.company_slug or "",
+        workspace_id=input_data.workspace_id,
+        workspace_slug=input_data.workspace_slug,
+        agent_key="research.kb.customer_reviews",
     )
 
 
@@ -221,6 +257,9 @@ async def run_competitor_scanner_agent(
         KBDocType.COMPETITOR_REGISTRY, full_prompt, parent_span, timeout_s, "competitor-scanner",
         model=settings.research_kb_competitor_scanner_model,
         company_slug=input_data.company_slug or "",
+        workspace_id=input_data.workspace_id,
+        workspace_slug=input_data.workspace_slug,
+        agent_key="research.kb.competitor_scanner",
     )
 
 
@@ -243,6 +282,9 @@ async def run_weakness_analyst_agent(
         KBDocType.WEAKNESS_ANALYSIS, full_prompt, parent_span, timeout_s, "weakness-analyst",
         model=settings.research_kb_weakness_analyst_model,
         company_slug=input_data.company_slug or "",
+        workspace_id=input_data.workspace_id,
+        workspace_slug=input_data.workspace_slug,
+        agent_key="research.kb.weakness_analyst",
     )
 
 
@@ -503,7 +545,29 @@ async def run_synthesis_agent(
             get_delta_synthesis_system_prompt() if delta_mode
             else get_synthesis_system_prompt()
         )
-        model = build_chat_openai_via_openrouter(settings.research_kb_synthesis_model)
+        resolved = None
+        if input_data.workspace_id:
+            resolved = await resolve_model_config_for_agent(
+                workspace_id=input_data.workspace_id,
+                workspace_slug=input_data.workspace_slug or input_data.company_slug or "",
+                agent_key="research.kb.synthesis",
+            )
+        if resolved is not None:
+            model_kwargs: Dict[str, Any] = {}
+            if resolved.temperature is not None:
+                model_kwargs["temperature"] = resolved.temperature
+            if resolved.max_tokens is not None:
+                model_kwargs["max_tokens"] = resolved.max_tokens
+            model = build_chat_openai_for_key(
+                resolved.api_key,
+                resolved.model,
+                base_url=resolved.base_url,
+                **model_kwargs,
+            )
+            synthesis_model = resolved.model
+        else:
+            model = build_chat_openai_via_openrouter(settings.research_kb_synthesis_model)
+            synthesis_model = settings.research_kb_synthesis_model
 
         # Resolve storage backend — prefer explicit, fall back for compat
         if storage_backend is None:
@@ -541,8 +605,8 @@ async def run_synthesis_agent(
         _synth_meta = {
             "pipeline": "knowledge_base",
             "pipeline_step": "synthesis",
-            "provider": extract_provider(settings.research_kb_synthesis_model),
-            "model": settings.research_kb_synthesis_model,
+            "provider": extract_provider(synthesis_model),
+            "model": synthesis_model,
             "company_slug": input_data.company_slug or "",
         }
         invoke_config: Dict[str, Any] = {"metadata": _synth_meta}
@@ -599,20 +663,26 @@ async def run_synthesis_agent(
             _ct = len(output_md) // 4
 
         track_llm_cost(
-            model=settings.research_kb_synthesis_model,
-            provider=extract_provider(settings.research_kb_synthesis_model),
+            model=synthesis_model,
+            provider=extract_provider(synthesis_model),
             pipeline="knowledge_base", pipeline_step="synthesis",
             prompt_tokens=_pt, completion_tokens=_ct,
             company_slug=input_data.company_slug or "",
             call_site="core.research.knowledge_base.agents",
             source="openrouter",
+            workspace_id=input_data.workspace_id if resolved is not None else None,
+            agent_key="research.kb.synthesis" if resolved is not None else "",
+            credential_id=getattr(resolved, "credential_id", None),
+            model_config_id=getattr(resolved, "model_config_id", None),
+            actual_provider=actual_provider(synthesis_model) if resolved is not None else "",
+            workspace_billed=resolved is not None,
             extra={"estimation_method": _method},
         )
 
         log_generation(
             span,
             "synthesis",
-            settings.research_kb_synthesis_model,
+            synthesis_model,
             user_prompt[:2000],
             output_md[:2000],
             metadata=_synth_meta,

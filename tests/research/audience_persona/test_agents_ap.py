@@ -579,6 +579,33 @@ class TestRunPersonaSuggester:
         _, elapsed = await run_persona_suggester(ap_input, "ctx", "reviews", timeout_s=10)
         assert elapsed > 0
 
+    @pytest.mark.asyncio
+    async def test_workspace_context_uses_byok_llm_wrapper(
+        self, ap_input: AudiencePersonaInput,
+    ) -> None:
+        from core.research.audience_persona.agents import run_persona_suggester
+
+        byok_input = ap_input.model_copy(
+            update={"workspace_id": "ws-123", "workspace_slug": "test-co"}
+        )
+        response = MagicMock(content=_VALID_BRIEFS_JSON, model="google/gemini-2.5-flash")
+
+        with (
+            patch("core.content_engine.llm_client.llm_call_for_agent", new_callable=AsyncMock, return_value=response) as mock_call,
+            patch(f"{_AGENTS_MOD}.get_async_client") as mock_platform,
+        ):
+            briefs, _ = await run_persona_suggester(
+                byok_input, "company ctx", "reviews", timeout_s=10,
+            )
+
+        assert len(briefs) == 3
+        mock_platform.assert_not_called()
+        mock_call.assert_awaited_once()
+        assert mock_call.call_args.kwargs["workspace_id"] == "ws-123"
+        assert mock_call.call_args.kwargs["workspace_slug"] == "test-co"
+        assert mock_call.call_args.kwargs["agent_key"] == "research.ap.suggester"
+        assert mock_call.call_args.kwargs["metadata"]["pipeline_step"] == "persona_suggester"
+
 
 # ---------------------------------------------------------------------------
 # TestRunPersonaProfileGenerator
@@ -768,6 +795,54 @@ class TestRunPersonaProfileGenerator:
         )
         call_kwargs = mock_client.research.call_args
         assert call_kwargs.kwargs.get("timeout_s") == 42.0
+
+    @pytest.mark.asyncio
+    async def test_workspace_context_routes_profile_generation_through_byok_config(
+        self,
+        ap_input: AudiencePersonaInput,
+        sample_brief: PersonaBrief,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from core.research.audience_persona.agents import run_persona_profile_generator
+
+        byok_input = ap_input.model_copy(
+            update={"workspace_id": "ws-123", "workspace_slug": "test-co"}
+        )
+        resolved = MagicMock(
+            model="perplexity/sonar-deep-research",
+            api_key="sk-workspace",
+            base_url="https://openrouter.workspace/api/v1",
+            credential_id="cred-123",
+            model_config_id="cfg-123",
+        )
+        mock_client = MagicMock()
+        mock_client.research = MagicMock(return_value=(_PROFILE_MD, {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}))
+        monkeypatch.setattr(_PERPLEXITY_PATCH, mock_client)
+
+        with patch(
+            f"{_AGENTS_MOD}.resolve_model_config_for_agent",
+            new_callable=AsyncMock,
+            return_value=resolved,
+        ) as mock_resolve:
+            result = await run_persona_profile_generator(
+                sample_brief, byok_input, "ctx", "reviews", timeout_s=10,
+            )
+
+        assert result.error is None
+        mock_resolve.assert_awaited_once_with(
+            workspace_id="ws-123",
+            workspace_slug="test-co",
+            agent_key="research.ap.profile_generator",
+        )
+        kwargs = mock_client.research.call_args.kwargs
+        assert kwargs["model"] == "perplexity/sonar-deep-research"
+        assert kwargs["api_key"] == "sk-workspace"
+        assert kwargs["base_url"] == "https://openrouter.workspace/api/v1"
+        assert kwargs["workspace_id"] == "ws-123"
+        assert kwargs["agent_key"] == "research.ap.profile_generator"
+        assert kwargs["credential_id"] == "cred-123"
+        assert kwargs["model_config_id"] == "cfg-123"
+        assert kwargs["workspace_billed"] is True
 
     @pytest.mark.asyncio
     async def test_execution_time_always_positive(

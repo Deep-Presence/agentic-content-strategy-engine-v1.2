@@ -208,6 +208,9 @@ async def _maybe_extract_competitor_json(
             content_md=result.content_md,
             company_name=input_data.company_name,
             parent_span=span,
+            company_slug=input_data.company_slug or "",
+            workspace_id=input_data.workspace_id,
+            workspace_slug=input_data.workspace_slug,
         )
         if json_data:
             result.content_json = json_data
