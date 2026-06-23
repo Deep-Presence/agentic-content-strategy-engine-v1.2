@@ -1,6 +1,6 @@
 {
   "current_sprint": "feat/byok-only-model-config",
-  "last_updated": "2026-06-23T01:39:25Z",
+  "last_updated": "2026-06-23T02:10:52Z",
   "test_count": 2188,
   "completed_sprints_summary": {
     "total_tasks_completed": 61,
@@ -303,6 +303,28 @@
     ]
   },
   "completed": [
+    {
+      "id": "T-byok-pipeline-launch-preflight",
+      "task": "BYOK pipeline launch preflight - shared API helper now returns a consistent 409 `byok_model_config_required` response, Content v1.3 missing-config responses match the spec, and Gap Analysis, Research Orchestrator, and Daily Tracker run launches preflight their required workspace agent model configs before durable task creation.",
+      "sprint": "feat/byok-only-model-config",
+      "status": "done",
+      "completed_at": "2026-06-23",
+      "tests_added": 3,
+      "files_modified": [
+        "api/routers/_model_config_preflight.py",
+        "api/routers/content_v13.py",
+        "api/routers/gap_analysis.py",
+        "api/routers/research_orchestrator.py",
+        "api/routers/daily_tracker.py",
+        "tests/api/test_content_v13.py",
+        "tests/api/test_content_v13_from_topics.py",
+        "tests/api/test_content_v13_ga_endpoints.py",
+        "tests/api/test_gap_analysis.py",
+        "tests/api/test_research_orchestrator.py",
+        "tests/api/test_daily_tracker_preflight.py"
+      ],
+      "validation": "venv/bin/python -m pytest focused BYOK preflight route tests -q (6 passed); venv/bin/python -m pytest tests/api/test_content_v13.py tests/api/test_content_v13_from_topics.py tests/api/test_content_v13_ga_endpoints.py tests/api/test_gap_analysis.py tests/api/test_research_orchestrator.py tests/api/test_daily_tracker_preflight.py -q (184 passed, 17 pre-existing background coroutine warnings); py_compile on changed route/test modules; git diff --check."
+    },
     {
       "id": "T-byok-research-native-provider-remediation",
       "task": "BYOK research native-provider remediation - workspace-backed KB brand perception now resolves `research.kb.brand_perception` through the BYOK wrapper instead of Anthropic SDK, and workspace-backed VSG author discovery resolves `research.vsg.author_discovery` through the BYOK wrapper instead of LiteLLM/native Anthropic tool calls. Legacy no-workspace branches remain for direct test/CLI compatibility until final enforcement cleanup.",

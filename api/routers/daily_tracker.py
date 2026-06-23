@@ -44,16 +44,19 @@ from api.dependencies import (
     get_artifacts_root,
     get_daily_tracker_orchestrator,
     get_event_bus,
+    get_model_config_service,
     get_prompt_library_service,
     get_task_store,
     get_workspace_service,
 )
 from api.routers._helpers import resolve_workspace_scope
+from api.routers._model_config_preflight import preflight_model_config_or_409
 from api.schemas.common import PipelineRunResponse
 from api.tasks.event_bus import EventBusProtocol
 from core.daily_tracker.analytics_engine import AnalyticsService
 from core.daily_tracker.orchestrator import DailyTrackerOrchestrator
 from core.daily_tracker.prompt_library import PromptLibraryService
+from core.model_config.service import ModelConfigService
 from core.services.task_store import TaskStoreProtocol
 from core.services.workspace_protocol import WorkspaceServiceProtocol
 from core.models.daily_tracker import (
@@ -69,6 +72,8 @@ from core.models.organization import UserProfile
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/daily-tracker", tags=["daily-tracker"])
+
+_DAILY_TRACKER_RUN_AGENT_KEYS = ["daily_tracker.platform.perplexity"]
 
 
 # ── Request/Response Schemas ─────────────────────────────────────────
@@ -1198,6 +1203,7 @@ async def trigger_daily_run(
     event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
     workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
+    model_config_service: ModelConfigService = Depends(get_model_config_service),
 ) -> PipelineRunResponse:
     """Trigger a daily tracking run as an async background task.
 
@@ -1212,6 +1218,13 @@ async def trigger_daily_run(
         min_roles=("owner", "admin", "member"),
     )
     company_id = scope.workspace_slug
+
+    await preflight_model_config_or_409(
+        model_config_service,
+        scope.workspace_id,
+        _DAILY_TRACKER_RUN_AGENT_KEYS,
+        message="Configure an active OpenRouter key before launching Daily Tracker.",
+    )
 
     from api.routers._helpers import create_task_durable
     from api.tasks.runner import run_daily_tracker_task
@@ -1404,4 +1417,3 @@ async def get_competitor_metrics(
 ) -> list[CompetitorMetrics]:
     """Get per-competitor visibility metrics."""
     return await analytics.get_competitor_metrics(company_id, run_id=run_id)
-

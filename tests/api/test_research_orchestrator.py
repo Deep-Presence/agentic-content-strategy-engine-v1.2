@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.tasks.models import TaskStatus
+from tests._support.model_config_service import FailingModelConfigService
 
 
 # ── Constants ─────────────────────────────────────────────────────────
@@ -160,6 +161,30 @@ class TestStartResearchOrchestrator:
         assert resp.status_code == 202
         data = resp.json()
         assert data["effective_slug"] == "test-co__expense"
+
+    def test_missing_byok_config_blocks_start_before_task_creation(self, client):
+        service = FailingModelConfigService()
+        client.app.state.model_config_service = service
+
+        with patch(
+            "api.routers.research_orchestrator.create_task_durable",
+            new_callable=AsyncMock,
+        ) as create_task:
+            resp = client.post(
+                f"{PREFIX}/start",
+                json={**MINIMAL_PAYLOAD, "pipelines": ["kb", "vsg"]},
+            )
+
+        assert resp.status_code == 409
+        detail = resp.json()["detail"]
+        assert detail["code"] == "byok_model_config_required"
+        assert detail["missing_credential"] is True
+        assert detail["reason"] == "model_config_required"
+        assert "research.kb.company_overview" in detail["required_agent_keys"]
+        assert "research.vsg.author_discovery" in detail["required_agent_keys"]
+        assert "research.ap.suggester" not in detail["required_agent_keys"]
+        assert "research.vsg.author_discovery" in service.preflight_calls[0][1]
+        create_task.assert_not_awaited()
 
 
 # ═══════════════════════════════════════════════════════════════════════

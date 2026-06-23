@@ -59,6 +59,7 @@ from api.routers._helpers import (
     create_task_durable,
     resolve_workspace_scope,
 )
+from api.routers._model_config_preflight import preflight_model_config_or_409
 from core.auth.service import AuthServiceProtocol
 from core.content_engine.utils import truncate_to_token_limit
 from core.models.content_generation_v13 import ContentGenerationInputV13, EntryMode
@@ -156,19 +157,12 @@ async def _preflight_content_model_config(
     workspace_id: str,
 ) -> None:
     """Fail closed before launching content agents without workspace BYOK config."""
-    result = await model_config_service.preflight(workspace_id, _CONTENT_AGENT_KEYS)
-    if result.ok:
-        return
-
-    detail = result.model_dump(mode="json")
-    detail.update(
-        {
-            "code": "byok_model_config_required",
-            "message": "Configure an active OpenRouter key before launching content generation.",
-            "required_agent_keys": _CONTENT_AGENT_KEYS,
-        }
+    await preflight_model_config_or_409(
+        model_config_service,
+        workspace_id,
+        _CONTENT_AGENT_KEYS,
+        message="Configure an active OpenRouter key before launching content generation.",
     )
-    raise HTTPException(status_code=400, detail=detail)
 
 
 def _validate_approval_window(

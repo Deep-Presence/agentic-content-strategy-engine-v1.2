@@ -20,7 +20,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from api.auth.dependencies import require_auth, require_role
-from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_task_store, get_workspace_service
+from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_model_config_service, get_task_store, get_workspace_service
 from api.schemas.common import PipelineRunResponse, TaskResponse
 from api.schemas.research_orchestrator import ResearchOrchestratorStartRequest
 from api.tasks.event_bus import EventBusProtocol
@@ -30,9 +30,12 @@ from api.routers._helpers import (
     create_task_durable,
     resolve_workspace_scope,
 )
+from api.routers._model_config_preflight import preflight_model_config_or_409
 from api.tasks.runner import run_research_orchestrator_task
 from core.audit import log_pipeline_launch
 from core.auth.utils.domain import derive_slug
+from core.model_config.agent_catalog import required_agents_for_pipeline
+from core.model_config.service import ModelConfigService
 from core.services.task_store import TaskStoreProtocol
 from core.services.workspace_protocol import WorkspaceServiceProtocol
 
@@ -40,9 +43,31 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/research", tags=["research-orchestrator"])
 
+_RESEARCH_PIPELINE_AGENT_KEYS = {
+    "kb": [
+        definition.agent_key
+        for definition in required_agents_for_pipeline("research_kb")
+    ],
+    "ap": [
+        definition.agent_key
+        for definition in required_agents_for_pipeline("research_ap")
+    ],
+    "vsg": [
+        definition.agent_key
+        for definition in required_agents_for_pipeline("research_vsg")
+    ],
+}
+
 
 def _derive_slug(company_name: str) -> str:
     return derive_slug(company_name) or company_name.lower()
+
+
+def _agent_keys_for_research_pipelines(pipelines: list[str]) -> list[str]:
+    keys: list[str] = []
+    for pipeline in pipelines:
+        keys.extend(_RESEARCH_PIPELINE_AGENT_KEYS[pipeline])
+    return list(dict.fromkeys(keys))
 
 
 @router.post("/start", status_code=202)
@@ -56,6 +81,7 @@ async def start_research_orchestrator(
     artifacts_root: Path = Depends(get_artifacts_root),
     auth_service=Depends(get_auth_service),
     workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
+    model_config_service: ModelConfigService = Depends(get_model_config_service),
 ) -> PipelineRunResponse:
     """Launch the Research Orchestrator (KB → AP → VSG).
 
@@ -80,6 +106,13 @@ async def start_research_orchestrator(
         )
     slug = scope.workspace_slug
     effective_slug = scope.effective_slug
+
+    await preflight_model_config_or_409(
+        model_config_service,
+        scope.workspace_id,
+        _agent_keys_for_research_pipelines(body.pipelines),
+        message="Configure an active OpenRouter key before launching Research Orchestrator.",
+    )
 
     task = await create_task_durable(
         task_store,

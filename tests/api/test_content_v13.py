@@ -98,7 +98,7 @@ class TestStartContentV13:
                 },
             )
 
-        assert resp.status_code == 400
+        assert resp.status_code == 409
         detail = resp.json()["detail"]
         assert detail["code"] == "byok_model_config_required"
         assert detail["missing_credential"] is True

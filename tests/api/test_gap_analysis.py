@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.tasks.models import TaskStatus
+from tests._support.model_config_service import FailingModelConfigService
 
 
 # ── Minimal valid payload (simplified schema) ──────────────────────
@@ -133,6 +134,32 @@ class TestStartGapAnalysis:
             },
         )
         assert resp.status_code == 202
+
+    def test_missing_byok_config_blocks_start_before_task_creation(
+        self, client: TestClient
+    ) -> None:
+        service = FailingModelConfigService()
+        client.app.state.model_config_service = service
+
+        with patch(
+            "api.routers.gap_analysis.create_task_durable",
+            new_callable=AsyncMock,
+        ) as create_task:
+            resp = client.post(
+                "/api/v1/gap-analysis/start",
+                json={**MINIMAL_PAYLOAD, "force_rerun": True},
+            )
+
+        assert resp.status_code == 409
+        detail = resp.json()["detail"]
+        assert detail["code"] == "byok_model_config_required"
+        assert detail["missing_credential"] is True
+        assert detail["reason"] == "model_config_required"
+        assert "gap.query_generation" in detail["required_agent_keys"]
+        assert "gap.report_generation" in detail["required_agent_keys"]
+        assert "gap.search.perplexity" in detail["required_agent_keys"]
+        assert "gap.query_generation" in service.preflight_calls[0][1]
+        create_task.assert_not_awaited()
 
 
 class TestStartGapAnalysisGuard:

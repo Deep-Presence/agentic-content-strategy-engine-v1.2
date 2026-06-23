@@ -9,13 +9,24 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Request, Response
 
 from api.auth.dependencies import require_auth
-from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_storage_backend as get_storage_dep, get_task_store, get_workspace_service
+from api.dependencies import (
+    get_artifacts_root,
+    get_auth_service,
+    get_event_bus,
+    get_model_config_service,
+    get_storage_backend as get_storage_dep,
+    get_task_store,
+    get_workspace_service,
+)
 from core.auth.service import AuthServiceProtocol
 from api.schemas.common import GapAnalysisStartRequest, PipelineRunResponse, TaskResponse
 from api.tasks.event_bus import EventBusProtocol
 from api.tasks.models import PipelineTask
 from api.routers._helpers import assert_task_workspace_access, create_task_durable, resolve_workspace_scope
+from api.routers._model_config_preflight import preflight_model_config_or_409
 from api.tasks.runner import run_gap_pipeline_task
+from core.model_config.agent_catalog import required_agents_for_pipeline
+from core.model_config.service import ModelConfigService
 from core.services.task_store import TaskStoreProtocol
 from core.storage.backends.base import StorageBackend
 from core.audit import log_pipeline_launch
@@ -23,6 +34,11 @@ from core.models.organization import UserProfile
 from core.services.workspace_protocol import WorkspaceServiceProtocol
 
 router = APIRouter(prefix="/api/v1/gap-analysis", tags=["gap-analysis"])
+
+_GAP_AGENT_KEYS = [
+    definition.agent_key
+    for definition in required_agents_for_pipeline("gap")
+]
 
 
 def _gap_analysis_artifacts_exist(storage: "StorageBackend", effective_slug: str) -> bool:
@@ -62,6 +78,7 @@ async def start_gap_analysis(
     storage_backend: StorageBackend = Depends(get_storage_dep),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
     workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
+    model_config_service: ModelConfigService = Depends(get_model_config_service),
 ) -> PipelineRunResponse:
     scope = await resolve_workspace_scope(
         request,
@@ -101,6 +118,13 @@ async def start_gap_analysis(
             already_exists=True,
             message="Artifacts already exist. Pass force_rerun=true to re-run.",
         )
+
+    await preflight_model_config_or_409(
+        model_config_service,
+        scope.workspace_id,
+        _GAP_AGENT_KEYS,
+        message="Configure an active OpenRouter key before launching Gap Analysis.",
+    )
 
     task = await create_task_durable(
         task_store,
