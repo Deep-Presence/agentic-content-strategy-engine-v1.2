@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import inspect
 from pathlib import Path
 from typing import List
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -38,6 +39,14 @@ from core.models.topic_discovery import (
 
 # Patch targets
 _P = "core.topic_discovery.pipeline"
+
+
+def test_expansion_cannibalization_uses_resolved_byok_embedding_config():
+    from core.topic_discovery.pipeline import run_topic_expansion_pipeline
+
+    source = inspect.getsource(run_topic_expansion_pipeline)
+    assert "topic_discovery.cannibalization_embedding" in source
+    assert "resolved_model_config=cannibalization_embedding_config" in source
 
 
 # ---------------------------------------------------------------------------
@@ -444,8 +453,10 @@ class TestExpansionHappyPath:
         _manifest_state.clear()
         with (
             _expansion_patches(),
+            patch(f"{_P}.resolve_model_config_for_agent", new_callable=AsyncMock) as mock_resolve,
             patch(f"{_P}.run_subdomain_expansion", return_value=_make_topics()) as mock_expand,
         ):
+            mock_resolve.return_value = MagicMock()
             from core.topic_discovery.pipeline import run_topic_expansion_pipeline
             await run_topic_expansion_pipeline(
                 expansion_input,
@@ -453,6 +464,7 @@ class TestExpansionHappyPath:
                 session_factory=mock_session_factory,
             )
 
+        mock_resolve.assert_awaited_once()
         assert mock_expand.call_count == 2
         for call in mock_expand.call_args_list:
             assert call.kwargs["workspace_id"] == "ws-td"

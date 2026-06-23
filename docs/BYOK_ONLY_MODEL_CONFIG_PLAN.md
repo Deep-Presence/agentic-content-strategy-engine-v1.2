@@ -13,9 +13,9 @@ Completed in this branch:
 - Model config API under `/api/v1/workspaces/{workspace_slug}/model-config`.
 - BYOK-aware `llm_call_for_agent()` and OpenRouter client builders for resolved workspace keys.
 - Workspace/agent/credential/model-config cost metadata plumbing.
-- Runtime migration for Content Engine v1.3, Topic Discovery, KB/AP/VSG, Daily Tracker fanout/content-to-prompt/platform Perplexity, embeddings, Reddit HIL, and the primary Gap Analysis model calls.
+- Runtime migration for Content Engine v1.3, Topic Discovery including expansion cannibalization embeddings, KB/AP/VSG, Daily Tracker fanout/content-to-prompt/platform Perplexity, embeddings, Reddit HIL, and the primary Gap Analysis model calls.
 - Gap Analysis and Daily Tracker native OpenAI/Claude/Gemini search engines disabled when workspace BYOK context is present; BYOK v1 uses OpenRouter-routed Perplexity for web-grounded search.
-- Launch-route preflight for Content v1.3, Gap Analysis, Research Orchestrator, and Daily Tracker runs, returning HTTP 409 with `byok_model_config_required` before durable task creation.
+- Launch-route preflight for Content v1.3, Gap Analysis, Research Orchestrator, Daily Tracker, and Topic Discovery start/expand runs, returning HTTP 409 with `byok_model_config_required` before durable task creation.
 - Settings Models tab wired to the real workspace model-config API with admin-gated key controls, agent controls, and per-agent usage summary from `llm_cost_events`.
 - Static guard test that prevents new product runtime references to platform-owned LLM keys or singleton OpenRouter helpers outside the explicit legacy allowlist.
 

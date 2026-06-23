@@ -25,6 +25,7 @@ from core.content_inventory.models import (
 from core.content_inventory.url_utils import normalize_url
 from core.db.enums import ContentIngestionSource
 from core.db.repositories.content_inventory_repo import ContentInventoryRepository
+from core.model_config.schemas import ResolvedModelConfig
 from core.shared_tools.openrouter_client import _ensure_model_prefix
 from core.shared_tools.structured_logging import scoped_bind
 from core.shared_tools.tracing import build_llm_metadata, create_span, end_span, extract_provider
@@ -56,11 +57,16 @@ class ContentInventoryService:
         trace_parent: Any | None = None,
         trace_name: str,
         trace_metadata: dict[str, Any] | None = None,
+        resolved_model_config: ResolvedModelConfig | None = None,
     ) -> list[list[float]]:
         """Embed texts through OpenRouter with optional LangSmith span metadata."""
         from core.shared_tools.async_embedding_client import async_embed_texts
 
-        model = _ensure_model_prefix(settings.embedding_model)
+        model = _ensure_model_prefix(
+            resolved_model_config.model
+            if resolved_model_config is not None
+            else settings.embedding_model
+        )
         provider = extract_provider(model)
         span = create_span(
             trace_parent,
@@ -79,7 +85,50 @@ class ContentInventoryService:
             embedding_model=model,
         ):
             try:
-                embeddings = await async_embed_texts(texts)
+                embeddings = await async_embed_texts(
+                    texts,
+                    model=model,
+                    api_key=(
+                        resolved_model_config.api_key
+                        if resolved_model_config is not None
+                        else None
+                    ),
+                    base_url=(
+                        resolved_model_config.base_url
+                        if resolved_model_config is not None
+                        else None
+                    ),
+                    timeout_s=(
+                        resolved_model_config.timeout_s
+                        if resolved_model_config is not None
+                        else None
+                    ),
+                    pipeline="content_inventory",
+                    pipeline_step=trace_name,
+                    company_slug=trace_metadata.get("company_slug", "") if trace_metadata else "",
+                    workspace_id=(
+                        resolved_model_config.workspace_id
+                        if resolved_model_config is not None
+                        else None
+                    ),
+                    agent_key=(
+                        resolved_model_config.agent_key
+                        if resolved_model_config is not None
+                        else ""
+                    ),
+                    credential_id=(
+                        resolved_model_config.credential_id
+                        if resolved_model_config is not None
+                        else None
+                    ),
+                    model_config_id=(
+                        resolved_model_config.model_config_id
+                        if resolved_model_config is not None
+                        else None
+                    ),
+                    actual_provider=provider if resolved_model_config is not None else "",
+                    workspace_billed=resolved_model_config is not None,
+                )
             except Exception as exc:
                 end_span(span, error=str(exc))
                 _logger.warning(
@@ -531,6 +580,7 @@ class ContentInventoryService:
         parent_span: Any | None = None,
         trace_name: str = "content-inventory/check-cannibalization",
         trace_metadata: dict[str, Any] | None = None,
+        resolved_model_config: ResolvedModelConfig | None = None,
     ) -> list[CannibalizationMatch]:
         """Check if a topic assignment overlaps with existing content.
 
@@ -545,6 +595,7 @@ class ContentInventoryService:
                 "threshold": threshold,
                 **(trace_metadata or {}),
             },
+            resolved_model_config=resolved_model_config,
         )
         if not embeddings or not embeddings[0]:
             return []
@@ -575,6 +626,7 @@ class ContentInventoryService:
         parent_span: Any | None = None,
         trace_name: str = "content-inventory/check-cannibalization-batch",
         trace_metadata: dict[str, Any] | None = None,
+        resolved_model_config: ResolvedModelConfig | None = None,
     ) -> dict[str, list[CannibalizationMatch]]:
         """Batch cannibalization check for multiple topics.
 
@@ -593,6 +645,7 @@ class ContentInventoryService:
                 "topic_count": len(topics),
                 **(trace_metadata or {}),
             },
+            resolved_model_config=resolved_model_config,
         )
 
         valid_query_embeddings = {

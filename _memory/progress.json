@@ -1,7 +1,7 @@
 {
   "current_sprint": "feat/byok-only-model-config",
-  "last_updated": "2026-06-23T15:44:48Z",
-  "test_count": 2189,
+  "last_updated": "2026-06-23T16:51:54Z",
+  "test_count": 2193,
   "completed_sprints_summary": {
     "total_tasks_completed": 61,
     "sprints": [
@@ -303,6 +303,24 @@
     ]
   },
   "completed": [
+    {
+      "id": "T-byok-topic-discovery-launch-preflight",
+      "task": "BYOK Topic Discovery launch preflight - Topic Discovery start and expansion routes now return the shared 409 `byok_model_config_required` response before durable task creation when workspace BYOK setup is missing. Start preflights all required Topic Discovery agents plus the shared embedding agent, expansion preflights subdomain expansion plus cannibalization embeddings, and expansion cannibalization embedding calls now receive the resolved workspace BYOK embedding config instead of falling back to the singleton OpenRouter client.",
+      "sprint": "feat/byok-only-model-config",
+      "status": "done",
+      "completed_at": "2026-06-23",
+      "tests_added": 4,
+      "files_modified": [
+        "api/routers/topic_discovery.py",
+        "core/services/content_inventory_service.py",
+        "core/topic_discovery/pipeline.py",
+        "tests/api/test_topic_discovery.py",
+        "tests/services/test_content_inventory_service.py",
+        "tests/topic_discovery/test_expansion_pipeline_td.py",
+        "docs/BYOK_ONLY_MODEL_CONFIG_PLAN.md"
+      ],
+      "validation": "venv/bin/python -m pytest tests/api/test_topic_discovery.py tests/services/test_content_inventory_service.py -q (110 passed); targeted Topic Discovery expansion and BYOK embedding regression tests (5 passed, 1 pre-existing AsyncMock warning); venv/bin/python -m pytest tests/static/test_byok_platform_key_guard.py -q (1 passed); py_compile on changed route/runtime/test modules; git diff --check. A broader combined Topic Discovery/API/service run reached 129 passing tests before the same fake workspace-id test failed; the test was corrected to stub the resolver and rerun in the targeted set."
+    },
     {
       "id": "T-byok-model-config-usage-summary",
       "task": "BYOK model-config usage summary - workspace model-config responses now include per-agent usage totals from llm_cost_events, and the Settings Models tab displays calls, token volume, estimated cost, and last-used time alongside credential and agent controls.",

@@ -10,7 +10,15 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from api.auth.dependencies import require_auth
-from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_task_store, get_td_data_service, get_workspace_service
+from api.dependencies import (
+    get_artifacts_root,
+    get_auth_service,
+    get_event_bus,
+    get_model_config_service,
+    get_task_store,
+    get_td_data_service,
+    get_workspace_service,
+)
 from api.schemas.common import PipelineRunResponse, TaskResponse
 from api.schemas.topic_discovery import (
     ApprovalResponseTD,
@@ -41,16 +49,28 @@ from api.routers._helpers import (
     create_task_durable,
     resolve_workspace_scope,
 )
+from api.routers._model_config_preflight import preflight_model_config_or_409
 from api.tasks.runner import run_topic_discovery_pipeline_task, run_topic_expansion_pipeline_task
 from core.auth.service import AuthServiceProtocol
 from core.models.organization import UserProfile
 from core.audit import log_hitl_decision, log_pipeline_launch
+from core.model_config.agent_catalog import required_agents_for_pipeline
+from core.model_config.service import ModelConfigService
 from core.services.task_store import ApprovalWindowError, TaskStoreProtocol
 from core.services.workspace_protocol import WorkspaceServiceProtocol
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/topic-discovery", tags=["topic-discovery"])
+
+_TOPIC_DISCOVERY_START_AGENT_KEYS = [
+    *(definition.agent_key for definition in required_agents_for_pipeline("topic_discovery")),
+    "shared.embeddings.default",
+]
+_TOPIC_DISCOVERY_EXPANSION_AGENT_KEYS = [
+    "topic_discovery.subdomain_expansion",
+    "topic_discovery.cannibalization_embedding",
+]
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
@@ -113,6 +133,7 @@ async def start_topic_discovery(
     artifacts_root: Path = Depends(get_artifacts_root),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
     workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
+    model_config_service: ModelConfigService = Depends(get_model_config_service),
 ) -> PipelineRunResponse:
     workspace_scope = await resolve_workspace_scope(
         http_request,
@@ -157,6 +178,13 @@ async def start_topic_discovery(
                 already_exists=True,
                 message=message or "",
             )
+
+    await preflight_model_config_or_409(
+        model_config_service,
+        workspace_scope.workspace_id,
+        _TOPIC_DISCOVERY_START_AGENT_KEYS,
+        message="Configure an active OpenRouter key before launching Topic Discovery.",
+    )
 
     task = await create_task_durable(
         task_store,
@@ -569,6 +597,7 @@ async def start_topic_expansion(
     artifacts_root: Path = Depends(get_artifacts_root),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
     workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
+    model_config_service: ModelConfigService = Depends(get_model_config_service),
 ) -> PipelineRunResponse:
     workspace_scope = await resolve_workspace_scope(
         http_request,
@@ -593,6 +622,13 @@ async def start_topic_expansion(
             status_code=409,
             detail="Topic discovery has not been completed yet. Run Pipeline A first.",
         )
+
+    await preflight_model_config_or_409(
+        model_config_service,
+        workspace_scope.workspace_id,
+        _TOPIC_DISCOVERY_EXPANSION_AGENT_KEYS,
+        message="Configure an active OpenRouter key before expanding Topic Discovery subdomains.",
+    )
 
     # allow_parallel=True: multiple subdomains can expand concurrently.
     # Per-subdomain safety is handled by db_claim_subdomain_for_expansion()

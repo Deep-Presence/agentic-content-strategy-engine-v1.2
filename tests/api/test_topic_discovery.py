@@ -12,6 +12,7 @@ from fastapi import FastAPI
 
 from api.dependencies import get_td_data_service
 from api.tasks.models import TaskStatus
+from tests._support.model_config_service import FailingModelConfigService
 
 
 # ── Constants ─────────────────────────────────────────────────────────
@@ -128,6 +129,25 @@ class TestStartTopicDiscovery:
             json={"company_name": "Other Corp", "domain": "other.com"},
         )
         assert resp.status_code == 403
+
+    def test_missing_byok_config_blocks_start_before_task_creation(self, client):
+        service = FailingModelConfigService()
+        client.app.state.model_config_service = service
+
+        with patch(
+            "api.routers.topic_discovery.create_task_durable",
+            new_callable=AsyncMock,
+        ) as create_task:
+            resp = client.post(f"{PREFIX}/start", json=MINIMAL_PAYLOAD)
+
+        assert resp.status_code == 409
+        detail = resp.json()["detail"]
+        assert detail["code"] == "byok_model_config_required"
+        assert detail["missing_credential"] is True
+        assert "topic_discovery.source_a_company" in detail["required_agent_keys"]
+        assert "shared.embeddings.default" in detail["required_agent_keys"]
+        assert "shared.embeddings.default" in service.preflight_calls[0][1]
+        create_task.assert_not_awaited()
 
     def test_start_auto_approve_valid(self, client, mock_td_runner):
         resp = client.post(
@@ -1054,6 +1074,35 @@ class TestStartTopicExpansion:
         )
         assert resp.status_code == 409
         assert "not been completed" in resp.json()["detail"]
+
+    def test_expand_missing_byok_config_blocks_before_task_creation(
+        self,
+        client,
+        _mock_expand_manifest_completed,
+    ):
+        service = FailingModelConfigService()
+        client.app.state.model_config_service = service
+
+        with patch(
+            "api.routers.topic_discovery.create_task_durable",
+            new_callable=AsyncMock,
+        ) as create_task:
+            resp = client.post(
+                f"{PREFIX}/expand",
+                json={
+                    **MINIMAL_PAYLOAD,
+                    "subdomain_ids": ["sd-1"],
+                },
+            )
+
+        assert resp.status_code == 409
+        detail = resp.json()["detail"]
+        assert detail["code"] == "byok_model_config_required"
+        assert detail["missing_credential"] is True
+        assert "topic_discovery.subdomain_expansion" in detail["required_agent_keys"]
+        assert "topic_discovery.cannibalization_embedding" in detail["required_agent_keys"]
+        assert "topic_discovery.subdomain_expansion" in service.preflight_calls[0][1]
+        create_task.assert_not_awaited()
 
     def test_expand_empty_subdomain_ids_422(self, client):
         """POST /expand with empty subdomain_ids is rejected by schema."""

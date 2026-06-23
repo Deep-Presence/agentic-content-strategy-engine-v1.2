@@ -50,6 +50,7 @@ from core.models.topic_discovery import (
     TopicExpansionInput,
     TopicExpansionOutput,
 )
+from core.model_config.runtime import resolve_model_config_for_agent
 from core.research.audience_persona.storage import PersonaStorage
 from core.research.utils import load_persona_profiles, read_company_context
 from core.shared_tools.tracing import (
@@ -906,6 +907,13 @@ async def run_topic_expansion_pipeline(
     effective_slug = input_data.effective_slug or _resolve_effective_slug(input_data)
     workspace_id = input_data.workspace_id or ""
     workspace_slug = effective_slug or company_slug
+    cannibalization_embedding_config = None
+    if workspace_id:
+        cannibalization_embedding_config = await resolve_model_config_for_agent(
+            workspace_id=workspace_id,
+            workspace_slug=workspace_slug,
+            agent_key="topic_discovery.cannibalization_embedding",
+        )
 
     _emit(event_bus, task_id, "pipeline_start", {
         "pipeline": "topic_expansion",
@@ -1215,6 +1223,12 @@ async def run_topic_expansion_pipeline(
                         cannibal_results = await cannibal_svc.check_cannibalization_batch(
                             company_id, query_texts,
                             threshold=settings.td_cannibalization_threshold,
+                            trace_metadata={
+                                "company_slug": company_slug,
+                                "effective_slug": effective_slug,
+                                "workspace_id": workspace_id,
+                            },
+                            resolved_model_config=cannibalization_embedding_config,
                         )
                         match_inventory_ids = {
                             _uuid.UUID(match.inventory_id)

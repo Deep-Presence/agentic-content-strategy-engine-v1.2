@@ -14,6 +14,7 @@ from core.content_inventory.models import (
     ExistingCoverageResult,
 )
 from core.db.enums import ContentIngestionSource
+from core.model_config.schemas import ResolvedModelConfig
 from core.models.gap_analysis import StructuralSignals
 from core.services.content_inventory_service import ContentInventoryService
 
@@ -502,6 +503,44 @@ class TestCheckCannibalization:
         assert "Topic B" in result
         assert mock_embed.await_count == 1  # single batch call
         repo.find_similar_batch.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @patch("core.shared_tools.async_embedding_client.async_embed_texts", new_callable=AsyncMock)
+    async def test_batch_uses_resolved_byok_embedding_config(self, mock_embed):
+        mock_embed.return_value = [[0.1] * 1536]
+        repo = _make_repo()
+        repo.find_similar_batch = AsyncMock(return_value={"Topic A": []})
+        svc = _make_service(repo)
+        resolved = ResolvedModelConfig(
+            workspace_id="ws-123",
+            workspace_slug="test-co",
+            agent_key="topic_discovery.cannibalization_embedding",
+            model="openai/text-embedding-3-small",
+            base_url="https://openrouter.ai/api/v1",
+            api_key="sk-or-workspace",
+            credential_id="cred-123",
+            model_config_id="cfg-123",
+            timeout_s=45.0,
+        )
+
+        result = await svc.check_cannibalization_batch(
+            company_id=uuid.uuid4(),
+            topics=["Topic A"],
+            trace_metadata={"company_slug": "test-co"},
+            resolved_model_config=resolved,
+        )
+
+        assert result == {"Topic A": []}
+        _, kwargs = mock_embed.await_args
+        assert kwargs["model"] == "openai/text-embedding-3-small"
+        assert kwargs["api_key"] == "sk-or-workspace"
+        assert kwargs["base_url"] == "https://openrouter.ai/api/v1"
+        assert kwargs["timeout_s"] == 45.0
+        assert kwargs["workspace_id"] == "ws-123"
+        assert kwargs["agent_key"] == "topic_discovery.cannibalization_embedding"
+        assert kwargs["credential_id"] == "cred-123"
+        assert kwargs["model_config_id"] == "cfg-123"
+        assert kwargs["workspace_billed"] is True
 
     @pytest.mark.asyncio
     async def test_batch_empty_topics(self):
