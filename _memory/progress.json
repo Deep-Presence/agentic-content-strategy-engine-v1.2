@@ -326,6 +326,20 @@
       "validation": "venv/bin/python -m pytest focused BYOK preflight route tests -q (6 passed); venv/bin/python -m pytest tests/api/test_content_v13.py tests/api/test_content_v13_from_topics.py tests/api/test_content_v13_ga_endpoints.py tests/api/test_gap_analysis.py tests/api/test_research_orchestrator.py tests/api/test_daily_tracker_preflight.py -q (184 passed, 17 pre-existing background coroutine warnings); py_compile on changed route/test modules; git diff --check."
     },
     {
+      "id": "T-byok-settings-models-ui",
+      "task": "BYOK Settings Models UI - replaced the mocked Models tab with workspace-scoped OpenRouter credential and per-agent model config wiring against the real model-config API, including admin-gated key save/test/delete, agent save/test controls, missing-required/default/unsaved status badges, and client-side numeric validation.",
+      "sprint": "feat/byok-only-model-config",
+      "status": "done",
+      "completed_at": "2026-06-23",
+      "tests_added": 0,
+      "files_modified": [
+        "frontend/src/app/(dashboard)/settings/_components/ModelsTab.tsx",
+        "frontend/src/app/(dashboard)/settings/_lib/api.ts",
+        "frontend/src/app/(dashboard)/settings/_lib/types.ts"
+      ],
+      "validation": "frontend ./node_modules/.bin/tsc --noEmit --incremental false (passed); git diff --check on changed Settings model-config files (passed)."
+    },
+    {
       "id": "T-byok-research-native-provider-remediation",
       "task": "BYOK research native-provider remediation - workspace-backed KB brand perception now resolves `research.kb.brand_perception` through the BYOK wrapper instead of Anthropic SDK, and workspace-backed VSG author discovery resolves `research.vsg.author_discovery` through the BYOK wrapper instead of LiteLLM/native Anthropic tool calls. Legacy no-workspace branches remain for direct test/CLI compatibility until final enforcement cleanup.",
       "sprint": "feat/byok-only-model-config",

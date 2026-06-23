@@ -15,6 +15,7 @@ import type {
   WebflowAuthorizeResponseAPI,
   WebflowSiteSummaryAPI,
   WebflowSelectSiteRequestAPI,
+  WebflowSelectSiteResponseAPI,
   GA4AuthorizeResponseAPI,
   GA4ConnectionResponseAPI,
   GA4PropertiesResponseAPI,
@@ -22,8 +23,17 @@ import type {
   GA4DisconnectResponseAPI,
   GA4SyncRequestAPI,
   GA4SyncResponseAPI,
+  AgentConfigTestResponseAPI,
+  AgentModelConfigAPI,
+  AgentModelConfigUpdateRequestAPI,
+  CredentialStatusAPI,
+  CredentialTestResponseAPI,
+  DeleteOpenRouterKeyResponseAPI,
+  OpenRouterKeyTestRequestAPI,
+  OpenRouterKeyUpsertRequestAPI,
   TaskStatusAPI,
   UpdateWorkspaceMemberRequestAPI,
+  WorkspaceModelConfigAPI,
   WorkspaceInviteResponseAPI,
   WorkspaceMembersResponseAPI,
   WorkspaceMemberAPI,
@@ -216,4 +226,70 @@ export function triggerGA4Sync(
 
 export function fetchTaskStatus(taskId: string): Promise<TaskStatusAPI> {
   return api.get<TaskStatusAPI>(`/api/v1/tasks/${taskId}`, workspaceQueryParams());
+}
+
+// ── BYOK Model Configuration ───────────────────────────
+
+export function fetchWorkspaceModelConfig(
+  workspaceSlug: string,
+  signal?: AbortSignal,
+): Promise<WorkspaceModelConfigAPI> {
+  return api.get<WorkspaceModelConfigAPI>(
+    `/api/v1/workspaces/${encodeURIComponent(workspaceSlug)}/model-config`,
+    workspaceQueryParams(),
+    signal,
+  );
+}
+
+export function upsertOpenRouterKey(
+  workspaceSlug: string,
+  body: OpenRouterKeyUpsertRequestAPI,
+): Promise<CredentialStatusAPI> {
+  return api.put<CredentialStatusAPI>(
+    `/api/v1/workspaces/${encodeURIComponent(workspaceSlug)}/model-config/openrouter-key`,
+    body,
+  );
+}
+
+export function deleteOpenRouterKey(
+  workspaceSlug: string,
+): Promise<DeleteOpenRouterKeyResponseAPI> {
+  return api.del<DeleteOpenRouterKeyResponseAPI>(
+    `/api/v1/workspaces/${encodeURIComponent(workspaceSlug)}/model-config/openrouter-key`,
+    workspaceQueryParams(),
+  );
+}
+
+export function testOpenRouterKey(
+  workspaceSlug: string,
+  body: OpenRouterKeyTestRequestAPI,
+): Promise<CredentialTestResponseAPI> {
+  return api.post<CredentialTestResponseAPI>(
+    `/api/v1/workspaces/${encodeURIComponent(workspaceSlug)}/model-config/openrouter-key/test`,
+    body,
+    { params: workspaceQueryParams() },
+  );
+}
+
+export function updateAgentModelConfig(
+  workspaceSlug: string,
+  agentKey: string,
+  body: AgentModelConfigUpdateRequestAPI,
+): Promise<AgentModelConfigAPI> {
+  return api.patch<AgentModelConfigAPI>(
+    `/api/v1/workspaces/${encodeURIComponent(workspaceSlug)}/model-config/agents/${encodeURIComponent(agentKey)}`,
+    body,
+    { params: workspaceQueryParams() },
+  );
+}
+
+export function testAgentModelConfig(
+  workspaceSlug: string,
+  agentKey: string,
+): Promise<AgentConfigTestResponseAPI> {
+  return api.post<AgentConfigTestResponseAPI>(
+    `/api/v1/workspaces/${encodeURIComponent(workspaceSlug)}/model-config/agents/${encodeURIComponent(agentKey)}/test`,
+    {},
+    { params: workspaceQueryParams() },
+  );
 }

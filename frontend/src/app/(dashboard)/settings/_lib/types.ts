@@ -211,6 +211,83 @@ export interface TaskStatusAPI {
   error?: string;
 }
 
+// ── BYOK Model Configuration (from api/schemas/model_config.py) ─────
+
+export interface CredentialStatusAPI {
+  provider: string;
+  configured: boolean;
+  status: string;
+  masked_key: string;
+  last_validated_at: string | null;
+  last_validation_error: string;
+}
+
+export interface AgentCatalogItemAPI {
+  agent_key: string;
+  display_name: string;
+  group: string;
+  pipeline: string;
+  pipeline_step: string;
+  default_model: string;
+  capabilities: string[];
+  required: boolean;
+  description: string;
+}
+
+export interface AgentModelConfigAPI {
+  agent_key: string;
+  model: string;
+  provider: string;
+  temperature: number | null;
+  max_tokens: number | null;
+  timeout_s: number | null;
+  enabled: boolean;
+  uses_default: boolean;
+  updated_at: string | null;
+}
+
+export interface WorkspaceModelConfigAPI {
+  workspace_slug: string;
+  credential: CredentialStatusAPI;
+  catalog: AgentCatalogItemAPI[];
+  configs: AgentModelConfigAPI[];
+  missing_required_agent_keys: string[];
+}
+
+export interface OpenRouterKeyUpsertRequestAPI {
+  api_key: string;
+}
+
+export interface OpenRouterKeyTestRequestAPI {
+  api_key?: string | null;
+}
+
+export interface CredentialTestResponseAPI {
+  ok: boolean;
+  provider: string;
+  model: string;
+  error: string;
+}
+
+export interface AgentModelConfigUpdateRequestAPI {
+  model: string;
+  temperature: number | null;
+  max_tokens: number | null;
+  timeout_s: number | null;
+  enabled?: boolean | null;
+}
+
+export interface AgentConfigTestResponseAPI {
+  ok: boolean;
+  agent_key: string;
+  model: string;
+  error: string;
+}
+
+export interface DeleteOpenRouterKeyResponseAPI {
+  deleted: boolean;
+}
+
 // ── Frontend display types ──────────────────────────────
 
 export type FrontendRole = 'admin' | 'editor' | 'viewer';
