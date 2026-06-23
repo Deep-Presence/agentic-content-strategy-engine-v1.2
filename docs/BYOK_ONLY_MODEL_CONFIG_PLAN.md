@@ -4,7 +4,7 @@ Branch: `feat/byok-only-model-config`
 
 ## Implementation Status
 
-As of 2026-06-23, the branch has implemented the BYOK storage/API/service layer, runtime resolver, workspace OpenRouter client builders, pipeline launch preflight, major customer runtime migrations, and the Settings Models UI.
+As of 2026-06-23, the branch has implemented the BYOK storage/API/service layer, runtime resolver, workspace OpenRouter client builders, pipeline launch preflight, major customer runtime migrations, and the Settings Models UI with usage visibility.
 
 Completed in this branch:
 
@@ -16,7 +16,7 @@ Completed in this branch:
 - Runtime migration for Content Engine v1.3, Topic Discovery, KB/AP/VSG, Daily Tracker fanout/content-to-prompt/platform Perplexity, embeddings, Reddit HIL, and the primary Gap Analysis model calls.
 - Gap Analysis and Daily Tracker native OpenAI/Claude/Gemini search engines disabled when workspace BYOK context is present; BYOK v1 uses OpenRouter-routed Perplexity for web-grounded search.
 - Launch-route preflight for Content v1.3, Gap Analysis, Research Orchestrator, and Daily Tracker runs, returning HTTP 409 with `byok_model_config_required` before durable task creation.
-- Settings Models tab wired to the real workspace model-config API with admin-gated key and agent controls.
+- Settings Models tab wired to the real workspace model-config API with admin-gated key controls, agent controls, and per-agent usage summary from `llm_cost_events`.
 - Static guard test that prevents new product runtime references to platform-owned LLM keys or singleton OpenRouter helpers outside the explicit legacy allowlist.
 
 Remaining before branch exit:

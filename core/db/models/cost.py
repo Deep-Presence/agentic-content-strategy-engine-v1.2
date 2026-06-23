@@ -35,6 +35,9 @@ class LLMCostEventModel(UUIDPKMixin, TimestampMixin, Base):
             postgresql_where="run_id IS NOT NULL",
         ),
         Index("ix_llm_cost_events_slug_time", "company_slug", "event_time"),
+        Index("ix_llm_cost_events_agent_key", "agent_key"),
+        Index("ix_llm_cost_events_credential_id", "credential_id"),
+        Index("ix_llm_cost_events_model_config_id", "model_config_id"),
     )
 
     event_time: Mapped[datetime] = mapped_column(

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, KeyRound, RefreshCw, Save, Trash2, Zap } from 'lucide-react';
+import { AlertCircle, BarChart3, CheckCircle2, KeyRound, RefreshCw, Save, Trash2, Zap } from 'lucide-react';
 import { Badge, Button, Input, Skeleton, Toast, Toggle } from '@/components/ui';
 import { useAuth } from '@/hooks/useAuth';
 import { ApiError } from '@/lib/api-client';
@@ -85,9 +85,24 @@ function formatDate(iso: string | null): string {
   });
 }
 
+function formatTokenCount(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+  return String(value);
+}
+
+function formatUsd(value: number): string {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: value < 1 ? 4 : 2,
+    maximumFractionDigits: value < 1 ? 4 : 2,
+  }).format(value);
+}
+
 function statusBadge(credential: CredentialStatusAPI) {
   if (!credential.configured) return <Badge variant="error">Missing key</Badge>;
-  if (credential.status === 'valid') return <Badge variant="success">Active</Badge>;
+  if (credential.status === 'active' || credential.status === 'valid') return <Badge variant="success">Active</Badge>;
   if (credential.status === 'invalid') return <Badge variant="error">Invalid</Badge>;
   return <Badge variant="warning">Untested</Badge>;
 }
@@ -178,6 +193,21 @@ export function ModelsTab() {
   }, [rows]);
 
   const missingRequiredCount = configView?.missing_required_agent_keys.length ?? 0;
+  const usageSummary = configView?.usage_summary ?? [];
+  const catalogNames = useMemo(() => {
+    if (!configView) return new Map<string, string>();
+    return new Map(configView.catalog.map((item) => [item.agent_key, item.display_name]));
+  }, [configView]);
+  const usageTotals = useMemo(() => {
+    return usageSummary.reduce(
+      (acc, row) => ({
+        calls: acc.calls + row.call_count,
+        tokens: acc.tokens + row.prompt_tokens + row.completion_tokens,
+        cost: acc.cost + row.estimated_cost_usd,
+      }),
+      { calls: 0, tokens: 0, cost: 0 },
+    );
+  }, [usageSummary]);
 
   const updateDraft = useCallback((agentKey: string, patch: Partial<AgentDraft>) => {
     setDrafts((current) => ({
@@ -409,6 +439,59 @@ export function ModelsTab() {
             <span className="text-error">{configView.credential.last_validation_error}</span>
           )}
         </div>
+      </section>
+
+      <section className="border border-border rounded-md bg-surface">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
+          <div className="flex items-center gap-2">
+            <BarChart3 size={16} strokeWidth={1.5} className="text-accent" />
+            <h3 className="text-[16px] font-semibold text-text-primary">Usage Summary</h3>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[12px] text-text-tertiary">
+            <span>Calls: <span className="text-text-secondary">{usageTotals.calls}</span></span>
+            <span>Tokens: <span className="text-text-secondary">{formatTokenCount(usageTotals.tokens)}</span></span>
+            <span>Cost: <span className="text-text-secondary">{formatUsd(usageTotals.cost)}</span></span>
+          </div>
+        </div>
+        {usageSummary.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-left text-[12px]">
+              <thead className="border-b border-border bg-bg text-[10px] uppercase tracking-[0.06em] text-text-tertiary">
+                <tr>
+                  <th className="px-4 py-2 font-medium">Agent</th>
+                  <th className="px-3 py-2 font-medium">Calls</th>
+                  <th className="px-3 py-2 font-medium">Tokens</th>
+                  <th className="px-3 py-2 font-medium">Cost</th>
+                  <th className="px-3 py-2 font-medium">Last used</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border-subtle">
+                {usageSummary.map((row) => (
+                  <tr key={row.agent_key}>
+                    <td className="px-4 py-2">
+                      <div className="font-medium text-text-primary">
+                        {catalogNames.get(row.agent_key) ?? row.agent_key}
+                      </div>
+                      <div className="font-mono text-[11px] text-text-tertiary">
+                        {row.agent_key}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 text-text-secondary">{row.call_count}</td>
+                    <td className="px-3 py-2 text-text-secondary">
+                      {formatTokenCount(row.prompt_tokens + row.completion_tokens)}
+                    </td>
+                    <td className="px-3 py-2 text-text-secondary">{formatUsd(row.estimated_cost_usd)}</td>
+                    <td className="px-3 py-2 text-text-secondary">{formatDate(row.last_used_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="px-4 py-3 text-[13px] text-text-secondary">
+            No BYOK usage recorded yet.
+          </div>
+        )}
       </section>
 
       <section className="border border-border rounded-md bg-surface">

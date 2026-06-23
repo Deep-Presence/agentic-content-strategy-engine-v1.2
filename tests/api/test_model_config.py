@@ -11,6 +11,7 @@ from core.model_config.schemas import (
     AgentCatalogItem,
     AgentConfigTestResult,
     AgentModelConfigView,
+    AgentUsageSummary,
     CredentialStatus,
     CredentialTestResult,
     ModelConfigPreflightResult,
@@ -53,6 +54,16 @@ class FakeModelConfigService:
                     agent_key="content.brief_builder",
                     model="anthropic/claude-sonnet-4-6",
                     uses_default=True,
+                )
+            ],
+            usage_summary=[
+                AgentUsageSummary(
+                    agent_key="content.brief_builder",
+                    call_count=3,
+                    prompt_tokens=1200,
+                    completion_tokens=600,
+                    estimated_cost_usd=0.42,
+                    last_used_at=datetime(2026, 6, 22, 1, 30, tzinfo=timezone.utc),
                 )
             ],
         )
@@ -128,6 +139,9 @@ def test_get_model_config_returns_catalog_without_raw_key(
     assert "api_key" not in str(body)
     assert body["catalog"][0]["agent_key"] == "content.brief_builder"
     assert body["configs"][0]["uses_default"] is True
+    assert body["usage_summary"][0]["agent_key"] == "content.brief_builder"
+    assert body["usage_summary"][0]["call_count"] == 3
+    assert body["usage_summary"][0]["estimated_cost_usd"] == 0.42
 
 
 def test_member_can_preflight_but_cannot_mutate_key(

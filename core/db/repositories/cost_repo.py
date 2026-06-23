@@ -5,7 +5,7 @@ import uuid as _uuid
 from datetime import datetime
 from typing import Any, Sequence
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from core.db.models.cost import LLMCostEventModel, ModelPricingModel
@@ -28,6 +28,40 @@ class CostEventRepository(SQLAlchemyRepository[LLMCostEventModel]):
         result = await self._session.execute(stmt)
         await self._session.flush()
         return result.rowcount
+
+    async def summarize_by_agent_for_workspace(
+        self,
+        workspace_id: str | _uuid.UUID,
+    ) -> list[dict[str, Any]]:
+        """Aggregate workspace BYOK usage by agent key."""
+        wid = _uuid.UUID(str(workspace_id)) if isinstance(workspace_id, str) else workspace_id
+        stmt = (
+            select(
+                LLMCostEventModel.agent_key,
+                func.count(LLMCostEventModel.id).label("call_count"),
+                func.coalesce(func.sum(LLMCostEventModel.prompt_tokens), 0).label("prompt_tokens"),
+                func.coalesce(func.sum(LLMCostEventModel.completion_tokens), 0).label("completion_tokens"),
+                func.coalesce(func.sum(LLMCostEventModel.estimated_cost_usd), 0.0).label("estimated_cost_usd"),
+                func.max(LLMCostEventModel.event_time).label("last_used_at"),
+            )
+            .where(LLMCostEventModel.workspace_id == wid)
+            .where(LLMCostEventModel.agent_key.is_not(None))
+            .where(LLMCostEventModel.agent_key != "")
+            .group_by(LLMCostEventModel.agent_key)
+            .order_by(func.coalesce(func.sum(LLMCostEventModel.estimated_cost_usd), 0.0).desc())
+        )
+        result = await self._session.execute(stmt)
+        return [
+            {
+                "agent_key": row.agent_key or "",
+                "call_count": int(row.call_count or 0),
+                "prompt_tokens": int(row.prompt_tokens or 0),
+                "completion_tokens": int(row.completion_tokens or 0),
+                "estimated_cost_usd": float(row.estimated_cost_usd or 0.0),
+                "last_used_at": row.last_used_at,
+            }
+            for row in result
+        ]
 
 
 class ModelPricingRepository(SQLAlchemyRepository[ModelPricingModel]):

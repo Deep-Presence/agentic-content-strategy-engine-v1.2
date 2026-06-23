@@ -1,7 +1,7 @@
 {
   "current_sprint": "feat/byok-only-model-config",
-  "last_updated": "2026-06-23T02:10:52Z",
-  "test_count": 2188,
+  "last_updated": "2026-06-23T15:44:48Z",
+  "test_count": 2189,
   "completed_sprints_summary": {
     "total_tasks_completed": 61,
     "sprints": [
@@ -303,6 +303,28 @@
     ]
   },
   "completed": [
+    {
+      "id": "T-byok-model-config-usage-summary",
+      "task": "BYOK model-config usage summary - workspace model-config responses now include per-agent usage totals from llm_cost_events, and the Settings Models tab displays calls, token volume, estimated cost, and last-used time alongside credential and agent controls.",
+      "sprint": "feat/byok-only-model-config",
+      "status": "done",
+      "completed_at": "2026-06-23",
+      "tests_added": 1,
+      "files_modified": [
+        "api/dependencies.py",
+        "api/schemas/model_config.py",
+        "core/db/models/cost.py",
+        "core/db/repositories/cost_repo.py",
+        "core/model_config/schemas.py",
+        "core/model_config/service.py",
+        "frontend/src/app/(dashboard)/settings/_components/ModelsTab.tsx",
+        "frontend/src/app/(dashboard)/settings/_lib/types.ts",
+        "tests/api/test_model_config.py",
+        "tests/model_config/test_service_resolver.py",
+        "docs/BYOK_ONLY_MODEL_CONFIG_PLAN.md"
+      ],
+      "validation": "venv/bin/python -m pytest tests/api/test_model_config.py tests/model_config/test_service_resolver.py tests/static/test_byok_platform_key_guard.py -q (11 passed); frontend ./node_modules/.bin/tsc --noEmit --incremental false (passed); py_compile on changed backend model-config/cost modules; git diff --check."
+    },
     {
       "id": "T-byok-pipeline-launch-preflight",
       "task": "BYOK pipeline launch preflight - shared API helper now returns a consistent 409 `byok_model_config_required` response, Content v1.3 missing-config responses match the spec, and Gap Analysis, Research Orchestrator, and Daily Tracker run launches preflight their required workspace agent model configs before durable task creation.",

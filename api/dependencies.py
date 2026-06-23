@@ -218,6 +218,7 @@ async def get_model_config_service(
         )
 
     from core.config.settings import settings
+    from core.db.repositories.cost_repo import CostEventRepository
     from core.db.repositories.model_config_repo import (
         WorkspaceAgentModelConfigRepository,
         WorkspaceLLMCredentialRepository,
@@ -231,6 +232,7 @@ async def get_model_config_service(
         service = ModelConfigService(
             credential_repo=WorkspaceLLMCredentialRepository(session),
             config_repo=WorkspaceAgentModelConfigRepository(session),
+            cost_repo=CostEventRepository(session),
             fernet_key=resolve_fernet_key(),
         )
         yield service

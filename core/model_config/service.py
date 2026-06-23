@@ -33,6 +33,7 @@ from core.model_config.schemas import (
     AgentConfigTestResult,
     AgentModelConfigUpdate,
     AgentModelConfigView,
+    AgentUsageSummary,
     CredentialStatus,
     CredentialTestResult,
     ModelConfigPreflightResult,
@@ -61,10 +62,12 @@ class ModelConfigService:
         credential_repo: WorkspaceLLMCredentialRepository,
         config_repo: WorkspaceAgentModelConfigRepository,
         fernet_key: str,
+        cost_repo: Any | None = None,
         validator: OpenRouterCredentialValidator | None = None,
     ) -> None:
         self._credential_repo = credential_repo
         self._config_repo = config_repo
+        self._cost_repo = cost_repo
         self._fernet_key = fernet_key
         self._validator = validator or LiveOpenRouterCredentialValidator()
 
@@ -84,12 +87,14 @@ class ModelConfigService:
             _effective_config_view(definition, overrides.get(definition.agent_key))
             for definition in all_agent_definitions()
         ]
+        usage_summary = await self._usage_summary(workspace_id)
         return WorkspaceModelConfigView(
             workspace_slug=workspace_slug,
             credential=_credential_status(credential),
             catalog=catalog,
             configs=configs,
             missing_required_agent_keys=[],
+            usage_summary=usage_summary,
         )
 
     async def upsert_openrouter_key(
@@ -223,6 +228,12 @@ class ModelConfigService:
                 result.ok = False
                 result.disabled_agent_keys.append(agent_key)
         return result
+
+    async def _usage_summary(self, workspace_id: str) -> list[AgentUsageSummary]:
+        if self._cost_repo is None:
+            return []
+        rows = await self._cost_repo.summarize_by_agent_for_workspace(workspace_id)
+        return [AgentUsageSummary.model_validate(row) for row in rows]
 
 
 def _catalog_item(definition: AgentDefinition) -> AgentCatalogItem:

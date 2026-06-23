@@ -246,12 +246,22 @@ export interface AgentModelConfigAPI {
   updated_at: string | null;
 }
 
+export interface AgentUsageSummaryAPI {
+  agent_key: string;
+  call_count: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  estimated_cost_usd: number;
+  last_used_at: string | null;
+}
+
 export interface WorkspaceModelConfigAPI {
   workspace_slug: string;
   credential: CredentialStatusAPI;
   catalog: AgentCatalogItemAPI[];
   configs: AgentModelConfigAPI[];
   missing_required_agent_keys: string[];
+  usage_summary: AgentUsageSummaryAPI[];
 }
 
 export interface OpenRouterKeyUpsertRequestAPI {

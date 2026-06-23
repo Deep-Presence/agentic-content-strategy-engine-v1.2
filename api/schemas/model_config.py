@@ -39,12 +39,22 @@ class AgentModelConfigResponse(BaseModel):
     updated_at: str | None = None
 
 
+class AgentUsageSummaryResponse(BaseModel):
+    agent_key: str = ""
+    call_count: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    estimated_cost_usd: float = 0.0
+    last_used_at: str | None = None
+
+
 class WorkspaceModelConfigResponse(BaseModel):
     workspace_slug: str = ""
     credential: CredentialStatusResponse = Field(default_factory=CredentialStatusResponse)
     catalog: list[AgentCatalogItemResponse] = Field(default_factory=list)
     configs: list[AgentModelConfigResponse] = Field(default_factory=list)
     missing_required_agent_keys: list[str] = Field(default_factory=list)
+    usage_summary: list[AgentUsageSummaryResponse] = Field(default_factory=list)
 
 
 class OpenRouterKeyUpsertRequest(BaseModel):

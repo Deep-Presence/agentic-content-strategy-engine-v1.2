@@ -90,6 +90,14 @@ class FakeConfigRepo:
         return row
 
 
+class FakeCostRepo:
+    def __init__(self) -> None:
+        self.rows = []
+
+    async def summarize_by_agent_for_workspace(self, workspace_id: str):
+        return self.rows
+
+
 @pytest.fixture
 def fernet_key() -> str:
     return Fernet.generate_key().decode()
@@ -179,6 +187,38 @@ async def test_preflight_fails_closed_when_missing_credential(
     assert result.ok is False
     assert result.missing_credential is True
     assert result.errors == ["missing_credential"]
+
+
+@pytest.mark.asyncio
+async def test_workspace_model_config_includes_agent_usage_summary(
+    workspace_id: str,
+    fernet_key: str,
+) -> None:
+    cost_repo = FakeCostRepo()
+    cost_repo.rows = [
+        {
+            "agent_key": "content.brief_builder",
+            "call_count": 4,
+            "prompt_tokens": 1000,
+            "completion_tokens": 500,
+            "estimated_cost_usd": 0.25,
+            "last_used_at": datetime(2026, 6, 22, tzinfo=timezone.utc),
+        }
+    ]
+    service = ModelConfigService(
+        credential_repo=FakeCredentialRepo(),  # type: ignore[arg-type]
+        config_repo=FakeConfigRepo(),  # type: ignore[arg-type]
+        cost_repo=cost_repo,
+        fernet_key=fernet_key,
+        validator=FakeValidator(),
+    )
+
+    view = await service.get_workspace_model_config(workspace_id, workspace_slug="test-co")
+
+    assert view.usage_summary[0].agent_key == "content.brief_builder"
+    assert view.usage_summary[0].call_count == 4
+    assert view.usage_summary[0].prompt_tokens == 1000
+    assert view.usage_summary[0].estimated_cost_usd == 0.25
 
 
 @pytest.mark.asyncio
