@@ -1,8 +1,10 @@
 # BYOK-Only Model Configuration Spec
 
-Status: Draft for spec-driven implementation
+Status: Implemented on `feat/byok-only-model-config`; final broad validation pending
 
 Branch: `feat/byok-only-model-config`
+
+Implementation note, 2026-06-23: customer launch paths are required to preflight workspace BYOK model config before durable task creation and pass workspace context into runtime calls. A static guard in `tests/static/test_byok_platform_key_guard.py` blocks new platform-owned LLM key or singleton OpenRouter references outside the explicit legacy no-workspace/test/admin allowlist.
 
 ## 1. Product Contract
 

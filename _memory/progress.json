@@ -340,6 +340,20 @@
       "validation": "frontend ./node_modules/.bin/tsc --noEmit --incremental false (passed); git diff --check on changed Settings model-config files (passed)."
     },
     {
+      "id": "T-byok-static-guard-docs-cleanup",
+      "task": "BYOK static guard and docs cleanup - added a shrink-only static guard that blocks new product runtime references to platform-owned LLM keys or singleton OpenRouter helpers outside the explicit legacy no-workspace/test/admin allowlist, and updated the BYOK plan/spec with current branch implementation status.",
+      "sprint": "feat/byok-only-model-config",
+      "status": "done",
+      "completed_at": "2026-06-23",
+      "tests_added": 1,
+      "files_modified": [
+        "tests/static/test_byok_platform_key_guard.py",
+        "docs/BYOK_ONLY_MODEL_CONFIG_PLAN.md",
+        "docs/BYOK_ONLY_MODEL_CONFIG_SPEC.md"
+      ],
+      "validation": "venv/bin/python -m pytest tests/static/test_byok_platform_key_guard.py -q (1 passed)."
+    },
+    {
       "id": "T-byok-research-native-provider-remediation",
       "task": "BYOK research native-provider remediation - workspace-backed KB brand perception now resolves `research.kb.brand_perception` through the BYOK wrapper instead of Anthropic SDK, and workspace-backed VSG author discovery resolves `research.vsg.author_discovery` through the BYOK wrapper instead of LiteLLM/native Anthropic tool calls. Legacy no-workspace branches remain for direct test/CLI compatibility until final enforcement cleanup.",
       "sprint": "feat/byok-only-model-config",

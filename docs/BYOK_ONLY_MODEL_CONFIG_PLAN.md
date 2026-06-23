@@ -2,16 +2,37 @@
 
 Branch: `feat/byok-only-model-config`
 
+## Implementation Status
+
+As of 2026-06-23, the branch has implemented the BYOK storage/API/service layer, runtime resolver, workspace OpenRouter client builders, pipeline launch preflight, major customer runtime migrations, and the Settings Models UI.
+
+Completed in this branch:
+
+- Workspace OpenRouter credential and per-agent model config persistence.
+- Code-defined agent catalog seeded from the current platform model defaults.
+- Model config API under `/api/v1/workspaces/{workspace_slug}/model-config`.
+- BYOK-aware `llm_call_for_agent()` and OpenRouter client builders for resolved workspace keys.
+- Workspace/agent/credential/model-config cost metadata plumbing.
+- Runtime migration for Content Engine v1.3, Topic Discovery, KB/AP/VSG, Daily Tracker fanout/content-to-prompt/platform Perplexity, embeddings, Reddit HIL, and the primary Gap Analysis model calls.
+- Gap Analysis and Daily Tracker native OpenAI/Claude/Gemini search engines disabled when workspace BYOK context is present; BYOK v1 uses OpenRouter-routed Perplexity for web-grounded search.
+- Launch-route preflight for Content v1.3, Gap Analysis, Research Orchestrator, and Daily Tracker runs, returning HTTP 409 with `byok_model_config_required` before durable task creation.
+- Settings Models tab wired to the real workspace model-config API with admin-gated key and agent controls.
+- Static guard test that prevents new product runtime references to platform-owned LLM keys or singleton OpenRouter helpers outside the explicit legacy allowlist.
+
+Remaining before branch exit:
+
+- Run the final broad affected backend/frontend validation slice after the static guard/docs commit.
+- Optionally remove the remaining no-workspace legacy allowlist entries once test/admin compatibility no longer needs them. Customer launch paths should already pass workspace context and fail closed through preflight.
+
 ## Summary
 
 Deep Presence should become a BYOK-only LLM platform: every workspace supplies its own OpenRouter API key, and every LLM-powered agent resolves its model configuration from workspace-scoped agent settings at runtime. Product pipelines must not use a platform-owned `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or Google model key for customer work.
 
-The current codebase is already partially OpenRouter-centered, but the contract is still environment-driven:
+The initial codebase was already partially OpenRouter-centered, but the contract was still environment-driven:
 
 - Global settings define model names in `core/config/settings.py`.
 - OpenRouter clients are singleton factories bound to `settings.openrouter_api_key` in `core/shared_tools/openrouter_client.py`.
 - Many LLM call sites use shared OpenRouter helpers, but several high-value paths still instantiate native provider clients or direct HTTP calls.
-- The Settings `ModelsTab` is currently mock-only frontend state.
 - Cost tracking exists, and `llm_cost_events` already has `workspace_id`, but current runtime calls usually do not pass workspace id, agent key, credential id, or model config id into the cost event.
 
 This plan makes the workspace the billing and configuration boundary. Users can be members of multiple workspaces, but the active workspace controls the OpenRouter key and agent model matrix.
