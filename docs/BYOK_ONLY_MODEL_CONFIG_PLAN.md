@@ -21,8 +21,7 @@ Completed in this branch:
 
 Remaining before branch exit:
 
-- Run the final broad affected backend/frontend validation slice after the static guard/docs commit.
-- Optionally remove the remaining no-workspace legacy allowlist entries once test/admin compatibility no longer needs them. Customer launch paths should already pass workspace context and fail closed through preflight.
+- Optional: remove the remaining no-workspace legacy allowlist entries once test/admin compatibility no longer needs them. Customer launch paths pass workspace context and fail closed through preflight.
 
 ## Summary
 
