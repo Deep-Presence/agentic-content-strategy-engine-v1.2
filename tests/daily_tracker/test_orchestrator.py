@@ -169,6 +169,23 @@ class TestFullRunSuccess:
         assert call_kwargs.kwargs.get("engines") == ["openai", "claude"]
 
     @pytest.mark.asyncio
+    async def test_passes_workspace_context_to_runner(
+        self,
+        orchestrator: DailyTrackerOrchestrator,
+        mock_runner_service: AsyncMock,
+    ) -> None:
+        await orchestrator.execute_daily_run(
+            company_id="ramp",
+            workspace_id="ws-123",
+            workspace_slug="ramp",
+        )
+
+        call_kwargs = mock_runner_service.run_prompts.call_args
+        assert call_kwargs.kwargs["workspace_id"] == "ws-123"
+        assert call_kwargs.kwargs["workspace_slug"] == "ramp"
+        assert call_kwargs.kwargs["company_slug"] == "ramp"
+
+    @pytest.mark.asyncio
     async def test_detects_mentions_for_each_response(
         self,
         orchestrator: DailyTrackerOrchestrator,

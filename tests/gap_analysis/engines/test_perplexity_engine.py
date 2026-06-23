@@ -63,3 +63,19 @@ class TestPerplexityEngineCostTracking:
         kw = mock_track.call_args[1]
         assert kw["prompt_tokens"] == 0
         assert kw["completion_tokens"] == 0
+
+    @pytest.mark.asyncio
+    async def test_workspace_search_requires_resolved_byok_client(self):
+        engine = PerplexityEngine(model="perplexity/sonar-pro")
+
+        with (
+            patch("core.shared_tools.openrouter_client.get_async_client") as mock_singleton,
+            pytest.raises(RuntimeError, match="requires a workspace OpenRouter client"),
+        ):
+            await engine.search(
+                "test query",
+                workspace_id="ws-123",
+                workspace_slug="ramp",
+            )
+
+        mock_singleton.assert_not_called()

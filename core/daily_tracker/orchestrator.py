@@ -70,6 +70,8 @@ class DailyTrackerOrchestrator:
         competitors: list[str] | None = None,
         concurrency: int = 6,
         run_id: str | None = None,
+        workspace_id: str = "",
+        workspace_slug: str = "",
     ) -> DailyRunResult:
         """Execute a complete daily tracking run.
 
@@ -94,6 +96,8 @@ class DailyTrackerOrchestrator:
             run_id: Optional pre-generated run UUID string. If None, a new
                 UUID is generated. Caller can pre-generate to create a
                 DB record before orchestration starts (in-flight visibility).
+            workspace_id: Workspace id used to resolve BYOK model config.
+            workspace_slug: Workspace slug used to resolve BYOK model config.
 
         Returns:
             DailyRunResult with all responses and mention analyses.
@@ -133,7 +137,12 @@ class DailyTrackerOrchestrator:
             # PlatformResponse objects, but WITHOUT mention analysis.
             # The orchestrator enriches each response with mention data.
             run_result = await self._runner.run_prompts(
-                prompts, engines=engines, concurrency=concurrency,
+                prompts,
+                engines=engines,
+                concurrency=concurrency,
+                workspace_id=workspace_id,
+                workspace_slug=workspace_slug or company_id,
+                company_slug=company_id,
             )
 
             # Step 3: Detect mentions in each response

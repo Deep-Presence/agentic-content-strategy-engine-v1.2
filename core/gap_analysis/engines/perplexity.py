@@ -13,9 +13,24 @@ class PerplexityEngine(SearchEngine):
     def __init__(self, model: Optional[str] = None) -> None:
         super().__init__(model=model or settings.perplexity_search_model)
 
-    async def search(self, query_text: str, query_id: Optional[str] = None, *, client: Any = None) -> PlatformResult:
+    async def search(
+        self,
+        query_text: str,
+        query_id: Optional[str] = None,
+        *,
+        client: Any = None,
+        workspace_id: str = "",
+        workspace_slug: str = "",
+        company_slug: str = "",
+        agent_key: str = "",
+        credential_id: str | None = None,
+        model_config_id: str | None = None,
+        actual_provider: str = "",
+    ) -> PlatformResult:
         from core.shared_tools.openrouter_client import get_async_client
 
+        if workspace_id and client is None:
+            raise RuntimeError("BYOK Perplexity search requires a workspace OpenRouter client.")
         pplx_client = client if client is not None else get_async_client()
         completion = await pplx_client.chat.completions.create(
             model=self.model,
@@ -41,8 +56,15 @@ class PerplexityEngine(SearchEngine):
             pipeline_step="s3_perplexity_engine",
             prompt_tokens=_pt,
             completion_tokens=_ct,
+            company_slug=company_slug or workspace_slug,
             call_site="core.gap_analysis.engines.perplexity",
             source="openrouter",
+            workspace_id=workspace_id or None,
+            agent_key=agent_key,
+            credential_id=credential_id,
+            model_config_id=model_config_id,
+            actual_provider=actual_provider or "perplexity",
+            workspace_billed=bool(workspace_id),
         )
 
         content = ""

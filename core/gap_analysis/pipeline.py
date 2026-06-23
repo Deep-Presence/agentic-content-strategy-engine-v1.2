@@ -388,7 +388,14 @@ async def run_gap_analysis(
                         ]
                         platform_results.extend(items)
                 else:
-                    platform_results = await search_platforms(queries, input_data.platforms, trace_span=s3_span)
+                    platform_results = await search_platforms(
+                        queries,
+                        input_data.platforms,
+                        trace_span=s3_span,
+                        workspace_id=input_data.workspace_id,
+                        workspace_slug=input_data.workspace_slug,
+                        company_slug=slug,
+                    )
                     save_platform_results(platform_results, storage, f"{ga_prefix}/platform_results")
                 logger.info("Step 3 completed: search_platforms (%.1fs)", time.monotonic() - s3_start)
 
@@ -753,7 +760,13 @@ async def run_topic_scoped_gap_analysis(
     _ga_emit("ga_step_start", {"step": "s3", "name": "Search Platforms", "step_num": 3, "total_steps": 8})
     with scoped_bind(step_name="s3_search_platforms"):
         s3_start = time.monotonic()
-        platform_results = await search_platforms(queries, base_input.platforms)
+        platform_results = await search_platforms(
+            queries,
+            base_input.platforms,
+            workspace_id=base_input.workspace_id,
+            workspace_slug=base_input.workspace_slug,
+            company_slug=slug,
+        )
         save_platform_results(platform_results, storage, f"{scoped_prefix}/platform_results")
 
         _flag_company_citations(platform_results, base_input.domain)

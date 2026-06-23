@@ -124,6 +124,9 @@ class PlatformRunnerServiceProtocol(Protocol):
         prompts: list[TrackedPrompt],
         engines: list[str] | None = None,
         concurrency: int = 6,
+        workspace_id: str = "",
+        workspace_slug: str = "",
+        company_slug: str = "",
     ) -> DailyRunResult: ...
 
     async def get_available_engines(self) -> list[str]: ...
@@ -190,6 +193,8 @@ class DailyTrackerOrchestratorProtocol(Protocol):
         company_id: str,
         prompt_ids: list[str] | None = None,
         engines: list[str] | None = None,
-    ) -> str: ...
+        workspace_id: str = "",
+        workspace_slug: str = "",
+    ) -> DailyRunResult: ...
 
     async def get_run_status(self, run_id: str) -> dict[str, object]: ...

@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from core.model_config.schemas import ResolvedModelConfig
 from core.daily_tracker.platform_runner import PlatformRunnerService
 from core.models.daily_tracker import (
     DailyRunResult,
@@ -101,6 +102,66 @@ class TestPlatformRunnerService:
         assert result.prompt_count == 1
         assert result.engine_count == 1
         engine.search.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_byok_mode_runs_only_perplexity_with_workspace_client(
+        self, sample_prompt: TrackedPrompt
+    ) -> None:
+        resolved = ResolvedModelConfig(
+            workspace_id="ws-123",
+            workspace_slug="ramp",
+            agent_key="daily_tracker.platform.perplexity",
+            model="perplexity/sonar-pro",
+            base_url="https://openrouter.example/api/v1",
+            api_key="sk-or-workspace",
+            credential_id="cred-1",
+            model_config_id="cfg-1",
+        )
+        client = MagicMock()
+        client.close = MagicMock(return_value=None)
+        engines = {
+            "openai": _make_mock_engine("openai"),
+            "claude": _make_mock_engine("claude"),
+            "perplexity": _make_mock_engine("perplexity"),
+        }
+        service = PlatformRunnerService(engine_registry=engines)
+
+        with (
+            patch(
+                "core.model_config.runtime.resolve_model_config_for_agent",
+                new_callable=AsyncMock,
+                return_value=resolved,
+            ) as mock_resolve,
+            patch(
+                "core.shared_tools.openrouter_client.build_async_client_for_key",
+                return_value=client,
+            ) as mock_build,
+        ):
+            result = await service.run_prompts(
+                [sample_prompt],
+                engines=["openai", "perplexity", "claude"],
+                workspace_id="ws-123",
+                workspace_slug="ramp",
+                company_slug="ramp",
+            )
+
+        assert result.engine_count == 1
+        assert [response.engine for response in result.responses] == ["perplexity"]
+        engines["openai"].search.assert_not_called()
+        engines["claude"].search.assert_not_called()
+        mock_resolve.assert_awaited_once()
+        assert mock_resolve.await_args.kwargs["agent_key"] == "daily_tracker.platform.perplexity"
+        mock_build.assert_called_once_with(
+            "sk-or-workspace",
+            base_url="https://openrouter.example/api/v1",
+            timeout_s=None,
+        )
+        search_kwargs = engines["perplexity"].search.await_args.kwargs
+        assert search_kwargs["client"] is client
+        assert search_kwargs["workspace_id"] == "ws-123"
+        assert search_kwargs["agent_key"] == "daily_tracker.platform.perplexity"
+        assert search_kwargs["credential_id"] == "cred-1"
+        assert search_kwargs["model_config_id"] == "cfg-1"
 
     @pytest.mark.asyncio
     async def test_run_prompts_multiple_engines(

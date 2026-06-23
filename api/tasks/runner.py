@@ -2864,6 +2864,8 @@ async def run_daily_tracker_task(
                 competitors=resolved_competitors,
                 concurrency=getattr(request, "concurrency", 6),
                 run_id=daily_run_id,
+                workspace_id=workspace_id or "",
+                workspace_slug=company_slug,
             )
 
             # Attach fanout parent map for persistence layer

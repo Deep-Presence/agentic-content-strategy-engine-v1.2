@@ -19,5 +19,6 @@ class SearchEngine(ABC):
         query_id: Optional[str] = None,
         *,
         client: Any = None,
+        **kwargs: Any,
     ) -> PlatformResult:
         raise NotImplementedError
