@@ -43,6 +43,7 @@ python-dateutil>=2.9
 # Content engine — LLM abstraction + observability
 litellm>=1.50
 langsmith>=0.2
+json-repair>=0.39
 
 # Structured logging
 structlog>=24.1
