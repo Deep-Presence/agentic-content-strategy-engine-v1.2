@@ -368,7 +368,7 @@ export interface TopicRunEventListResponseAPI {
   items: TopicRunEventAPI[];
 }
 
-export interface CompanyTopicRunChangedData extends TopicRunSummaryAPI {}
+export type CompanyTopicRunChangedData = TopicRunSummaryAPI;
 
 export interface CompanyNotification {
   type: 'hitl_review_needed' | 'pipeline_complete' | 'pipeline_error';
