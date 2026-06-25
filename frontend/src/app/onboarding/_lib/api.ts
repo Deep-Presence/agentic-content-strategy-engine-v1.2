@@ -41,6 +41,23 @@ export interface OnboardingTaskStatusAPI {
   error?: string | null;
 }
 
+export interface TaskSummaryAPI {
+  run_id: string;
+  pipeline: string;
+  status: string;
+  company_slug: string;
+  product_slug?: string | null;
+  effective_slug?: string | null;
+  current_step?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TaskListResponseAPI {
+  tasks: TaskSummaryAPI[];
+  total: number;
+}
+
 export function startOnboarding(
   body: OnboardingStartRequestAPI,
 ): Promise<OnboardingStartResponseAPI> {
@@ -57,6 +74,21 @@ export function fetchOnboardingStatus(
   return api.get<OnboardingTaskStatusAPI>(
     `/api/v1/onboarding/${encodeURIComponent(runId)}/status`,
     workspaceQueryParams(),
+    signal,
+  );
+}
+
+export function fetchOnboardingTasks(
+  workspaceSlug: string,
+  signal?: AbortSignal,
+): Promise<TaskListResponseAPI> {
+  return api.get<TaskListResponseAPI>(
+    '/api/v1/tasks',
+    {
+      ...workspaceQueryParams(),
+      workspace_slug: workspaceSlug,
+      pipeline: 'onboarding',
+    },
     signal,
   );
 }

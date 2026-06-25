@@ -1,5 +1,18 @@
 [
   {
+    "id": "F-BYOK-ONBOARDING-DUPLICATE-START",
+    "timestamp": "2026-06-25",
+    "what_broke": "After saving an OpenRouter BYOK key and continuing onboarding in dev, the pipeline screen showed `A pipeline is already running for 'onboarding:<workspace>'` even though the first onboarding launch had succeeded.",
+    "root_cause": "The onboarding pipeline screen posted `/api/v1/onboarding/start` from a mount effect. React dev remount/Fast Refresh behavior could issue a second start request before the first response wrote the task id to sessionStorage. The first request returned 202 and started the durable onboarding task; the second request hit the slug lock and returned 409, which the UI treated as terminal failure.",
+    "fix_applied": "Made frontend onboarding launch single-flight per workspace/payload, stores the task id as soon as the shared launch resolves, parses FastAPI `error_code`, and on task-conflict 409 asks `/api/v1/tasks?pipeline=onboarding` for an active run to resume instead of failing the screen.",
+    "lesson": "Client-side pipeline start effects must be idempotent across React dev remounts and refreshes. For singleton pipelines, a 409 conflict can mean a successful first launch is already running, so the UI should resume the active task when authorized rather than showing a hard failure.",
+    "files_affected": [
+      "frontend/src/app/onboarding/_components/ScreenPipeline.tsx",
+      "frontend/src/app/onboarding/_lib/api.ts",
+      "frontend/src/lib/api-client.ts"
+    ]
+  },
+  {
     "id": "F34",
     "timestamp": "2026-06-01",
     "what_broke": "Importing api/routers/daily_tracker.py raised NameError: get_tracker_company_id is not defined when starting the FastAPI server after workspace scoping patch.",

@@ -7,9 +7,11 @@ import { Badge, Button, ProgressBar } from '@/components/ui';
 import { useStreamToken } from '@/hooks/useStreamToken';
 import { ApiError } from '@/lib/api-client';
 import {
+  fetchOnboardingTasks,
   fetchOnboardingStatus,
   startOnboarding,
   type OnboardingStartRequestAPI,
+  type OnboardingStartResponseAPI,
 } from '../_lib/api';
 
 const PIPELINE_ORDER = ['site_audit', 'kb', 'ap', 'vsg', 'ga', 'td'];
@@ -46,6 +48,9 @@ const SSE_EVENTS = [
 type PipelineState = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
 type RunState = 'idle' | 'starting' | 'running' | 'completed' | 'failed';
 
+const ACTIVE_TASK_STATUSES = new Set(['running', 'pending_approval']);
+const onboardingLaunches = new Map<string, Promise<OnboardingStartResponseAPI>>();
+
 interface FeedItem {
   id: number;
   message: string;
@@ -81,6 +86,73 @@ function errorMessage(err: unknown, fallback: string): string {
     }
   }
   return fallback;
+}
+
+function isTaskConflict(err: unknown): boolean {
+  return err instanceof ApiError && (
+    err.status === 409 ||
+    err.code === 'task_conflict'
+  );
+}
+
+function launchKey(workspaceSlug: string, payloadJson: string): string {
+  return `${workspaceSlug}:${payloadJson}`;
+}
+
+async function findActiveOnboardingTask(workspaceSlug: string): Promise<string | null> {
+  const response = await fetchOnboardingTasks(workspaceSlug);
+  const activeTask = response.tasks
+    .filter((task) => ACTIVE_TASK_STATUSES.has(task.status))
+    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0];
+  return activeTask?.run_id ?? null;
+}
+
+function rememberTask(workspaceSlug: string, taskId: string): void {
+  if (typeof window !== 'undefined') {
+    window.sessionStorage.setItem(storageKey(workspaceSlug), taskId);
+  }
+}
+
+async function launchOrResumeOnboarding(
+  workspaceSlug: string,
+  payloadJson: string,
+): Promise<{ runId: string; message: string }> {
+  if (typeof window !== 'undefined') {
+    const existingTaskId = window.sessionStorage.getItem(storageKey(workspaceSlug));
+    if (existingTaskId) {
+      return { runId: existingTaskId, message: 'Resuming existing onboarding run' };
+    }
+  }
+
+  const key = launchKey(workspaceSlug, payloadJson);
+  let launch = onboardingLaunches.get(key);
+  if (!launch) {
+    const parsedPayload = JSON.parse(payloadJson) as OnboardingStartRequestAPI;
+    launch = startOnboarding({
+      ...parsedPayload,
+      workspace_slug: workspaceSlug,
+    });
+    onboardingLaunches.set(key, launch);
+  }
+
+  try {
+    const response = await launch;
+    rememberTask(workspaceSlug, response.run_id);
+    return { runId: response.run_id, message: 'Background onboarding task queued' };
+  } catch (err) {
+    if (isTaskConflict(err)) {
+      const activeTaskId = await findActiveOnboardingTask(workspaceSlug);
+      if (activeTaskId) {
+        rememberTask(workspaceSlug, activeTaskId);
+        return { runId: activeTaskId, message: 'Resuming active onboarding run' };
+      }
+    }
+    throw err;
+  } finally {
+    if (onboardingLaunches.get(key) === launch) {
+      onboardingLaunches.delete(key);
+    }
+  }
 }
 
 export function ScreenPipeline({
@@ -218,32 +290,15 @@ export function ScreenPipeline({
     setPipelineStates(initialPipelineStates());
     setFeedItems([]);
 
-    if (typeof window !== 'undefined') {
-      const existingTaskId = window.sessionStorage.getItem(storageKey(workspaceSlug));
-      if (existingTaskId) {
-        setTaskId(existingTaskId);
-        setRunState('running');
-        appendFeed('Resuming existing onboarding run');
-        return;
-      }
-    }
-
     let cancelled = false;
-    const parsedPayload = JSON.parse(payloadJson) as OnboardingStartRequestAPI;
 
     async function launch() {
       try {
-        const response = await startOnboarding({
-          ...parsedPayload,
-          workspace_slug: workspaceSlug,
-        });
+        const response = await launchOrResumeOnboarding(workspaceSlug, payloadJson);
         if (cancelled) return;
-        setTaskId(response.run_id);
+        setTaskId(response.runId);
         setRunState('running');
-        appendFeed('Background onboarding task queued');
-        if (typeof window !== 'undefined') {
-          window.sessionStorage.setItem(storageKey(workspaceSlug), response.run_id);
-        }
+        appendFeed(response.message);
       } catch (err) {
         if (cancelled) return;
         failRun(errorMessage(err, 'Failed to start onboarding'));

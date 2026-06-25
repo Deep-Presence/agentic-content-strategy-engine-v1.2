@@ -128,7 +128,7 @@ async function doFetch(path: string, options: RequestOptions = {}): Promise<Resp
         detail = typeof nested.message === 'string' ? nested.message : detail;
         code = typeof nested.code === 'string' ? nested.code : undefined;
       }
-      code = code ?? errorBody.code;
+      code = code ?? errorBody.code ?? errorBody.error_code;
     } catch {
       // non-JSON error body
     }
