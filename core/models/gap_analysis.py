@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
@@ -96,6 +97,14 @@ class GapAnalysisInput(BaseModel):
     domain: Optional[str] = None
     company_slug: Optional[str] = Field(
         default=None, description="If omitted, derived from company_name."
+    )
+    workspace_id: str = Field(
+        default="",
+        description="Workspace id used for BYOK model resolution.",
+    )
+    workspace_slug: str = Field(
+        default="",
+        description="Workspace slug used for BYOK model resolution.",
     )
     seed_urls: List[HttpUrl] = Field(
         default_factory=list, description="Seed URLs for crawling company assets."
@@ -209,6 +218,8 @@ class PlatformResult(BaseModel):
     query_text: Optional[str] = None
     response_text: Optional[str] = None
     citations: List[CitationRef] = Field(default_factory=list)
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
 
 class StructuralSignals(BaseModel):
@@ -318,6 +329,8 @@ class EnrichedCitation(BaseModel):
     paragraphs: List[str] = Field(default_factory=list)
     best_paragraphs: List[ParagraphMatch] = Field(default_factory=list)
     structural_signals: Optional[StructuralSignals] = None
+    published_at: Optional[datetime] = None
+    modified_at: Optional[datetime] = None
     is_company_citation: bool = False
 
 

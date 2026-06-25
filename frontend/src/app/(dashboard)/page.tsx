@@ -1,279 +1,584 @@
 'use client';
 
 import { useState, useMemo, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
-import { EmptyState, Skeleton, Toast } from '@/components/ui';
-import { ActiveTasks } from './_components/home/ActiveTasks';
-import { HITLReviews } from './_components/home/HITLReviews';
-import { RecentActivity } from './_components/home/RecentActivity';
-import { RecommendedActions } from './_components/home/RecommendedActions';
-import { StaleContentActions } from './_components/home/StaleContentActions';
-import { PipelineRerunCard } from './_components/home/PipelineRerunCard';
-import { useAuthStore } from '@/stores/auth';
-import { useApiQuery } from '@/lib/hooks/useApiQuery';
-import { useGapSummary } from '@/lib/hooks/useGapAnalysis';
-import { useCMSStaleActions, useCMSStaleToTriage } from '@/lib/hooks/useCMS';
-import { GAP_DATA, CONTENT_DATA, SITE_AUDIT, TASKS } from '@/lib/api/endpoints';
-import type { QueryListResponse } from '@/lib/api/types';
+import { Calendar, ChevronDown, ChevronUp, ChevronRight, TrendingUp, TrendingDown } from 'lucide-react';
+import Link from 'next/link';
+import { generateDayData, VIEW_CONFIGS, type ViewType } from './_components/brand-presence/mock-data';
+import { PresenceChart } from './_components/brand-presence/PresenceChart';
+import { CompetitiveLeaderboard } from './_components/brand-presence/CompetitiveLeaderboard';
+import { InsightCards } from './_components/brand-presence/InsightCards';
+import { PlatformIntelligence } from './_components/brand-presence/PlatformIntelligence';
 
-function getGreeting(): string {
-  const hour = new Date().getHours();
-  if (hour < 12) return 'Good morning';
-  if (hour < 17) return 'Good afternoon';
-  return 'Good evening';
-}
+type DateRange = '7d' | '14d' | '28d';
 
-function formatDate(): string {
-  return new Date().toLocaleDateString('en-US', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  });
-}
+const DATE_RANGES: { key: DateRange; label: string; days: number }[] = [
+  { key: '7d', label: 'Mar 22, 2026 – Mar 28, 2026', days: 7 },
+  { key: '14d', label: 'Mar 15, 2026 – Mar 28, 2026', days: 14 },
+  { key: '28d', label: 'Mar 1, 2026 – Mar 28, 2026', days: 28 },
+];
 
-interface KPI {
-  label: string;
-  value: string;
-  delta: string;
-  deltaType: 'positive' | 'negative' | 'neutral';
-}
+const TRAJECTORY = {
+  months: [
+    { label: 'Jan', score: 45 },
+    { label: 'Feb', score: 52 },
+    { label: 'Mar', score: 58 },
+    { label: 'Apr', score: 74 },
+  ],
+  avgGrowth: 7.2,
+  direction: 'gaining' as const,
+};
 
-export default function HomePage() {
-  const router = useRouter();
-  const user = useAuthStore((s) => s.user);
-  const company = useAuthStore((s) => s.company);
-  const slug = company?.slug;
+const SCORE_BREAKDOWN = [
+  { name: 'Share of Voice', raw: 49.6, weight: 0.35, maxLabel: '100' },
+  { name: 'Citation Rate', raw: 67.0, weight: 0.25, maxLabel: '100' },
+  { name: 'Avg Position', raw: 67.5, weight: 0.20, maxLabel: '100' },
+  { name: 'Sentiment', raw: 72.0, weight: 0.10, maxLabel: '100' },
+  { name: 'Platform Coverage', raw: 100, weight: 0.10, maxLabel: '100' },
+];
 
-  const companyName = company?.name ?? '';
-  const companyDomain = company?.domain ?? '';
+export default function BrandSummaryPage() {
+  const fullData = useMemo(() => generateDayData(), []);
+  const [activeView, setActiveView] = useState<ViewType>('presenceScore');
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const [showCompetitors, setShowCompetitors] = useState(false);
+  const [dateRange, setDateRange] = useState<DateRange>('28d');
+  const [showDateDrop, setShowDateDrop] = useState(false);
+  const [showBreakdown, setShowBreakdown] = useState(false);
 
-  const { data: gapData, isLoading: gapLoading } = useGapSummary(slug);
+  const data = useMemo(() => {
+    const range = DATE_RANGES.find(r => r.key === dateRange)!;
+    return fullData.slice(-range.days);
+  }, [fullData, dateRange]);
 
-  // Top gap queries for the recommendations section
-  const { data: topGapsData } = useApiQuery<QueryListResponse>(
-    slug ? `${GAP_DATA.queries(slug)}?classification=significant_gap&sort_by=gap_score&sort_dir=desc&page_size=10` : null,
+  const viewConfig = VIEW_CONFIGS.find(v => v.key === activeView)!;
+  const latest = data[data.length - 1];
+  const earliest = data[0];
+
+  const displayDay = hoverIdx !== null ? data[hoverIdx] : latest;
+  const heroValue = displayDay[viewConfig.dataKey] as number;
+  const delta = viewConfig.deltaFormat(
+    latest[viewConfig.dataKey] as number,
+    earliest[viewConfig.dataKey] as number,
   );
+  const isPositive = viewConfig.key === 'position'
+    ? (latest.position < earliest.position)
+    : ((latest[viewConfig.dataKey] as number) >= (earliest[viewConfig.dataKey] as number));
 
-  const { data: briefsData, isLoading: briefsLoading } = useApiQuery<{
-    briefs: { status: string }[];
-    total: number;
-  }>(slug ? CONTENT_DATA.briefs(slug) : null);
+  const dateLabel = DATE_RANGES.find(r => r.key === dateRange)!.label;
+  const hoverDelta = hoverIdx !== null ? (data[hoverIdx][viewConfig.dataKey] as number) - (latest[viewConfig.dataKey] as number) : 0;
 
-  const { data: auditsData, isLoading: auditsLoading } = useApiQuery<
-    { id: string; result?: { overall_score?: number } }[]
-  >(slug ? SITE_AUDIT.audits(slug) : null);
+  // Navigational KPI cards data
+  const navKpis = useMemo(() => {
+    const l = data[data.length - 1];
+    const e = data[0];
+    const totalCitations = data.reduce((s, d) => s + d.citations, 0);
 
-  const { data: tasksData, isLoading: tasksLoading } = useApiQuery<
-    { task_id: string }[]
-  >(`${TASKS.list}?status=running`);
-
-  // CMS stale content
-  const { data: staleActions } = useCMSStaleActions();
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { queueForRefresh, isQueuing, queuingId } = useCMSStaleToTriage();
-  const [queuedIds, setQueuedIds] = useState<Set<string>>(new Set());
-  const [staleToast, setStaleToast] = useState({ open: false, message: '' });
-
-  const handleQueueRefresh = useCallback(async (cmsSyncedPostId: string) => {
-    const result = await queueForRefresh(cmsSyncedPostId);
-    if (result) {
-      setQueuedIds((prev) => new Set(prev).add(cmsSyncedPostId));
-      const msg = result.warning
-        ? `"${result.title}" queued — but triage tile could not be created`
-        : `"${result.title}" queued for refresh — view in Content Studio`;
-      setStaleToast({ open: true, message: msg });
-    }
-  }, [queueForRefresh]);
-
-  const loading = gapLoading || briefsLoading || auditsLoading || tasksLoading;
-
-  const hasData = !!(
-    gapData ||
-    (briefsData && briefsData.total > 0) ||
-    (auditsData && Array.isArray(auditsData) && auditsData.length > 0)
-  );
-
-  const kpis = useMemo<KPI[]>(() => {
-    if (!hasData) return [];
-
-    const publishedCount = briefsData?.briefs?.filter((b) => b.status === 'published').length ?? 0;
-    const totalQueries = gapData?.total_queries ?? 0;
-    const totalCitations = gapData?.total_citations ?? 0;
-    const activeTaskCount = Array.isArray(tasksData) ? tasksData.length : 0;
-
-    const result: KPI[] = [
+    return [
       {
-        label: 'Published',
-        value: String(publishedCount),
-        delta: briefsData ? `${briefsData.total} total briefs` : '',
-        deltaType: 'neutral',
+        label: 'Share of Voice',
+        value: `${l.sov.toFixed(1)}%`,
+        delta: `+${(l.sov - e.sov).toFixed(1)} this period`,
+        positive: l.sov >= e.sov,
+        href: '/competitive-position',
+        linkLabel: 'Competitive Position',
       },
       {
-        label: 'Queries Tracked',
-        value: totalQueries.toLocaleString(),
-        delta: gapData ? `${gapData.spa_score?.t_stat?.toFixed(1) ?? '—'} SPA` : '',
-        deltaType: 'neutral',
+        label: 'Avg Position',
+        value: l.position.toFixed(1),
+        delta: `from ${e.position.toFixed(1)}`,
+        positive: l.position <= e.position,
+        href: '/competitive-position',
+        linkLabel: 'Competitive Position',
       },
       {
         label: 'Total Citations',
-        value: totalCitations.toLocaleString(),
-        delta: '',
-        deltaType: 'neutral',
+        value: String(totalCitations),
+        delta: `+${Math.round(totalCitations * 0.15)} this period`,
+        positive: true,
+        href: '/analytics',
+        linkLabel: 'Citation Intelligence',
       },
       {
-        label: 'Avg Gap',
-        value: gapData?.average_gap?.toFixed(2) ?? '—',
-        delta: '',
-        deltaType: 'neutral',
-      },
-      {
-        label: 'Active Tasks',
-        value: String(activeTaskCount),
-        delta: activeTaskCount > 0 ? 'running' : 'idle',
-        deltaType: activeTaskCount > 0 ? 'positive' : 'neutral',
-      },
-      {
-        label: 'AEO Score',
-        value: '—',
-        delta: '/100',
-        deltaType: 'neutral',
+        label: 'Content Velocity',
+        value: '3.2/week',
+        delta: '2 published, 1 in review',
+        positive: true,
+        href: '/content-studio',
+        linkLabel: 'Content Studio',
       },
     ];
+  }, [data]);
 
-    // Try to get AEO score from latest audit
-    if (auditsData && Array.isArray(auditsData) && auditsData.length > 0) {
-      const latest = auditsData[0];
-      const score = (latest as Record<string, unknown>).result;
-      if (score && typeof score === 'object' && 'overall_score' in (score as Record<string, unknown>)) {
-        const s = (score as Record<string, unknown>).overall_score;
-        if (typeof s === 'number') {
-          result[5] = { label: 'AEO Score', value: s.toFixed(1), delta: '/100', deltaType: 'neutral' };
-        }
-      }
-    }
+  const handleKPIClick = useCallback((viewKey: ViewType) => {
+    setActiveView(viewKey);
+  }, []);
 
-    return result;
-  }, [gapData, briefsData, auditsData, tasksData, hasData]);
-
-  if (loading) {
-    return (
-      <div className="max-w-[960px] mx-auto space-y-6">
-        <Skeleton className="h-[60px] w-[300px]" />
-        <div className="grid grid-cols-6 gap-[1px]">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <Skeleton key={i} className="h-[80px]" />
-          ))}
-        </div>
-        <Skeleton className="h-[200px] rounded-md" />
-        <div className="grid grid-cols-2 gap-6">
-          <Skeleton className="h-[300px]" />
-          <Skeleton className="h-[300px]" />
-        </div>
-      </div>
-    );
-  }
-
-  if (!hasData) {
-    return (
-      <div className="max-w-[960px] mx-auto space-y-6">
-        <EmptyState
-          title="Welcome to Deep Presence"
-          description="Start by analyzing your brand to see how you're cited across AI platforms."
-          action={{
-            label: 'Begin Analysis',
-            onClick: () => router.push('/onboarding'),
-          }}
-        />
-
-        {/* Pipeline Re-run — always visible so users can trigger pipelines */}
-        <PipelineRerunCard companyName={companyName} companyDomain={companyDomain} />
-      </div>
-    );
-  }
-
-  const firstName = user?.first_name ?? '';
+  // Presence score for hero
+  const presenceScore = Math.round(latest.presenceScore);
+  const presenceDelta = Math.round(latest.presenceScore - earliest.presenceScore);
+  const breakdownTotal = SCORE_BREAKDOWN.reduce((s, c) => s + c.raw * c.weight, 0);
 
   return (
-    <div className="max-w-[960px] mx-auto space-y-6">
-      {/* Welcome header */}
-      <div>
-        <h1 className="font-display text-[24px] font-semibold tracking-[-0.02em] text-text-primary mb-0.5">
-          {getGreeting()}{firstName ? `, ${firstName}` : ''}
+    <div style={{ margin: '-16px' }}>
+      {/* Page Header */}
+      <div style={{ padding: '16px 24px 0' }}>
+        <h1
+          style={{
+            fontSize: 26,
+            fontWeight: 600,
+            fontFamily: 'var(--font-display)',
+            color: 'var(--text-primary)',
+          }}
+        >
+          Brand Summary
         </h1>
-        <p className="text-[14px] text-text-secondary leading-[1.6]">
-          {formatDate()}
+        <p style={{ fontSize: 13, color: 'var(--text-secondary)', fontFamily: 'var(--font-display)' }}>
+          Your brand&apos;s overall health across AI engines — at a glance
         </p>
       </div>
 
-      {/* Outcomes Strip — KPIs */}
-      {kpis.length > 0 && (
-        <div
-          className="grid gap-[1px] bg-border rounded-sm overflow-hidden"
-          style={{ gridTemplateColumns: `repeat(${kpis.length}, 1fr)` }}
-        >
-          {kpis.map((kpi) => (
-            <div key={kpi.label} className="bg-bg px-3 py-3">
-              <p className="text-[11px] font-medium uppercase tracking-[0.06em] text-text-tertiary leading-[1.4]">
-                {kpi.label}
-              </p>
-              <div className="flex items-baseline gap-1.5 mt-1">
-                <p className="font-display text-[28px] font-semibold tracking-[-0.02em] text-text-primary">
-                  {kpi.value}
-                </p>
-                {kpi.delta && (
-                  <p className={`text-[11px] font-medium ${
-                    kpi.deltaType === 'positive' ? 'text-success' : 'text-text-tertiary'
-                  }`}>
-                    {kpi.delta}
-                  </p>
-                )}
-              </div>
+      {/* Global Filter Bar */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          padding: '0 16px',
+          height: 44,
+          borderBottom: '1px solid var(--border)',
+          background: 'var(--surface)',
+        }}
+      >
+        <div style={{ position: 'relative' }}>
+          <button
+            onClick={() => setShowDateDrop(!showDateDrop)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '4px 8px',
+              borderRadius: 'var(--radius-sm)',
+              border: 'none',
+              background: 'transparent',
+              cursor: 'pointer',
+              fontSize: 13,
+              color: 'var(--text-primary)',
+              fontFamily: 'var(--font-display)',
+            }}
+          >
+            <Calendar size={14} style={{ color: 'var(--text-secondary)' }} />
+            <span>{dateLabel}</span>
+          </button>
+          {showDateDrop && (
+            <div
+              style={{
+                position: 'absolute',
+                top: '100%',
+                left: 0,
+                marginTop: 4,
+                zIndex: 50,
+                minWidth: 220,
+                padding: '4px 0',
+                borderRadius: 'var(--radius-md)',
+                background: 'var(--surface-raised)',
+                border: '1px solid var(--border)',
+                boxShadow: 'var(--shadow-float)',
+              }}
+            >
+              {DATE_RANGES.map(r => (
+                <button
+                  key={r.key}
+                  onClick={() => { setDateRange(r.key); setShowDateDrop(false); setHoverIdx(null); }}
+                  style={{
+                    display: 'block',
+                    width: '100%',
+                    textAlign: 'left',
+                    padding: '6px 12px',
+                    fontSize: 12,
+                    fontFamily: 'var(--font-display)',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: r.key === dateRange ? 'var(--accent)' : 'var(--text-primary)',
+                    background: r.key === dateRange ? 'var(--accent-subtle)' : 'transparent',
+                  }}
+                  onMouseEnter={(e) => { if (r.key !== dateRange) e.currentTarget.style.background = 'var(--accent-subtle)'; }}
+                  onMouseLeave={(e) => { if (r.key !== dateRange) e.currentTarget.style.background = 'transparent'; }}
+                >
+                  {r.label} ({r.days}d)
+                </button>
+              ))}
             </div>
-          ))}
+          )}
         </div>
-      )}
 
-      {/* Recommended Actions from Gap Analysis */}
-      {gapData?.recommendations && gapData.recommendations.length > 0 && slug && (
-        <RecommendedActions
-          recommendations={gapData.recommendations}
-          executiveSummary={gapData.executive_summary ?? ''}
-          slug={slug}
-          companyName={companyName}
-          companyDomain={companyDomain}
-          topGapQueries={topGapsData?.queries}
-        />
-      )}
+        <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
 
-      {/* Stale CMS Content */}
-      {staleActions && staleActions.length > 0 && (
-        <StaleContentActions
-          actions={staleActions}
-          onQueueRefresh={handleQueueRefresh}
-          queuingId={queuingId}
-          queuedIds={queuedIds}
-        />
-      )}
+        <button
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+            padding: '4px 8px',
+            borderRadius: 'var(--radius-sm)',
+            border: 'none',
+            background: 'transparent',
+            cursor: 'pointer',
+            fontSize: 13,
+            color: 'var(--text-primary)',
+            fontFamily: 'var(--font-display)',
+          }}
+        >
+          <span>All Platforms</span>
+          <ChevronDown size={12} style={{ color: 'var(--text-tertiary)' }} />
+        </button>
 
-      {/* Pipeline Re-run */}
-      <PipelineRerunCard companyName={companyName} companyDomain={companyDomain} />
+        <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
 
-      {/* Two-column layout for tasks + reviews */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <ActiveTasks />
-        <HITLReviews />
+        <button
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+            padding: '4px 8px',
+            borderRadius: 'var(--radius-sm)',
+            border: 'none',
+            background: 'transparent',
+            cursor: 'pointer',
+            fontSize: 13,
+            color: 'var(--text-primary)',
+            fontFamily: 'var(--font-display)',
+          }}
+        >
+          <span>All Clusters</span>
+          <ChevronDown size={12} style={{ color: 'var(--text-tertiary)' }} />
+        </button>
       </div>
 
-      {/* Recent Activity */}
-      <RecentActivity />
+      {/* Page Content */}
+      <div style={{ padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: 0 }}>
 
-      <Toast
-        open={staleToast.open}
-        onClose={() => setStaleToast({ ...staleToast, open: false })}
-        variant="success"
-        message={staleToast.message}
-      />
+        {/* Navigational KPI Cards — 4 cards */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(4, 1fr)',
+            gap: 12,
+          }}
+        >
+          {navKpis.map((kpi) => (
+            <Link
+              key={kpi.label}
+              href={kpi.href}
+              style={{
+                position: 'relative',
+                padding: 14,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 4,
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius-md)',
+                background: 'var(--surface)',
+                cursor: 'pointer',
+                transition: 'all 150ms',
+                textDecoration: 'none',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = 'var(--accent)';
+                e.currentTarget.style.background = 'var(--accent-subtle)';
+                e.currentTarget.style.transform = 'translateY(-1px)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = 'var(--border)';
+                e.currentTarget.style.background = 'var(--surface)';
+                e.currentTarget.style.transform = 'translateY(0)';
+              }}
+            >
+              <ChevronRight
+                size={14}
+                style={{
+                  position: 'absolute',
+                  top: 12,
+                  right: 12,
+                  color: 'var(--text-muted)',
+                }}
+              />
+              <span
+                style={{
+                  fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
+                  letterSpacing: '0.06em', color: 'var(--text-secondary)',
+                  fontFamily: 'var(--font-display)',
+                }}
+              >
+                {kpi.label}
+              </span>
+              <span
+                style={{
+                  fontSize: 32, fontWeight: 600, lineHeight: 1,
+                  fontFamily: 'var(--font-mono)', color: 'var(--text-primary)',
+                }}
+              >
+                {kpi.value}
+              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                {kpi.positive ? (
+                  <TrendingUp size={12} style={{ color: 'var(--success)' }} />
+                ) : (
+                  <TrendingDown size={12} style={{ color: 'var(--error)' }} />
+                )}
+                <span
+                  style={{
+                    fontSize: 12, fontWeight: 500,
+                    color: kpi.positive ? 'var(--success)' : 'var(--error)',
+                    fontFamily: 'var(--font-display)',
+                  }}
+                >
+                  {kpi.delta}
+                </span>
+              </div>
+            </Link>
+          ))}
+        </div>
+
+        <div style={{ height: 1, background: 'var(--border)', margin: '24px 0' }} />
+
+        {/* Chart + Leaderboard */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: 16 }}>
+          {/* Left: Chart with hero + toggles inside */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+            {/* Hero display + View toggles */}
+            <div
+              style={{
+                border: '1px solid var(--border)',
+                borderBottom: 'none',
+                borderRadius: 'var(--radius-md) var(--radius-md) 0 0',
+                background: 'var(--surface)',
+                padding: '12px 12px 8px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
+                  <span
+                    onClick={() => {
+                      if (viewConfig.key === 'presenceScore' && hoverIdx === null) {
+                        setShowBreakdown(!showBreakdown);
+                      }
+                    }}
+                    style={{
+                      fontFamily: 'var(--font-mono)', fontSize: 56, fontWeight: 700,
+                      color: 'var(--text-primary)', lineHeight: 1, letterSpacing: '-0.03em',
+                      cursor: viewConfig.key === 'presenceScore' && hoverIdx === null ? 'pointer' : 'default',
+                    }}
+                  >
+                    {viewConfig.format(heroValue)}
+                  </span>
+                  {hoverIdx !== null ? (
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <span style={{ fontSize: 13, color: 'var(--text-secondary)', fontFamily: 'var(--font-display)' }}>
+                        {data[hoverIdx]?.dateShort}
+                      </span>
+                      <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', fontWeight: 600, color: hoverDelta >= 0 ? 'var(--success)' : 'var(--error)' }}>
+                        ({hoverDelta >= 0 ? '+' : ''}{hoverDelta.toFixed(1)} from current)
+                      </span>
+                    </div>
+                  ) : (
+                    <>
+                      <span style={{ fontSize: 14, color: 'var(--text-secondary)', fontFamily: 'var(--font-display)' }}>
+                        {viewConfig.label}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 18, fontFamily: 'var(--font-mono)', fontWeight: 600,
+                          color: isPositive ? 'var(--success)' : 'var(--error)',
+                        }}
+                      >
+                        {delta}
+                      </span>
+                    </>
+                  )}
+                </div>
+                {viewConfig.key === 'presenceScore' && hoverIdx === null && (
+                  <button
+                    onClick={() => setShowBreakdown(!showBreakdown)}
+                    style={{
+                      fontSize: 11, color: 'var(--text-tertiary)', cursor: 'pointer',
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                      gap: 4, background: 'none', border: '1px solid var(--border)',
+                      borderRadius: 'var(--radius-sm)', padding: '2px 8px',
+                    }}
+                  >
+                    {showBreakdown ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                    <span>Breakdown</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Presence Score Breakdown — expandable */}
+              {showBreakdown && viewConfig.key === 'presenceScore' && hoverIdx === null && (
+                <div
+                  style={{
+                    padding: 14,
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius-md)',
+                    background: 'var(--bg)',
+                    marginBottom: 8,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
+                      letterSpacing: '0.06em', color: 'var(--text-secondary)',
+                      fontFamily: 'var(--font-display)', marginBottom: 10,
+                    }}
+                  >
+                    Score Breakdown
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {SCORE_BREAKDOWN.map((comp) => {
+                      const weighted = comp.raw * comp.weight;
+                      return (
+                        <div key={comp.name} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontSize: 13, color: 'var(--text-primary)', fontFamily: 'var(--font-display)', width: 130, flexShrink: 0 }}>
+                            {comp.name}
+                          </span>
+                          <div style={{ flex: 1, height: 8, borderRadius: 9999, background: 'var(--border)', position: 'relative' }}>
+                            <div
+                              style={{
+                                height: '100%',
+                                borderRadius: 9999,
+                                width: `${comp.raw}%`,
+                                background: 'var(--accent)',
+                                transition: 'width 300ms ease',
+                              }}
+                            />
+                          </div>
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)', width: 80, textAlign: 'right', flexShrink: 0 }}>
+                            {comp.raw.toFixed(1)}/100
+                          </span>
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-tertiary)', width: 40, textAlign: 'center', flexShrink: 0 }}>
+                            ×{(comp.weight * 100).toFixed(0)}%
+                          </span>
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', width: 40, textAlign: 'right', flexShrink: 0 }}>
+                            = {weighted.toFixed(1)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div style={{ borderTop: '1px solid var(--border)', marginTop: 8, paddingTop: 8, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                    <span style={{ fontFamily: 'var(--font-display)', fontSize: 12, color: 'var(--text-secondary)' }}>
+                      TOTAL
+                    </span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
+                      = {breakdownTotal.toFixed(1)}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* 3-Month Trajectory — below Presence Score */}
+              {viewConfig.key === 'presenceScore' && hoverIdx === null && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {TRAJECTORY.months.map((m, i) => (
+                      <span key={m.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 16, fontWeight: 600, color: i === TRAJECTORY.months.length - 1 ? 'var(--accent)' : 'var(--text-primary)' }}>
+                          {m.score}
+                        </span>
+                        <span style={{ fontSize: 10, color: 'var(--text-tertiary)', fontFamily: 'var(--font-display)' }}>
+                          {m.label}
+                        </span>
+                        {i < TRAJECTORY.months.length - 1 && (
+                          <ChevronRight size={10} style={{ color: 'var(--text-tertiary)' }} />
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                  <span style={{ fontSize: 11, fontFamily: 'var(--font-display)', color: 'var(--success)' }}>
+                    Gaining {TRAJECTORY.avgGrowth} points per month on average
+                  </span>
+                </div>
+              )}
+
+              {/* View toggles */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                {VIEW_CONFIGS.map(vc => {
+                  const isActive = vc.key === activeView;
+                  return (
+                    <button
+                      key={vc.key}
+                      onClick={() => { setActiveView(vc.key); setShowBreakdown(false); }}
+                      style={{
+                        padding: '4px 10px', fontSize: 12, fontWeight: 500,
+                        fontFamily: 'var(--font-display)',
+                        background: isActive ? 'var(--accent-subtle)' : 'transparent',
+                        color: isActive ? 'var(--accent)' : 'var(--text-secondary)',
+                        border: 'none', borderRadius: 9999,
+                        cursor: 'pointer', transition: 'all 100ms',
+                      }}
+                    >
+                      {vc.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Chart */}
+            <div style={{ marginTop: -1 }}>
+              <PresenceChart
+                data={data}
+                viewConfig={viewConfig}
+                hoverIdx={hoverIdx}
+                onHover={setHoverIdx}
+                showCompetitors={showCompetitors}
+              />
+            </div>
+
+            {/* Competitor toggle */}
+            <div style={{ marginTop: 8, display: 'flex', alignItems: 'center' }}>
+              <button
+                onClick={() => setShowCompetitors(!showCompetitors)}
+                style={{
+                  fontSize: 12,
+                  fontWeight: 500,
+                  fontFamily: 'var(--font-display)',
+                  color: showCompetitors ? 'var(--accent)' : 'var(--text-secondary)',
+                  background: showCompetitors ? 'var(--accent-subtle)' : 'transparent',
+                  border: '1px solid',
+                  borderColor: showCompetitors ? 'var(--accent)' : 'var(--border)',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '4px 10px',
+                  cursor: 'pointer',
+                  transition: 'all 150ms',
+                }}
+              >
+                {showCompetitors ? 'Hide competitor trends' : 'Show competitor trends'}
+              </button>
+            </div>
+          </div>
+
+          {/* Right: Leaderboard */}
+          <CompetitiveLeaderboard
+            data={data}
+            viewConfig={viewConfig}
+            hoverIdx={hoverIdx}
+          />
+        </div>
+
+        <div style={{ height: 1, background: 'var(--border)', margin: '24px 0' }} />
+
+        {/* Insight Cards */}
+        <InsightCards
+          data={data}
+          activeView={activeView}
+          onViewChange={setActiveView}
+        />
+
+        <div style={{ height: 1, background: 'var(--border)', margin: '24px 0' }} />
+
+        {/* Platform Intelligence */}
+        <PlatformIntelligence data={data} />
+      </div>
     </div>
   );
 }

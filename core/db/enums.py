@@ -17,6 +17,19 @@ class UserRole(str, Enum):
     viewer = "viewer"
 
 
+class WorkspaceRole(str, Enum):
+    owner = "owner"
+    admin = "admin"
+    member = "member"
+    viewer = "viewer"
+
+
+class MembershipStatus(str, Enum):
+    active = "active"
+    invited = "invited"
+    suspended = "suspended"
+
+
 # ── Pipeline Infrastructure ───────────────────────────────────────────
 class PipelineType(str, Enum):
     research = "research"
@@ -31,6 +44,7 @@ class PipelineType(str, Enum):
     voice_style_guide = "voice_style_guide"
     onboarding = "onboarding"
     daily_tracker = "daily_tracker"
+    td_gap_analysis = "td_gap_analysis"
 
 
 class PipelineStatus(str, Enum):
@@ -153,7 +167,11 @@ class RelevanceCell(str, Enum):
 
 class TopicAssignmentStatus(str, Enum):
     not_started = "not_started"
+    approved = "approved"
+    rejected = "rejected"
     in_gap_analysis = "in_gap_analysis"
+    gap_analysis_complete = "gap_analysis_complete"
+    in_content_production = "in_content_production"
     content_produced = "content_produced"
     published = "published"
 
@@ -187,3 +205,27 @@ class CMSPublishAction(str, Enum):
     create = "create"
     update = "update"
     refresh = "refresh"
+
+
+# ── Analytics Integration ────────────────────────────────────────────
+class AnalyticsProvider(str, Enum):
+    ga4 = "ga4"
+
+
+class AnalyticsSyncStatus(str, Enum):
+    pending = "pending"
+    in_progress = "in_progress"
+    success = "success"
+    failed = "failed"
+    auth_revoked = "auth_revoked"
+
+
+# ── Content Inventory ────────────────────────────────────────────────
+class ContentIngestionSource(str, Enum):
+    """How a content inventory record was discovered."""
+    site_audit_crawl = "site_audit_crawl"
+    gap_analysis_crawl = "gap_analysis_crawl"
+    cms_sync = "cms_sync"
+    csv_import = "csv_import"
+    content_engine = "content_engine"
+    manual = "manual"

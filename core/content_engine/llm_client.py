@@ -1,18 +1,15 @@
-"""Unified LLM client via LiteLLM for the v1.3 content pipeline.
+"""Unified LLM client via OpenRouter for the v1.3 content pipeline.
 
 All LLM calls in the v1.3 pipeline route through this module, providing:
   - Model abstraction (Anthropic, OpenAI, Perplexity, Google via one interface)
   - Retry logic with jittered exponential backoff
   - Token budget enforcement
-  - Automatic tracing via LangSmith callbacks (when configured)
+  - Tracing via per-caller log_generation() calls (LangSmith)
 
-The module replaces direct SDK calls (anthropic.AsyncAnthropic, httpx to
-Perplexity, etc.) with a single ``llm_call()`` function. The v1.0 pipeline
-continues using raw SDKs — this module is for v1.3 only.
-
-Model strings use LiteLLM's provider-prefixed format:
-  - "anthropic/claude-sonnet-4-5-20250929"
-  - "anthropic/claude-haiku-4-5-20251001"
+The module uses the ``openai`` SDK pointed at OpenRouter's base URL.
+Model strings use provider-prefixed format:
+  - "anthropic/claude-sonnet-4-6"
+  - "anthropic/claude-haiku-4-5"
   - "perplexity/sonar-pro"
   - "openai/gpt-5.2-2025-12-11"
 """
@@ -21,116 +18,52 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
-from typing import Any, Dict, List, Optional, Type
-
-from pydantic import BaseModel
+from typing import Any, Dict, List, Optional
 
 from core.models.content_generation_v13 import LLMResponse
+from core.model_config.resolver import ModelConfigResolver
+from core.model_config.schemas import ResolvedModelConfig
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# LiteLLM import (lazy — allows tests to mock without installing)
+# Model prefix helper (canonical implementation in openrouter_client)
 # ---------------------------------------------------------------------------
 
-_litellm_available = False
-try:
-    import litellm
+from core.shared_tools.openrouter_client import _ensure_model_prefix  # noqa: E402
+from core.shared_tools.cost_tracker import track_llm_cost  # noqa: E402
 
-    _litellm_available = True
-except ImportError:
-    litellm = None  # type: ignore[assignment]
-    logger.debug("litellm not installed — llm_call will raise if invoked")
+# Backward-compatible alias
+_ensure_litellm_model = _ensure_model_prefix
 
 
 # ---------------------------------------------------------------------------
-# LangSmith callback integration
+# OpenRouter configuration
 # ---------------------------------------------------------------------------
 
 
-def _get_langsmith_callback() -> Optional[Any]:
-    """Return a LangSmith callback handler if configured, else None.
-
-    LangSmith integration is automatic when LANGSMITH_API_KEY is set.
-    LiteLLM picks up the callback and logs every call.
-    """
-    try:
-        from langsmith import Client  # noqa: F401
-
-        # LiteLLM auto-detects LangSmith when the env var is set
-        # and includes it in success/failure callbacks
-        return None  # LiteLLM handles this via litellm.success_callback
-    except ImportError:
-        return None
-
-
-def configure_litellm_callbacks() -> None:
-    """Configure LiteLLM: export API keys to os.environ + set LangSmith callbacks.
-
-    LiteLLM reads API keys from os.environ, but pydantic-settings loads them
-    into the Settings object without setting os.environ.  This bridge ensures
-    litellm can authenticate with every provider.
+def configure_openrouter() -> None:
+    """Validate OpenRouter API key and pre-warm the client.
 
     Should be called once at pipeline startup.
     """
-    if not _litellm_available:
-        return
-
-    import os
-
-    from core.config.settings import settings
-
-    # Bridge pydantic-settings → os.environ for LiteLLM
-    _KEY_MAP = {
-        "ANTHROPIC_API_KEY": settings.anthropic_api_key,
-        "OPENAI_API_KEY": settings.openai_api_key,
-        "PERPLEXITY_API_KEY": settings.perplexity_api_key,
-    }
-    for env_var, value in _KEY_MAP.items():
-        if value and not os.environ.get(env_var):
-            os.environ[env_var] = value
+    from core.shared_tools.openrouter_client import get_async_client
 
     try:
-        if os.environ.get("LANGSMITH_API_KEY"):
-            litellm.success_callback = ["langsmith"]  # type: ignore[union-attr]
-            litellm.failure_callback = ["langsmith"]  # type: ignore[union-attr]
-            logger.info("LiteLLM LangSmith callbacks configured")
-        else:
-            logger.debug("LANGSMITH_API_KEY not set — LangSmith callbacks skipped")
-    except Exception as exc:
-        logger.warning("Failed to configure LiteLLM callbacks: %s", exc)
+        get_async_client()
+        logger.info("OpenRouter client configured")
+    except RuntimeError as exc:
+        logger.warning("OpenRouter not configured: %s", exc)
+
+
+# Backward-compatible alias for existing call sites
+configure_litellm_callbacks = configure_openrouter
 
 
 # ---------------------------------------------------------------------------
 # Main LLM call function
 # ---------------------------------------------------------------------------
-
-
-def _ensure_litellm_model(model: str) -> str:
-    """Ensure a model string has a LiteLLM provider prefix.
-
-    LiteLLM requires provider-prefixed model strings for routing.
-    Auto-detects and prefixes known model families so callers can pass
-    either ``"claude-sonnet-4-5-20250929"`` or ``"anthropic/claude-sonnet-4-5-20250929"``.
-
-    Args:
-        model: Raw model string (may or may not have a provider prefix).
-
-    Returns:
-        Provider-prefixed model string suitable for LiteLLM.
-    """
-    if "/" in model:
-        return model  # Already prefixed
-    if model.startswith("claude-"):
-        return f"anthropic/{model}"
-    if model.startswith("sonar"):
-        return f"perplexity/{model}"
-    if model.startswith("gpt-") or model.startswith("o1") or model.startswith("o3"):
-        return f"openai/{model}"
-    if model.startswith("gemini-"):
-        return f"google/{model}"
-    return model  # Unknown — let LiteLLM route it
 
 
 async def llm_call(
@@ -140,21 +73,22 @@ async def llm_call(
     user: str,
     max_tokens: int = 4096,
     temperature: float = 0.0,
-    response_format: Optional[Type[BaseModel]] = None,
+    response_format: Optional[Dict[str, Any]] = None,
     metadata: Optional[Dict[str, Any]] = None,
     max_retries: int = 3,
     base_delay: float = 1.0,
 ) -> LLMResponse:
-    """Make a unified LLM call through LiteLLM with retry and tracing.
+    """Make a unified LLM call through OpenRouter with retry and tracing.
 
     Args:
-        model: LiteLLM model string (e.g. "anthropic/claude-sonnet-4-5-20250929").
+        model: Provider-prefixed model string (e.g. "anthropic/claude-sonnet-4-6").
         system: System prompt.
         user: User prompt.
         max_tokens: Maximum output tokens.
         temperature: Sampling temperature.
-        response_format: Optional Pydantic model for structured output.
-        metadata: Optional metadata dict passed to LiteLLM (appears in traces).
+        response_format: Optional dict (e.g. {"type": "json_object"}) passed
+            through as-is. None → no structured output constraint.
+        metadata: Optional metadata dict (passed via extra_body for tracing).
         max_retries: Maximum retry attempts on transient failures.
         base_delay: Base delay in seconds for exponential backoff.
 
@@ -162,15 +96,13 @@ async def llm_call(
         LLMResponse with content, model, token counts, and finish reason.
 
     Raises:
-        RuntimeError: If litellm is not installed.
+        RuntimeError: If OpenRouter API key is not configured.
         Exception: If all retries exhausted.
     """
-    if not _litellm_available:
-        raise RuntimeError(
-            "litellm is not installed. Install it with: pip install litellm"
-        )
+    from core.shared_tools.openrouter_client import get_async_client
 
-    model = _ensure_litellm_model(model)
+    model = _ensure_model_prefix(model)
+    client = get_async_client()
 
     messages: List[Dict[str, str]] = [
         {"role": "system", "content": system},
@@ -184,25 +116,42 @@ async def llm_call(
         "temperature": temperature,
     }
 
+    extra_body: Dict[str, Any] = {}
     if metadata:
-        kwargs["metadata"] = metadata
+        extra_body["metadata"] = metadata
+    if extra_body:
+        kwargs["extra_body"] = extra_body
 
-    if response_format:
+    if response_format is not None:
         kwargs["response_format"] = response_format
 
     last_error: Optional[Exception] = None
 
     for attempt in range(max_retries):
         try:
-            response = await litellm.acompletion(**kwargs)  # type: ignore[union-attr]
+            response = await client.chat.completions.create(**kwargs)
 
             # Extract response fields
-            choice = response.choices[0]  # type: ignore[index]
-            usage = response.usage  # type: ignore[union-attr]
+            choice = response.choices[0]
+            usage = response.usage
+
+            # Cost tracking (never raises)
+            _meta = metadata or {}
+            track_llm_cost(
+                model=response.model or model,
+                provider="openrouter",
+                pipeline=_meta.get("pipeline", ""),
+                pipeline_step=_meta.get("pipeline_step", ""),
+                prompt_tokens=usage.prompt_tokens if usage else 0,
+                completion_tokens=usage.completion_tokens if usage else 0,
+                company_slug=_meta.get("company_slug", ""),
+                call_site="core.content_engine.llm_client",
+                source="openrouter",
+            )
 
             return LLMResponse(
                 content=choice.message.content or "",
-                model=response.model or model,  # type: ignore[union-attr]
+                model=response.model or model,
                 input_tokens=usage.prompt_tokens if usage else 0,
                 output_tokens=usage.completion_tokens if usage else 0,
                 total_tokens=usage.total_tokens if usage else 0,
@@ -211,6 +160,7 @@ async def llm_call(
 
         except Exception as exc:
             last_error = exc
+
             if attempt < max_retries - 1:
                 delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
                 logger.warning(
@@ -232,6 +182,158 @@ async def llm_call(
                 )
 
     raise last_error  # type: ignore[misc]
+
+
+async def llm_call_for_agent(
+    *,
+    workspace_id: str,
+    workspace_slug: str,
+    agent_key: str,
+    system: str,
+    user: str,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
+    response_format: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    resolver: ModelConfigResolver | None = None,
+    max_retries: int = 3,
+    base_delay: float = 1.0,
+) -> LLMResponse:
+    """Make a BYOK OpenRouter call by resolving workspace + agent config."""
+    resolved = await _resolve_for_agent(
+        workspace_id=workspace_id,
+        workspace_slug=workspace_slug,
+        agent_key=agent_key,
+        resolver=resolver,
+    )
+    from core.shared_tools.openrouter_client import build_async_client_for_key
+
+    client = build_async_client_for_key(
+        resolved.api_key,
+        base_url=resolved.base_url,
+        timeout_s=resolved.timeout_s,
+    )
+    effective_max_tokens = (
+        max_tokens
+        if max_tokens is not None
+        else resolved.max_tokens
+        if resolved.max_tokens is not None
+        else 4096
+    )
+    effective_temperature = (
+        temperature
+        if temperature is not None
+        else resolved.temperature
+        if resolved.temperature is not None
+        else 0.0
+    )
+
+    messages: List[Dict[str, str]] = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+    kwargs: Dict[str, Any] = {
+        "model": resolved.model,
+        "messages": messages,
+        "max_tokens": effective_max_tokens,
+        "temperature": effective_temperature,
+    }
+    extra_body: Dict[str, Any] = dict(resolved.extra_body or {})
+    if metadata:
+        extra_body["metadata"] = metadata
+    if extra_body:
+        kwargs["extra_body"] = extra_body
+    if response_format is not None:
+        kwargs["response_format"] = response_format
+
+    last_error: Optional[Exception] = None
+    for attempt in range(max_retries):
+        try:
+            response = await client.chat.completions.create(**kwargs)
+            choice = response.choices[0]
+            usage = response.usage
+            _meta = metadata or {}
+            response_model = response.model or resolved.model
+            track_llm_cost(
+                model=response_model,
+                provider="openrouter",
+                pipeline=_meta.get("pipeline", ""),
+                pipeline_step=_meta.get("pipeline_step", ""),
+                prompt_tokens=usage.prompt_tokens if usage else 0,
+                completion_tokens=usage.completion_tokens if usage else 0,
+                company_slug=_meta.get("company_slug", workspace_slug),
+                call_site="core.content_engine.llm_client.llm_call_for_agent",
+                source="openrouter",
+                run_id=_meta.get("run_id"),
+                workspace_id=workspace_id,
+                agent_key=agent_key,
+                credential_id=resolved.credential_id,
+                model_config_id=resolved.model_config_id,
+                actual_provider=_actual_provider(response_model),
+                workspace_billed=True,
+            )
+            return LLMResponse(
+                content=choice.message.content or "",
+                model=response_model,
+                input_tokens=usage.prompt_tokens if usage else 0,
+                output_tokens=usage.completion_tokens if usage else 0,
+                total_tokens=usage.total_tokens if usage else 0,
+                finish_reason=choice.finish_reason or "",
+            )
+        except Exception as exc:
+            last_error = exc
+            if attempt < max_retries - 1:
+                delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
+                logger.warning(
+                    "BYOK LLM call failed (attempt %d/%d, agent=%s, model=%s): %s. Retrying in %.1fs",
+                    attempt + 1,
+                    max_retries,
+                    agent_key,
+                    resolved.model,
+                    exc,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+            else:
+                logger.error(
+                    "BYOK LLM call failed after %d attempts (agent=%s, model=%s): %s",
+                    max_retries,
+                    agent_key,
+                    resolved.model,
+                    exc,
+                )
+    raise last_error  # type: ignore[misc]
+
+
+async def _resolve_for_agent(
+    *,
+    workspace_id: str,
+    workspace_slug: str,
+    agent_key: str,
+    resolver: ModelConfigResolver | None,
+) -> ResolvedModelConfig:
+    if resolver is not None:
+        return await resolver.resolve(workspace_id, workspace_slug, agent_key)
+
+    from core.db.engine import get_session_factory
+    from core.db.repositories.model_config_repo import (
+        WorkspaceAgentModelConfigRepository,
+        WorkspaceLLMCredentialRepository,
+    )
+    from core.model_config.credentials import resolve_fernet_key
+
+    factory = get_session_factory()
+    async with factory() as session:
+        default_resolver = ModelConfigResolver(
+            credential_repo=WorkspaceLLMCredentialRepository(session),
+            config_repo=WorkspaceAgentModelConfigRepository(session),
+            fernet_key=resolve_fernet_key(),
+        )
+        return await default_resolver.resolve(workspace_id, workspace_slug, agent_key)
+
+
+def _actual_provider(model: str) -> str:
+    return model.split("/", 1)[0] if "/" in model else ""
 
 
 # ---------------------------------------------------------------------------

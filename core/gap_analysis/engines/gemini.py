@@ -122,6 +122,15 @@ class GeminiEngine(SearchEngine):
             async with httpx.AsyncClient(timeout=90) as http_client:
                 data = await _do_request(http_client)
 
+        from core.shared_tools.cost_tracker import extract_usage_gemini_http, track_llm_cost
+
+        _pt, _ct = extract_usage_gemini_http(data)
+        track_llm_cost(
+            model=self.model, provider="google", pipeline="gap_analysis",
+            pipeline_step="s3_gemini_engine", prompt_tokens=_pt, completion_tokens=_ct,
+            call_site="core.gap_analysis.engines.gemini",
+        )
+
         parsed = _parse_gemini_response(data)
         response_text = parsed["response_text"]
         citations = parsed["citations"]
@@ -148,5 +157,7 @@ class GeminiEngine(SearchEngine):
             query_id=query_id or "",
             query_text=query_text,
             response_text=response_text,
+            prompt_tokens=_pt,
+            completion_tokens=_ct,
             citations=citation_refs,
         )

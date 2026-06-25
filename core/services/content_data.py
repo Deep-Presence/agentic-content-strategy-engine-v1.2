@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from api.schemas.content_data import (
+    ContentPublishMetadata,
     ContentBriefDetailResponse,
     ContentBriefListItem,
     ContentBriefListResponse,
@@ -41,3 +42,10 @@ class ContentDataServiceProtocol(Protocol):
         source: str = "manual",
         gap_query_id: str = "",
     ) -> ContentBriefListItem: ...
+
+    async def save_publish_metadata(
+        self,
+        effective_slug: str,
+        brief_id: str,
+        metadata: dict | ContentPublishMetadata,
+    ) -> ContentPublishMetadata: ...

@@ -7,6 +7,7 @@ Usage::
 """
 from __future__ import annotations
 
+from core.cms.adapters.webflow import WebflowAdapter
 from core.cms.adapters.wordpress import WordPressAdapter
 from core.cms.models import CMSConnectionConfig
 from core.cms.protocols import CMSAdapterProtocol
@@ -14,7 +15,7 @@ from core.db.enums import CMSProvider
 
 _ADAPTER_REGISTRY: dict[CMSProvider, type] = {
     CMSProvider.wordpress: WordPressAdapter,
-    # CMSProvider.webflow: WebflowAdapter,   # Future
+    CMSProvider.webflow: WebflowAdapter,
     # CMSProvider.strapi: StrapiAdapter,     # Future
 }
 

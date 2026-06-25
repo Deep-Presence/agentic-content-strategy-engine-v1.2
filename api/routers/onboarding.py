@@ -13,14 +13,19 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from api.auth.dependencies import require_auth, require_role
-from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_task_store
+from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_task_store, get_workspace_service
 from api.schemas.common import PipelineRunResponse, TaskResponse
 from api.schemas.onboarding import OnboardingStartRequest
 from api.tasks.event_bus import EventBusProtocol
-from api.routers._helpers import create_task_durable
+from api.routers._helpers import (
+    assert_task_workspace_access,
+    create_task_durable,
+    resolve_workspace_scope,
+)
 from api.tasks.runner import run_onboarding_task
 from core.audit import log_pipeline_launch
 from core.services.task_store import TaskStoreProtocol
+from core.services.workspace_protocol import WorkspaceServiceProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -37,18 +42,20 @@ async def start_onboarding(
     event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
     auth_service=Depends(get_auth_service),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> PipelineRunResponse:
     """Launch the onboarding pipeline orchestrator.
 
-    Requires superuser role. company_name/domain resolved from auth_service.
+    Requires superuser role. company_name/domain resolved from workspace scope.
     """
-    # Resolve company slug from ASGI middleware state
-    company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
-    if not company_slug:
-        raise HTTPException(
-            status_code=403,
-            detail="Cannot resolve company from auth context",
-        )
+    scope = await resolve_workspace_scope(
+        http_request,
+        _user,
+        workspace_service,
+        workspace_slug=body.workspace_slug,
+        min_roles=("owner", "admin", "member"),
+    )
+    company_slug = scope.workspace_slug
 
     # Look up company details from auth_service
     company = await auth_service.get_company_by_slug(company_slug)
@@ -65,7 +72,12 @@ async def start_onboarding(
         except Exception:
             logger.warning("Failed to persist industry for %s", company_slug)
 
-    task = await create_task_durable(task_store, "onboarding", company_slug)
+    task = await create_task_durable(
+        task_store,
+        "onboarding",
+        company_slug,
+        workspace_id=scope.workspace_id,
+    )
 
     handle = asyncio.create_task(
         run_onboarding_task(
@@ -96,6 +108,7 @@ async def start_onboarding(
         run_id=task.task_id,
         pipeline="onboarding",
         company_slug=task.company_slug,
+        workspace_id=scope.workspace_id,
         product_slug=task.product_slug,
         effective_slug=task.effective_slug,
         status=task.status.value,
@@ -104,19 +117,16 @@ async def start_onboarding(
 
 
 @router.get("/{run_id}/status")
-def get_onboarding_status(
+async def get_onboarding_status(
     run_id: str,
     request: Request,
     _user=Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> TaskResponse:
     """Get the status of an onboarding run."""
     task = task_store.get_task(run_id)
-
-    # Tenant isolation
-    user_company_slug: Optional[str] = getattr(request.state, "company_slug", None)
-    if not user_company_slug or task.company_slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_task_workspace_access(task, _user, workspace_service)
 
     return TaskResponse(
         run_id=task.task_id,

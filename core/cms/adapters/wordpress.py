@@ -252,6 +252,7 @@ class WordPressAdapter:
         Category resolution: names → WP category IDs (auto-creates missing).
         """
         category_ids = await self._resolve_category_ids(post.categories)
+        tag_ids = await self._resolve_tag_ids(post.tags)
 
         payload: dict[str, Any] = {
             "title": post.title,
@@ -260,10 +261,14 @@ class WordPressAdapter:
             "excerpt": post.excerpt,
             "status": post.status.value,
             "categories": category_ids,
-            "tags": [],
+            "tags": tag_ids,
         }
         if post.featured_image_id:
             payload["featured_media"] = int(post.featured_image_id)
+        if post.published_at is not None:
+            payload["date"] = post.published_at.isoformat()
+        if post.author and str(post.author).isdigit():
+            payload["author"] = int(str(post.author))
 
         # Yoast SEO fields
         meta: dict[str, str] = {}
@@ -271,6 +276,8 @@ class WordPressAdapter:
             meta["_yoast_wpseo_title"] = post.seo_title
         if post.seo_description:
             meta["_yoast_wpseo_metadesc"] = post.seo_description
+        if post.canonical_url:
+            meta["_yoast_wpseo_canonical"] = post.canonical_url
         if meta:
             payload["meta"] = meta
 
@@ -300,6 +307,8 @@ class WordPressAdapter:
             meta["_yoast_wpseo_title"] = updates.seo_title
         if updates.seo_description is not None:
             meta["_yoast_wpseo_metadesc"] = updates.seo_description
+        if updates.canonical_url is not None:
+            meta["_yoast_wpseo_canonical"] = updates.canonical_url
         if meta:
             payload["meta"] = meta
 
@@ -421,3 +430,40 @@ class WordPressAdapter:
                     name_to_id[name.lower()] = new_id
                     created_count += 1
         return ids
+
+    async def _resolve_tag_ids(
+        self,
+        tag_names: list[str],
+    ) -> list[int]:
+        """Map tag names → WP tag IDs. Create missing tags."""
+        if not tag_names:
+            return []
+
+        async with self._client() as client:
+            resp = await client.get(
+                f"{self.api_base}/tags",
+                params={"page": 1, "per_page": 100},
+            )
+            resp.raise_for_status()
+            existing = resp.json()
+            name_to_id = {
+                str(tag.get("name", "")).lower(): int(tag["id"])
+                for tag in existing
+                if tag.get("name")
+            }
+
+            ids: list[int] = []
+            for name in tag_names:
+                key = name.lower()
+                if key in name_to_id:
+                    ids.append(name_to_id[key])
+                    continue
+                create_resp = await client.post(
+                    f"{self.api_base}/tags",
+                    json={"name": name},
+                )
+                create_resp.raise_for_status()
+                new_id = int(create_resp.json()["id"])
+                ids.append(new_id)
+                name_to_id[key] = new_id
+            return ids

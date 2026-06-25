@@ -1,6 +1,6 @@
-"""Audience Persona agents — Suggester (Gemini Flash) + Profile Generator (Perplexity).
+"""Audience Persona agents — Suggester (via OpenRouter) + Profile Generator (Perplexity).
 
-Agent 1 — run_persona_suggester(): Gemini Flash via raw google.genai SDK → JSON PersonaBriefs
+Agent 1 — run_persona_suggester(): Gemini Flash via OpenRouter → JSON PersonaBriefs
 Agent 2 — run_persona_profile_generator(): Perplexity sonar-deep-research → persona profile MD
 Helper — _load_knowledge_docs(): Load + concatenate uploaded knowledge doc texts
 """
@@ -15,10 +15,9 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from google import genai
-from google.genai import types as genai_types
-
 from core.config.settings import settings
+from core.model_config.runtime import actual_provider, resolve_model_config_for_agent
+from core.shared_tools.openrouter_client import get_async_client, _ensure_model_prefix
 from core.models.audience_persona import (
     AudiencePersonaInput,
     PersonaAgentResult,
@@ -43,23 +42,75 @@ _MIN_BRIEFS = 3
 _CODE_FENCE_RE = re.compile(r"^```(?:json)?\s*\n(.*?)\n```\s*$", re.DOTALL)
 
 
+async def _run_persona_suggester_completion(
+    *,
+    input_data: AudiencePersonaInput,
+    system_prompt: str,
+    user_prompt: str,
+    model: str,
+    pipeline_step: str,
+    timeout_s: float,
+) -> str:
+    """Run the persona suggester through BYOK when workspace context exists."""
+    metadata = {
+        "pipeline": "audience_persona",
+        "pipeline_step": pipeline_step,
+        "provider": "google",
+        "model": model,
+        "company_slug": input_data.company_slug or "",
+    }
+    if input_data.workspace_id:
+        from core.content_engine.llm_client import llm_call_for_agent
+
+        response = await llm_call_for_agent(
+            workspace_id=input_data.workspace_id,
+            workspace_slug=input_data.workspace_slug or input_data.company_slug or "",
+            agent_key="research.ap.suggester",
+            system=system_prompt,
+            user=user_prompt,
+            response_format={"type": "json_object"},
+            temperature=0.7,
+            max_tokens=4096,
+            metadata=metadata,
+        )
+        return response.content
+
+    client = get_async_client()
+    response = await asyncio.wait_for(
+        client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.7,
+            max_tokens=4096,
+            extra_body={"metadata": metadata},
+        ),
+        timeout=timeout_s,
+    )
+
+    from core.shared_tools.cost_tracker import track_llm_cost
+
+    _usage = getattr(response, "usage", None)
+    track_llm_cost(
+        model=model,
+        provider="openrouter",
+        pipeline="audience_persona",
+        pipeline_step=pipeline_step,
+        prompt_tokens=getattr(_usage, "prompt_tokens", 0) or 0,
+        completion_tokens=getattr(_usage, "completion_tokens", 0) or 0,
+        company_slug=input_data.company_slug or "",
+        call_site="core.research.audience_persona.agents",
+        source="openrouter",
+    )
+    return response.choices[0].message.content or ""
+
+
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
-
-
-def _get_gemini_api_key() -> str:
-    """Resolve Google API key for audience persona pipeline.
-
-    Fallback chain: google_api_key_audience_persona → google_api_key_persona_research_deepagent.
-    """
-    key = settings.google_api_key_audience_persona or settings.google_api_key_persona_research_deepagent
-    if not key:
-        raise RuntimeError(
-            "GOOGLE_API_KEY_AUDIENCE_PERSONA (or GOOGLE_API_KEY_PERSONA_RESEARCH_DEEPAGENT) "
-            "is not set. Add it to .env.local to enable the persona suggester."
-        )
-    return key
 
 
 def _strip_code_fences(text: str) -> str:
@@ -195,8 +246,7 @@ async def run_persona_suggester(
     start = time.time()
 
     try:
-        api_key = _get_gemini_api_key()
-        client = genai.Client(api_key=api_key)
+        model = _ensure_model_prefix(settings.audience_persona_suggester_model)
 
         system_prompt = get_persona_suggester_system_prompt().format(
             max_personas=input_data.max_personas,
@@ -205,33 +255,26 @@ async def run_persona_suggester(
             input_data, company_context_md, customer_reviews_md, knowledge_docs_text,
         )
 
-        config = genai_types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            response_mime_type="application/json",
-            temperature=0.7,
-            max_output_tokens=4096,
-        )
+        _meta = {
+            "pipeline": "audience_persona",
+            "pipeline_step": "persona_suggester",
+            "provider": "google",
+            "model": model,
+            "company_slug": input_data.company_slug or "",
+        }
 
-        response = await asyncio.wait_for(
-            client.aio.models.generate_content(
-                model=settings.audience_persona_suggester_model,
-                contents=user_prompt,
-                config=config,
-            ),
-            timeout=timeout_s,
+        raw_text = await _run_persona_suggester_completion(
+            input_data=input_data,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            model=model,
+            pipeline_step="persona_suggester",
+            timeout_s=timeout_s,
         )
-
-        raw_text = response.text or ""
         log_generation(
-            span, "persona-suggester", settings.audience_persona_suggester_model,
+            span, "persona-suggester", model,
             user_prompt[:2000], raw_text[:2000],
-            metadata={
-                "pipeline": "audience_persona",
-                "pipeline_step": "persona_suggester",
-                "provider": "google",
-                "model": settings.audience_persona_suggester_model,
-                "company_slug": input_data.company_slug or "",
-            },
+            metadata=_meta,
         )
 
         # Parse JSON with tolerant extraction
@@ -248,15 +291,14 @@ async def run_persona_suggester(
                 f"Each must have: persona_name, tagline, description, rationale (list of strings)."
             )
             try:
-                retry_response = await asyncio.wait_for(
-                    client.aio.models.generate_content(
-                        model=settings.audience_persona_suggester_model,
-                        contents=repair_prompt,
-                        config=config,
-                    ),
-                    timeout=timeout_s,
+                retry_text = await _run_persona_suggester_completion(
+                    input_data=input_data,
+                    system_prompt=system_prompt,
+                    user_prompt=repair_prompt,
+                    model=model,
+                    pipeline_step="persona_suggester_retry",
+                    timeout_s=timeout_s,
                 )
-                retry_text = retry_response.text or ""
                 retry_cleaned = _strip_code_fences(retry_text)
                 retry_raw = _parse_json_array(retry_cleaned)
                 retry_briefs, retry_errors = _validate_briefs(retry_raw, input_data.max_personas)
@@ -337,26 +379,55 @@ async def run_persona_profile_generator(
         )
         full_prompt = f"{system_prompt}\n\n{user_prompt}"
 
-        result_md = await asyncio.wait_for(
+        resolved = None
+        if input_data.workspace_id:
+            resolved = await resolve_model_config_for_agent(
+                workspace_id=input_data.workspace_id,
+                workspace_slug=input_data.workspace_slug or input_data.company_slug or "",
+                agent_key="research.ap.profile_generator",
+            )
+        effective_model = (
+            resolved.model
+            if resolved is not None
+            else settings.audience_persona_generator_model
+        )
+        resolved_timeout = getattr(resolved, "timeout_s", None) if resolved is not None else None
+        effective_timeout_s = (
+            resolved_timeout if isinstance(resolved_timeout, (int, float)) else timeout_s
+        )
+        result_md, _pplx_usage = await asyncio.wait_for(
             asyncio.to_thread(
                 perplexity_client.research,
                 query=full_prompt,
-                timeout_s=timeout_s,
+                timeout_s=effective_timeout_s,
+                model=effective_model,
+                pipeline="audience_persona",
+                pipeline_step="persona_generator",
+                company_slug=input_data.company_slug or "",
+                api_key=getattr(resolved, "api_key", None),
+                base_url=getattr(resolved, "base_url", None),
+                workspace_id=input_data.workspace_id if resolved is not None else None,
+                agent_key="research.ap.profile_generator" if resolved is not None else "",
+                credential_id=getattr(resolved, "credential_id", None),
+                model_config_id=getattr(resolved, "model_config_id", None),
+                actual_provider=actual_provider(effective_model) if resolved is not None else "",
+                workspace_billed=resolved is not None,
             ),
-            timeout=timeout_s,
+            timeout=effective_timeout_s,
         )
 
         log_generation(
             span, f"persona-generator-{brief.persona_name}",
-            settings.audience_persona_generator_model,
+            effective_model,
             full_prompt[:2000], result_md[:2000] if result_md else "",
             metadata={
                 "pipeline": "audience_persona",
                 "pipeline_step": "persona_generator",
                 "provider": "perplexity",
-                "model": settings.audience_persona_generator_model,
+                "model": effective_model,
                 "company_slug": input_data.company_slug or "",
             },
+            usage=_pplx_usage,
         )
         end_span(span, output={"word_count": len(result_md.split()) if result_md else 0})
 

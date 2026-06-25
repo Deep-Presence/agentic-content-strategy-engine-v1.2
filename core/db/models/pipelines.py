@@ -38,6 +38,11 @@ class PipelineRunModel(UUIDPKMixin, TimestampMixin, Base):
     company_id: Mapped[_uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("companies.id"), nullable=False
     )
+    workspace_id: Mapped[_uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     product_id: Mapped[_uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("products.id"), nullable=True
     )

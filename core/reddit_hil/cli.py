@@ -22,6 +22,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Run Reddit Human-in-the-Loop monitor (read-only).")
     ap.add_argument("--company-name", required=True)
     ap.add_argument("--company-slug", required=True)
+    ap.add_argument("--workspace-id", default="", help="Workspace id for BYOK model resolution.")
+    ap.add_argument("--workspace-slug", default="", help="Workspace slug for BYOK model resolution.")
     ap.add_argument(
         "--company-context-path",
         default=None,
@@ -56,6 +58,8 @@ def main() -> None:
     inp = RedditMonitorInput(
         company_name=args.company_name,
         company_slug=slug,
+        workspace_id=args.workspace_id,
+        workspace_slug=args.workspace_slug or slug,
         company_context_path=company_context_path,
         icp_persona_path=icp_persona_path,
         style_guide_path=style_guide_path,

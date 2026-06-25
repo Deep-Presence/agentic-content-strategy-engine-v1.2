@@ -8,7 +8,7 @@ from typing import Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from api.auth.dependencies import require_role, require_tenant
+from api.auth.dependencies import require_tenant, require_workspace_admin
 from api.dependencies import get_auth_service
 from api.schemas.settings import (
     CompanyProfileSettingsResponse,
@@ -29,25 +29,6 @@ router = APIRouter(
 
 
 # ── Helpers ───────────────────────────────────────────────
-
-
-async def _require_superuser_tenant(
-    slug: str,
-    request: Request,
-    user: UserProfile = Depends(require_role("superuser")),
-    auth_service: AuthServiceProtocol = Depends(get_auth_service),
-) -> Tuple[UserProfile, Company]:
-    """Verify the user is a superuser and belongs to the company."""
-    # Lightweight tenant check
-    company_slug = getattr(request.state, "company_slug", None)
-    if not company_slug or slug != company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
-
-    company = await auth_service.get_company_by_slug(slug)
-    if not company:
-        raise HTTPException(status_code=404, detail=f"Company '{slug}' not found")
-
-    return user, company
 
 
 # ── Phase 1A: Team Management ─────────────────────────────
@@ -86,7 +67,7 @@ async def update_team_member(
     user_id: str,
     body: UpdateUserRequest,
     request: Request,
-    su_company: Tuple[UserProfile, Company] = Depends(_require_superuser_tenant),
+    su_company: Tuple[UserProfile, Company] = Depends(require_workspace_admin),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> TeamMemberResponse:
     """Update a team member's role, name, or active status.
@@ -153,7 +134,7 @@ async def get_profile(
 async def update_profile(
     slug: str,
     body: UpdateCompanyProfileRequest,
-    su_company: Tuple[UserProfile, Company] = Depends(_require_superuser_tenant),
+    su_company: Tuple[UserProfile, Company] = Depends(require_workspace_admin),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> CompanyProfileSettingsResponse:
     """Update company profile settings. Superuser only."""
@@ -195,7 +176,7 @@ async def get_pipeline_defaults(
 async def update_pipeline_defaults(
     slug: str,
     body: UpdatePipelineDefaultsRequest,
-    su_company: Tuple[UserProfile, Company] = Depends(_require_superuser_tenant),
+    su_company: Tuple[UserProfile, Company] = Depends(require_workspace_admin),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> PipelineDefaultsResponse:
     """Update per-company pipeline defaults. Superuser only."""

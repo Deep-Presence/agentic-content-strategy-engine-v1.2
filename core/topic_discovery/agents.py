@@ -1,6 +1,6 @@
 """Topic Discovery agents — S1 source generators, S2 merge, S3 expansion.
 
-All agent functions are async, use litellm.acompletion() for LLM calls,
+All agent functions are async, use OpenRouter (via openai SDK) for LLM calls,
 and return result objects (errors are captured, never fatal).
 
 Statistical functions (capture-recapture, Chao1, sample coverage) are
@@ -16,11 +16,6 @@ import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
-
-try:
-    import litellm
-except ImportError:
-    litellm = None  # type: ignore[assignment]
 
 from core.config.settings import settings
 from core.shared_tools.tracing import (
@@ -77,7 +72,8 @@ from core.topic_discovery.prompts.topic_generation import (
 logger = logging.getLogger(__name__)
 
 _CODE_FENCE_RE = re.compile(r"^```(?:json)?\s*\n(.*?)\n```\s*$", re.DOTALL)
-_MAX_PAUSE_TURNS = 5
+
+
 _EMBEDDING_BATCH_SIZE = 64
 
 
@@ -146,16 +142,6 @@ def _extract_text_content(content: Any) -> str:
     return str(content)
 
 
-def _extract_assistant_continuation_content(response: Any, fallback_text: str) -> Any:
-    """Extract Anthropic-native assistant content blocks from LiteLLM response."""
-    hidden = getattr(response, "_hidden_params", None)
-    if isinstance(hidden, dict):
-        original = hidden.get("original_response")
-        if isinstance(original, list) and original:
-            return original
-    return fallback_text
-
-
 async def _run_completion(
     *,
     model: str,
@@ -165,48 +151,137 @@ async def _run_completion(
     timeout_s: float = 120.0,
     response_format: Optional[Dict[str, Any]] = None,
     metadata: Optional[Dict[str, Any]] = None,
+    workspace_id: str = "",
+    workspace_slug: str = "",
+    agent_key: str = "",
 ) -> Tuple[Any, str]:
-    """Run LiteLLM completion with pause_turn handling."""
-    convo = list(messages)
-    response: Any = None
-    raw_text = ""
+    """Run OpenRouter completion via the async OpenAI client.
+
+    Args:
+        response_format: Optional dict (e.g. {"type": "json_object"}) passed
+            through as-is. None → no structured output constraint.
+
+    Returns (response, raw_text) tuple.
+    """
+    resolved = None
+    if workspace_id and agent_key:
+        resolved = await _resolve_model_config_for_agent(
+            workspace_id=workspace_id,
+            workspace_slug=workspace_slug or (metadata or {}).get("company_slug", ""),
+            agent_key=agent_key,
+        )
+
+    if resolved is not None:
+        from core.shared_tools.openrouter_client import build_async_client_for_key
+
+        client = build_async_client_for_key(
+            resolved.api_key,
+            base_url=resolved.base_url,
+            timeout_s=resolved.timeout_s,
+        )
+        effective_model = resolved.model
+        effective_temperature = (
+            resolved.temperature
+            if resolved.temperature is not None
+            else temperature
+        )
+        effective_max_tokens = (
+            resolved.max_tokens
+            if resolved.max_tokens is not None
+            else max_tokens
+        )
+        effective_timeout_s = resolved.timeout_s or timeout_s
+    else:
+        from core.shared_tools.openrouter_client import _ensure_model_prefix, get_async_client
+
+        client = get_async_client()
+        effective_model = _ensure_model_prefix(model)
+        effective_temperature = temperature
+        effective_max_tokens = max_tokens
+        effective_timeout_s = timeout_s
 
     # Build kwargs — only include response_format when explicitly set
     completion_kwargs: Dict[str, Any] = {
-        "model": model,
-        "messages": convo,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
+        "model": effective_model,
+        "messages": list(messages),
+        "temperature": effective_temperature,
+        "max_tokens": effective_max_tokens,
     }
     if response_format is not None:
         completion_kwargs["response_format"] = response_format
+
+    extra_body: Dict[str, Any] = dict(getattr(resolved, "extra_body", None) or {})
     if metadata is not None:
-        completion_kwargs["metadata"] = metadata
+        extra_body["metadata"] = metadata
+    if extra_body:
+        completion_kwargs["extra_body"] = extra_body
 
-    for turn in range(_MAX_PAUSE_TURNS + 1):
-        # Update messages in kwargs for pause_turn continuations
-        completion_kwargs["messages"] = convo
-        response = await asyncio.wait_for(
-            litellm.acompletion(**completion_kwargs),
-            timeout=timeout_s,
-        )
-        choice = response.choices[0]
-        raw_text = _extract_text_content(choice.message.content)
-        finish_reason = getattr(choice, "finish_reason", None)
-        if finish_reason != "pause_turn":
-            return response, raw_text
+    response = await asyncio.wait_for(
+        client.chat.completions.create(**completion_kwargs),
+        timeout=effective_timeout_s,
+    )
 
-        if turn >= _MAX_PAUSE_TURNS:
-            logger.warning(
-                "TD agent hit pause_turn limit (%d); returning partial.",
-                _MAX_PAUSE_TURNS,
-            )
-            return response, raw_text
+    # Cost tracking (never raises)
+    from core.shared_tools.cost_tracker import track_llm_cost
 
-        assistant_content = _extract_assistant_continuation_content(response, raw_text)
-        convo.append({"role": "assistant", "content": assistant_content})
+    _meta = metadata or {}
+    _usage = getattr(response, "usage", None)
+    raw_response_model = getattr(response, "model", None)
+    response_model = (
+        raw_response_model
+        if isinstance(raw_response_model, str) and raw_response_model
+        else effective_model
+    )
+    track_llm_cost(
+        model=response_model,
+        provider="openrouter",
+        pipeline=_meta.get("pipeline", ""),
+        pipeline_step=_meta.get("pipeline_step", ""),
+        prompt_tokens=getattr(_usage, "prompt_tokens", 0) or 0,
+        completion_tokens=getattr(_usage, "completion_tokens", 0) or 0,
+        company_slug=_meta.get("company_slug", workspace_slug),
+        call_site="core.topic_discovery.agents",
+        source="openrouter",
+        run_id=_meta.get("run_id"),
+        workspace_id=workspace_id if resolved is not None else None,
+        agent_key=agent_key if resolved is not None else "",
+        credential_id=getattr(resolved, "credential_id", None),
+        model_config_id=getattr(resolved, "model_config_id", None),
+        actual_provider=_actual_provider(response_model) if resolved is not None else "",
+        workspace_billed=resolved is not None,
+    )
 
+    choice = response.choices[0]
+    raw_text = _extract_text_content(choice.message.content)
     return response, raw_text
+
+
+async def _resolve_model_config_for_agent(
+    *,
+    workspace_id: str,
+    workspace_slug: str,
+    agent_key: str,
+):
+    from core.db.engine import get_session_factory
+    from core.db.repositories.model_config_repo import (
+        WorkspaceAgentModelConfigRepository,
+        WorkspaceLLMCredentialRepository,
+    )
+    from core.model_config.credentials import resolve_fernet_key
+    from core.model_config.resolver import ModelConfigResolver
+
+    factory = get_session_factory()
+    async with factory() as session:
+        resolver = ModelConfigResolver(
+            credential_repo=WorkspaceLLMCredentialRepository(session),
+            config_repo=WorkspaceAgentModelConfigRepository(session),
+            fernet_key=resolve_fernet_key(),
+        )
+        return await resolver.resolve(workspace_id, workspace_slug, agent_key)
+
+
+def _actual_provider(model: str) -> str:
+    return model.split("/", 1)[0] if "/" in model else ""
 
 
 def _repair_truncated_json(text: str) -> Optional[str]:
@@ -315,6 +390,8 @@ async def run_source_a_company_brainstorm(
     revision_note: Optional[str] = None,
     parent_span: Optional[Any] = None,
     company_slug: str = "",
+    workspace_id: str = "",
+    workspace_slug: str = "",
 ) -> SourceResult:
     """Source A: Company-perspective subdomain brainstorm (iterative expansion)."""
     model = model or settings.topic_discovery_brainstorm_model
@@ -348,7 +425,11 @@ async def run_source_a_company_brainstorm(
             }
             response, raw_text = await _run_completion(
                 model=model, messages=messages, timeout_s=timeout_s,
+                response_format={"type": "json_object"},
                 metadata=_meta_a,
+                workspace_id=workspace_id,
+                workspace_slug=workspace_slug,
+                agent_key="topic_discovery.source_a_company",
             )
             log_generation(
                 span, f"round-{round_num}", model,
@@ -452,6 +533,8 @@ async def run_source_b_persona_brainstorm(
     persona_name_to_id: Optional[Dict[str, str]] = None,
     parent_span: Optional[Any] = None,
     company_slug: str = "",
+    workspace_id: str = "",
+    workspace_slug: str = "",
 ) -> SourceResult:
     """Source B: Audience-perspective subdomain brainstorm (iterative expansion)."""
     model = model or settings.topic_discovery_brainstorm_model
@@ -486,7 +569,11 @@ async def run_source_b_persona_brainstorm(
             }
             response, raw_text = await _run_completion(
                 model=model, messages=messages, timeout_s=timeout_s,
+                response_format={"type": "json_object"},
                 metadata=_meta_b,
+                workspace_id=workspace_id,
+                workspace_slug=workspace_slug,
+                agent_key="topic_discovery.source_b_persona",
             )
             log_generation(
                 span, f"round-{round_num}", model,
@@ -569,6 +656,8 @@ async def run_source_c_deep_research(
     revision_note: Optional[str] = None,
     parent_span: Optional[Any] = None,
     company_slug: str = "",
+    workspace_id: str = "",
+    workspace_slug: str = "",
 ) -> SourceResult:
     """Source C: Deep research competitive content landscape via Perplexity."""
     from core.research.tools import perplexity_client
@@ -588,6 +677,16 @@ async def run_source_c_deep_research(
     span = create_span(parent_span, "td-source-c", input_data={"domain": domain, "model": model})
 
     try:
+        resolved = None
+        if workspace_id:
+            resolved = await _resolve_model_config_for_agent(
+                workspace_id=workspace_id,
+                workspace_slug=workspace_slug or company_slug,
+                agent_key="topic_discovery.source_c_deep_research",
+            )
+            model = resolved.model
+            timeout_s = resolved.timeout_s or timeout_s
+
         system_prompt = get_source_c_system_prompt()
         user_prompt = build_source_c_user_prompt(
             company_context, competitor_landscape, domain,
@@ -595,12 +694,23 @@ async def run_source_c_deep_research(
         )
         full_prompt = f"{system_prompt}\n\n{user_prompt}"
 
-        raw_text: str = await asyncio.wait_for(
+        raw_text, _pplx_usage = await asyncio.wait_for(
             asyncio.to_thread(
                 perplexity_client.research,
                 query=full_prompt,
                 timeout_s=timeout_s,
                 model=model,
+                pipeline="topic_discovery",
+                pipeline_step="source_c",
+                company_slug=company_slug,
+                api_key=resolved.api_key if resolved is not None else None,
+                base_url=resolved.base_url if resolved is not None else None,
+                workspace_id=workspace_id if resolved is not None else None,
+                agent_key=resolved.agent_key if resolved is not None else "",
+                credential_id=resolved.credential_id if resolved is not None else None,
+                model_config_id=resolved.model_config_id if resolved is not None else None,
+                actual_provider=_actual_provider(model) if resolved is not None else "",
+                workspace_billed=resolved is not None,
             ),
             timeout=timeout_s,
         )
@@ -613,7 +723,7 @@ async def run_source_c_deep_research(
             "company_slug": company_slug,
         }
         log_generation(span, "deep-research", model, full_prompt[:2000], raw_text[:2000],
-                       metadata=_meta_c)
+                       metadata=_meta_c, usage=_pplx_usage)
 
         # Strip Perplexity citations section before JSON parsing
         if "\n\nSources:\n" in raw_text:
@@ -693,6 +803,8 @@ async def run_source_d_adversarial(
     revision_note: Optional[str] = None,
     parent_span: Optional[Any] = None,
     company_slug: str = "",
+    workspace_id: str = "",
+    workspace_slug: str = "",
 ) -> SourceResult:
     """Source D: Adversarial diversity pass using specialist lenses."""
     model = model or settings.topic_discovery_brainstorm_model
@@ -741,7 +853,11 @@ async def run_source_d_adversarial(
             }
             response, raw_text = await _run_completion(
                 model=model, messages=messages, timeout_s=timeout_s,
+                response_format={"type": "json_object"},
                 metadata=_meta_d,
+                workspace_id=workspace_id,
+                workspace_slug=workspace_slug,
+                agent_key="topic_discovery.source_d_adversarial",
             )
             log_generation(
                 span, f"lens-{round_num}-{lens[:20]}", model,
@@ -810,6 +926,9 @@ async def deduplicate_subdomains_with_clusters(
     *,
     threshold: float = 0.85,
     parent_span: Optional[Any] = None,
+    company_slug: str = "",
+    workspace_id: str = "",
+    workspace_slug: str = "",
 ) -> DeduplicationResult:
     """Deduplicate subdomains via embedding cosine similarity.
 
@@ -823,13 +942,40 @@ async def deduplicate_subdomains_with_clusters(
 
     from core.shared_tools.embedding_client import embed_texts
 
+    resolved = None
+    if workspace_id:
+        resolved = await _resolve_model_config_for_agent(
+            workspace_id=workspace_id,
+            workspace_slug=workspace_slug or company_slug,
+            agent_key="shared.embeddings.default",
+        )
+
     names = [c.name for c in candidates]
 
     # Batch embeddings
     all_embeddings: List[List[float]] = []
     for i in range(0, len(names), _EMBEDDING_BATCH_SIZE):
         batch = names[i : i + _EMBEDDING_BATCH_SIZE]
-        batch_embeddings = await asyncio.to_thread(embed_texts, batch)
+        if resolved is not None:
+            batch_embeddings = await asyncio.to_thread(
+                embed_texts,
+                batch,
+                model=resolved.model,
+                api_key=resolved.api_key,
+                base_url=resolved.base_url,
+                timeout_s=resolved.timeout_s,
+                pipeline="topic_discovery",
+                pipeline_step="dedup_embedding",
+                company_slug=company_slug,
+                workspace_id=workspace_id,
+                agent_key=resolved.agent_key,
+                credential_id=resolved.credential_id,
+                model_config_id=resolved.model_config_id,
+                actual_provider=_actual_provider(resolved.model),
+                workspace_billed=True,
+            )
+        else:
+            batch_embeddings = await asyncio.to_thread(embed_texts, batch)
         all_embeddings.extend(batch_embeddings)
 
     source_of = [c.source for c in candidates]
@@ -911,10 +1057,11 @@ async def run_hierarchy_construction(
     model: Optional[str] = None,
     timeout_s: float = 480.0,
     company_slug: str = "",
+    workspace_id: str = "",
+    workspace_slug: str = "",
 ) -> TaxonomyTree:
     """Organize flat subdomains into a hierarchical taxonomy tree via LLM.
 
-    Uses response_format=json_object to enforce valid JSON output.
     Retries once on parse failure with a repair prompt before raising.
     """
     model = model or settings.topic_discovery_brainstorm_model
@@ -941,6 +1088,9 @@ async def run_hierarchy_construction(
         timeout_s=timeout_s,
         response_format={"type": "json_object"},
         metadata=_meta_hier,
+        workspace_id=workspace_id,
+        workspace_slug=workspace_slug,
+        agent_key="topic_discovery.hierarchy_unified_s2",
     )
     parsed = _parse_json_response(raw_text)
     nodes = _extract_taxonomy_nodes(parsed)
@@ -971,6 +1121,9 @@ async def run_hierarchy_construction(
         timeout_s=timeout_s,
         response_format={"type": "json_object"},
         metadata=_meta_hier,
+        workspace_id=workspace_id,
+        workspace_slug=workspace_slug,
+        agent_key="topic_discovery.hierarchy_unified_s2",
     )
     retry_parsed = _parse_json_response(retry_text)
     retry_nodes = _extract_taxonomy_nodes(retry_parsed)
@@ -998,6 +1151,8 @@ async def run_unified_hierarchy_and_scoring(
     timeout_s: float = 600.0,
     parent_span: Optional[Any] = None,
     company_slug: str = "",
+    workspace_id: str = "",
+    workspace_slug: str = "",
 ) -> TaxonomyTree:
     """Unified S2: build hierarchy + score subdomains + persona affinity.
 
@@ -1048,7 +1203,7 @@ async def run_unified_hierarchy_and_scoring(
         "company_slug": company_slug,
     }
 
-    # Attempt 1 — larger max_tokens for scoring + persona affinity output
+    # Attempt 1
     response, raw_text = await _run_completion(
         model=model,
         messages=messages,
@@ -1056,6 +1211,9 @@ async def run_unified_hierarchy_and_scoring(
         max_tokens=32768,
         response_format={"type": "json_object"},
         metadata=_meta_us2,
+        workspace_id=workspace_id,
+        workspace_slug=workspace_slug,
+        agent_key="topic_discovery.hierarchy_unified_s2",
     )
     log_generation(
         span, "hierarchy-scoring", model,
@@ -1104,6 +1262,9 @@ async def run_unified_hierarchy_and_scoring(
         max_tokens=32768,
         response_format={"type": "json_object"},
         metadata=_meta_us2,
+        workspace_id=workspace_id,
+        workspace_slug=workspace_slug,
+        agent_key="topic_discovery.hierarchy_unified_s2",
     )
     log_generation(
         span, "hierarchy-scoring-retry", model,
@@ -1318,6 +1479,8 @@ async def run_relevance_filtering(
     timeout_s: float = 120.0,
     parent_span: Optional[Any] = None,
     company_slug: str = "",
+    workspace_id: str = "",
+    workspace_slug: str = "",
 ) -> List[Dict[str, Any]]:
     """Classify dimension combinations as relevant/marginal/irrelevant."""
     model = model or settings.topic_discovery_dedup_model
@@ -1343,7 +1506,11 @@ async def run_relevance_filtering(
     }
     response, raw_text = await _run_completion(
         model=model, messages=messages, temperature=0.3, timeout_s=timeout_s,
+        response_format={"type": "json_object"},
         metadata=_meta_rf,
+        workspace_id=workspace_id,
+        workspace_slug=workspace_slug,
+        agent_key="topic_discovery.relevance_filter",
     )
     log_generation(
         span, "relevance-filter", model,
@@ -1374,6 +1541,8 @@ async def run_topic_generation(
     timeout_s: float = 120.0,
     parent_span: Optional[Any] = None,
     company_slug: str = "",
+    workspace_id: str = "",
+    workspace_slug: str = "",
 ) -> List[TopicAssignment]:
     """Generate 2-5 topic assignments for a relevant dimension cell."""
     model = model or settings.topic_discovery_brainstorm_model
@@ -1400,7 +1569,11 @@ async def run_topic_generation(
     }
     response, raw_text = await _run_completion(
         model=model, messages=messages, timeout_s=timeout_s,
+        response_format={"type": "json_object"},
         metadata=_meta_tg,
+        workspace_id=workspace_id,
+        workspace_slug=workspace_slug,
+        agent_key="topic_discovery.topic_generation",
     )
     log_generation(
         span, "topic-gen", model,
@@ -1450,6 +1623,8 @@ async def run_subdomain_expansion(
     timeout_s: float = 180.0,
     parent_span: Optional[Any] = None,
     company_slug: str = "",
+    workspace_id: str = "",
+    workspace_slug: str = "",
 ) -> List[TopicAssignment]:
     """Expand a single subdomain into topic assignments in ONE LLM call.
 
@@ -1505,7 +1680,11 @@ async def run_subdomain_expansion(
     }
     response, raw_text = await _run_completion(
         model=model, messages=messages, timeout_s=timeout_s,
+        response_format={"type": "json_object"},
         metadata=_meta_exp,
+        workspace_id=workspace_id,
+        workspace_slug=workspace_slug,
+        agent_key="topic_discovery.subdomain_expansion",
     )
     log_generation(
         span, "expansion", model,

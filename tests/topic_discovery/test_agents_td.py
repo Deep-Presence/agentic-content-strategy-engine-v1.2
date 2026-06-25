@@ -20,6 +20,7 @@ from core.models.topic_discovery import (
     TDSource,
     TopicAssignment,
 )
+from core.model_config.schemas import ResolvedModelConfig
 from core.topic_discovery.agents import (
     DeduplicationResult,
     _build_taxonomy_tree,
@@ -542,7 +543,7 @@ class TestCountTreeStats:
 # ── LLM Agent Functions (mocked) ────────────────────────────────────────
 
 def _make_mock_response(content: str):
-    """Create a mock LiteLLM response."""
+    """Create a mock OpenAI chat completion response."""
     mock_response = MagicMock()
     mock_choice = MagicMock()
     mock_choice.message.content = content
@@ -551,11 +552,33 @@ def _make_mock_response(content: str):
     return mock_response
 
 
+class _LiteLLMCompat:
+    """Shim so existing tests can keep using ``mock_litellm.acompletion = AsyncMock(...)``."""
+
+    def __init__(self, mock_client: MagicMock):
+        self._client = mock_client
+
+    @property
+    def acompletion(self):
+        return self._client.chat.completions.create
+
+    @acompletion.setter
+    def acompletion(self, value):
+        self._client.chat.completions.create = value
+
+
 @pytest.fixture
 def mock_litellm():
-    """Patch litellm.acompletion to return controlled responses."""
-    with patch("core.topic_discovery.agents.litellm") as mock:
-        yield mock
+    """Patch OpenRouter async client so tests control LLM responses.
+
+    Yields a shim with ``.acompletion`` property that maps to
+    ``client.chat.completions.create`` — backward-compatible with all
+    existing test code that does ``mock_litellm.acompletion = AsyncMock(...)``.
+    """
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock()
+    with patch("core.shared_tools.openrouter_client.get_async_client", return_value=mock_client):
+        yield _LiteLLMCompat(mock_client)
 
 
 class TestSourceABrainstorm:
@@ -656,7 +679,7 @@ class TestSourceCDeepResearch:
         with patch(
             "core.research.tools.perplexity_client"
         ) as mock_pplx:
-            mock_pplx.research = MagicMock(return_value=response_json)
+            mock_pplx.research = MagicMock(return_value=(response_json, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
             result = await run_source_c_deep_research(
                 "Ramp is a fintech company", "Competitor data", "fintech",
                 timeout_s=10.0,
@@ -667,6 +690,62 @@ class TestSourceCDeepResearch:
         assert result.candidates[0].confidence == 0.85
         assert result.total_rounds == 1
         assert result.error is None
+
+    @pytest.mark.asyncio
+    async def test_byok_resolves_model_config_for_source_c(self):
+        response_json = json.dumps({
+            "subdomains": [
+                {"name": "API Security", "description": "desc", "confidence": 0.7},
+            ],
+        })
+        resolved = ResolvedModelConfig(
+            workspace_id="ws-123",
+            workspace_slug="acme",
+            agent_key="topic_discovery.source_c_deep_research",
+            model="perplexity/sonar-deep-research",
+            base_url="https://openrouter.workspace/api/v1",
+            api_key="sk-workspace",
+            credential_id="cred-123",
+            model_config_id="cfg-123",
+            timeout_s=77.0,
+        )
+        with (
+            patch("core.research.tools.perplexity_client") as mock_pplx,
+            patch(
+                "core.topic_discovery.agents._resolve_model_config_for_agent",
+                new_callable=AsyncMock,
+                return_value=resolved,
+            ) as mock_resolve,
+        ):
+            mock_pplx.research = MagicMock(
+                return_value=(response_json, {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3})
+            )
+            result = await run_source_c_deep_research(
+                "Company context",
+                "Competitor data",
+                "cybersecurity",
+                timeout_s=10.0,
+                company_slug="acme",
+                workspace_id="ws-123",
+                workspace_slug="acme",
+            )
+
+        assert len(result.candidates) == 1
+        mock_resolve.assert_awaited_once_with(
+            workspace_id="ws-123",
+            workspace_slug="acme",
+            agent_key="topic_discovery.source_c_deep_research",
+        )
+        call_kwargs = mock_pplx.research.call_args.kwargs
+        assert call_kwargs["model"] == "perplexity/sonar-deep-research"
+        assert call_kwargs["timeout_s"] == 77.0
+        assert call_kwargs["api_key"] == "sk-workspace"
+        assert call_kwargs["base_url"] == "https://openrouter.workspace/api/v1"
+        assert call_kwargs["workspace_id"] == "ws-123"
+        assert call_kwargs["agent_key"] == "topic_discovery.source_c_deep_research"
+        assert call_kwargs["credential_id"] == "cred-123"
+        assert call_kwargs["model_config_id"] == "cfg-123"
+        assert call_kwargs["workspace_billed"] is True
 
     @pytest.mark.asyncio
     async def test_empty_context_skips_api_call(self):
@@ -713,7 +792,7 @@ class TestSourceCDeepResearch:
         with patch(
             "core.research.tools.perplexity_client"
         ) as mock_pplx:
-            mock_pplx.research = MagicMock(return_value=raw_with_citations)
+            mock_pplx.research = MagicMock(return_value=(raw_with_citations, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
             result = await run_source_c_deep_research(
                 "Company context", "", "cybersecurity", timeout_s=10.0,
             )
@@ -887,14 +966,16 @@ class TestHierarchyConstruction:
 
     @pytest.mark.asyncio
     async def test_uses_response_format_json_object(self, mock_litellm):
-        """Hierarchy construction should request JSON mode from the LLM."""
+        """Hierarchy construction should request json_object mode."""
         response_json = json.dumps({"hierarchy": [{"pillar_name": "A", "pillar_description": "d"}]})
         mock_litellm.acompletion = AsyncMock(
             return_value=_make_mock_response(response_json)
         )
         await run_hierarchy_construction(["A"], "test.com", timeout_s=10.0)
         first_call_kwargs = mock_litellm.acompletion.call_args_list[0].kwargs
-        assert first_call_kwargs.get("response_format") == {"type": "json_object"}
+        rf = first_call_kwargs.get("response_format")
+        assert rf is not None
+        assert rf["type"] == "json_object"
 
     @pytest.mark.asyncio
     async def test_retry_on_first_failure(self, mock_litellm):
@@ -1501,6 +1582,64 @@ class TestDeduplicateSubdomainsWithClusters:
         assert result.embeddings == []
         assert result.source_of == []
 
+    @pytest.mark.asyncio
+    async def test_workspace_context_routes_embeddings_through_byok_config(self):
+        candidates = [
+            SubdomainCandidate(name="A", source=TDSource.source_a, round_number=1),
+            SubdomainCandidate(name="B", source=TDSource.source_b, round_number=1),
+        ]
+        resolved = ResolvedModelConfig(
+            agent_key="shared.embeddings.default",
+            model="openai/text-embedding-3-large",
+            api_key="sk-workspace",
+            base_url="https://openrouter.workspace/api/v1",
+            timeout_s=12.0,
+            credential_id="cred-123",
+            model_config_id="cfg-123",
+        )
+
+        with (
+            patch(
+                "core.topic_discovery.agents._resolve_model_config_for_agent",
+                new_callable=AsyncMock,
+                return_value=resolved,
+            ) as mock_resolve,
+            patch(
+                "core.shared_tools.embedding_client.embed_texts",
+                return_value=[[1.0, 0.0], [0.0, 1.0]],
+            ) as mock_embed,
+        ):
+            result = await deduplicate_subdomains_with_clusters(
+                candidates,
+                threshold=0.85,
+                company_slug="acme",
+                workspace_id="ws-123",
+                workspace_slug="acme",
+            )
+
+        assert len(result.kept) == 2
+        mock_resolve.assert_awaited_once_with(
+            workspace_id="ws-123",
+            workspace_slug="acme",
+            agent_key="shared.embeddings.default",
+        )
+        assert mock_embed.call_args.args == (["A", "B"],)
+        assert mock_embed.call_args.kwargs == {
+            "model": "openai/text-embedding-3-large",
+            "api_key": "sk-workspace",
+            "base_url": "https://openrouter.workspace/api/v1",
+            "timeout_s": 12.0,
+            "pipeline": "topic_discovery",
+            "pipeline_step": "dedup_embedding",
+            "company_slug": "acme",
+            "workspace_id": "ws-123",
+            "agent_key": "shared.embeddings.default",
+            "credential_id": "cred-123",
+            "model_config_id": "cfg-123",
+            "actual_provider": "openai",
+            "workspace_billed": True,
+        }
+
 
 class TestComputeAllCoverageMetricsWithClusters:
     """Tests for compute_all_coverage_metrics with dedup_result (new path)."""
@@ -1751,3 +1890,176 @@ class TestDedupMergesPersonaIds:
         assert len(result.kept) == 2
         assert result.kept[0].persona_ids == ["david"]
         assert result.kept[1].persona_ids == ["marcus"]
+
+
+# ── _run_completion cost tracking ───────────────────────────────────────
+
+
+def _make_mock_response_with_usage(content: str, prompt_tokens: int = 50, completion_tokens: int = 100):
+    """Create a mock OpenAI response with usage data for cost tracking tests."""
+    mock_response = MagicMock()
+    mock_choice = MagicMock()
+    mock_choice.message.content = content
+    mock_choice.finish_reason = "stop"
+    mock_response.choices = [mock_choice]
+    mock_response.usage = MagicMock(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
+    return mock_response
+
+
+class TestRunCompletionCostTracking:
+    """Verify track_llm_cost() is called inside _run_completion()."""
+
+    @pytest.mark.asyncio
+    async def test_cost_tracked_on_success(self):
+        from core.topic_discovery.agents import _run_completion
+
+        mock_resp = _make_mock_response_with_usage('{"ok": true}', 50, 100)
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_resp)
+        meta = {
+            "pipeline": "topic_discovery",
+            "pipeline_step": "source_a",
+            "company_slug": "test-co",
+        }
+
+        with patch("core.shared_tools.openrouter_client.get_async_client", return_value=mock_client), \
+             patch("core.shared_tools.cost_tracker.track_llm_cost") as mock_track:
+            await _run_completion(
+                model="anthropic/claude-sonnet-4-6",
+                messages=[{"role": "user", "content": "hi"}],
+                timeout_s=10.0,
+                metadata=meta,
+            )
+        mock_track.assert_called_once()
+        kw = mock_track.call_args[1]
+        assert kw["model"] == "anthropic/claude-sonnet-4-6"
+        assert kw["provider"] == "openrouter"
+        assert kw["pipeline"] == "topic_discovery"
+        assert kw["pipeline_step"] == "source_a"
+        assert kw["prompt_tokens"] == 50
+        assert kw["completion_tokens"] == 100
+        assert kw["company_slug"] == "test-co"
+        assert kw["source"] == "openrouter"
+
+    @pytest.mark.asyncio
+    async def test_cost_tracked_with_no_metadata(self):
+        from core.topic_discovery.agents import _run_completion
+
+        mock_resp = _make_mock_response_with_usage('{"ok": true}')
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_resp)
+
+        with patch("core.shared_tools.openrouter_client.get_async_client", return_value=mock_client), \
+             patch("core.shared_tools.cost_tracker.track_llm_cost") as mock_track:
+            await _run_completion(
+                model="test-model",
+                messages=[{"role": "user", "content": "hi"}],
+                timeout_s=10.0,
+            )
+        kw = mock_track.call_args[1]
+        assert kw["pipeline"] == ""
+        assert kw["pipeline_step"] == ""
+        assert kw["company_slug"] == ""
+
+    @pytest.mark.asyncio
+    async def test_cost_tracked_with_missing_usage(self):
+        from core.topic_discovery.agents import _run_completion
+
+        mock_resp = _make_mock_response('{"ok": true}')
+        mock_resp.usage = None  # explicitly no usage
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_resp)
+
+        with patch("core.shared_tools.openrouter_client.get_async_client", return_value=mock_client), \
+             patch("core.shared_tools.cost_tracker.track_llm_cost") as mock_track:
+            await _run_completion(
+                model="test-model",
+                messages=[{"role": "user", "content": "hi"}],
+                timeout_s=10.0,
+            )
+        kw = mock_track.call_args[1]
+        assert kw["prompt_tokens"] == 0
+        assert kw["completion_tokens"] == 0
+
+    @pytest.mark.asyncio
+    async def test_byok_resolution_uses_workspace_client_and_tracks_metadata(self):
+        from core.topic_discovery.agents import _run_completion
+
+        resolved = ResolvedModelConfig(
+            workspace_id="ws-123",
+            workspace_slug="acme",
+            agent_key="topic_discovery.source_a_company",
+            model="anthropic/claude-haiku-4-5",
+            base_url="https://openrouter.test/api/v1",
+            api_key="sk-workspace",
+            credential_id="cred-123",
+            model_config_id="cfg-123",
+            temperature=0.2,
+            max_tokens=1234,
+            timeout_s=42.0,
+            extra_body={"route": "fallback"},
+        )
+        mock_resp = _make_mock_response_with_usage(
+            '{"ok": true}',
+            prompt_tokens=12,
+            completion_tokens=34,
+        )
+        mock_resp.model = "anthropic/claude-haiku-4-5"
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_resp)
+        meta = {
+            "pipeline": "topic_discovery",
+            "pipeline_step": "source_a",
+            "company_slug": "acme",
+            "run_id": "run-123",
+        }
+
+        with (
+            patch(
+                "core.topic_discovery.agents._resolve_model_config_for_agent",
+                new_callable=AsyncMock,
+                return_value=resolved,
+            ) as mock_resolve,
+            patch(
+                "core.shared_tools.openrouter_client.build_async_client_for_key",
+                return_value=mock_client,
+            ) as mock_build,
+            patch("core.shared_tools.openrouter_client.get_async_client") as mock_platform_client,
+            patch("core.shared_tools.cost_tracker.track_llm_cost") as mock_track,
+        ):
+            await _run_completion(
+                model="anthropic/platform-default",
+                messages=[{"role": "user", "content": "hi"}],
+                metadata=meta,
+                workspace_id="ws-123",
+                workspace_slug="acme",
+                agent_key="topic_discovery.source_a_company",
+            )
+
+        mock_resolve.assert_awaited_once_with(
+            workspace_id="ws-123",
+            workspace_slug="acme",
+            agent_key="topic_discovery.source_a_company",
+        )
+        mock_build.assert_called_once_with(
+            "sk-workspace",
+            base_url="https://openrouter.test/api/v1",
+            timeout_s=42.0,
+        )
+        mock_platform_client.assert_not_called()
+        call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["model"] == "anthropic/claude-haiku-4-5"
+        assert call_kwargs["temperature"] == 0.2
+        assert call_kwargs["max_tokens"] == 1234
+        assert call_kwargs["extra_body"] == {
+            "route": "fallback",
+            "metadata": meta,
+        }
+        kw = mock_track.call_args.kwargs
+        assert kw["workspace_id"] == "ws-123"
+        assert kw["agent_key"] == "topic_discovery.source_a_company"
+        assert kw["credential_id"] == "cred-123"
+        assert kw["model_config_id"] == "cfg-123"
+        assert kw["actual_provider"] == "anthropic"
+        assert kw["workspace_billed"] is True
+        assert kw["run_id"] == "run-123"

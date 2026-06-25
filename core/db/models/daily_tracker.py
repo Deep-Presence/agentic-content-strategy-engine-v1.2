@@ -60,6 +60,11 @@ class TrackedPromptModel(UUIDPKMixin, TimestampMixin, Base):
     )
 
     company_id: Mapped[str] = mapped_column(String, nullable=False)
+    workspace_id: Mapped[_uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     text: Mapped[str] = mapped_column(Text, nullable=False)
     category: Mapped[str | None] = mapped_column(String, nullable=True)
     # Why: JSONB for tags and platforms — flexible list storage without a
@@ -70,11 +75,36 @@ class TrackedPromptModel(UUIDPKMixin, TimestampMixin, Base):
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     platforms: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
 
+    # Fanout query support — self-referential FK.
+    # NULL = parent prompt, non-NULL = fanout child of that parent.
+    parent_prompt_id: Mapped[_uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("tracked_prompts.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    fanout_axis: Mapped[str | None] = mapped_column(String, nullable=True)
+    pinned: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+
     # relationships
     responses: Mapped[list[DailyRunResponseModel]] = relationship(
         "DailyRunResponseModel",
         back_populates="prompt",
         cascade="all, delete-orphan",
+        lazy="selectin",
+        foreign_keys="DailyRunResponseModel.prompt_id",
+    )
+    fanouts: Mapped[list[TrackedPromptModel]] = relationship(
+        "TrackedPromptModel",
+        back_populates="parent",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+    parent: Mapped[TrackedPromptModel | None] = relationship(
+        "TrackedPromptModel",
+        back_populates="fanouts",
+        remote_side="TrackedPromptModel.id",
         lazy="selectin",
     )
 
@@ -167,6 +197,13 @@ class DailyRunResponseModel(UUIDPKMixin, Base):
     )
     citation_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # Denormalized parent prompt ID for analytics aggregation.
+    # NULL = response is for a parent prompt, non-NULL = response is for a
+    # fanout child (value is the parent prompt's ID).
+    parent_prompt_id: Mapped[_uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -176,5 +213,7 @@ class DailyRunResponseModel(UUIDPKMixin, Base):
         "DailyRunModel", back_populates="responses"
     )
     prompt: Mapped[TrackedPromptModel] = relationship(
-        "TrackedPromptModel", back_populates="responses"
+        "TrackedPromptModel",
+        back_populates="responses",
+        foreign_keys=[prompt_id],
     )

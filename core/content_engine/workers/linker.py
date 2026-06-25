@@ -15,7 +15,7 @@ import re
 from typing import List, Optional
 
 from core.config.settings import settings
-from core.content_engine.llm_client import llm_call
+from core.content_engine.llm_client import llm_call, llm_call_for_agent
 from core.content_engine.prompts.linker_prompts import (
     LINKER_SYSTEM_PROMPT,
     build_linker_user_prompt,
@@ -36,6 +36,7 @@ async def link_content(
     *,
     trace: Optional[object] = None,
     company_slug: str = "",
+    workspace_id: str = "",
 ) -> LinkedDraft:
     """Resolve link placeholders in a draft using Perplexity sonar-pro.
 
@@ -66,7 +67,7 @@ async def link_content(
 
     # Check for API key — graceful degradation
     api_key = settings.perplexity_api_key
-    if not api_key:
+    if not workspace_id and not api_key:
         logger.warning("PERPLEXITY_API_KEY not set — skipping link resolution")
         end_span(span, output={"skipped": "no API key"})
         return LinkedDraft(
@@ -93,23 +94,38 @@ async def link_content(
     )
 
     try:
-        response = await llm_call(
-            model=model,
-            system=LINKER_SYSTEM_PROMPT,
-            user=user_prompt,
-            max_tokens=8192,
-            metadata={
-                "agent": "linker",
-                "brief_id": brief.brief_id,
-                "pipeline": "content_engine",
-                "pipeline_step": "linker",
-                "provider": extract_provider(model),
-                "model": model,
-                "company_slug": company_slug,
-            },
-            max_retries=2,
-            base_delay=3.0,
-        )
+        metadata = {
+            "agent": "linker",
+            "agent_key": "content.worker.linker",
+            "brief_id": brief.brief_id,
+            "pipeline": "content_engine",
+            "pipeline_step": "linker",
+            "provider": extract_provider(model),
+            "model": model,
+            "company_slug": company_slug,
+        }
+        if workspace_id:
+            response = await llm_call_for_agent(
+                workspace_id=workspace_id,
+                workspace_slug=company_slug,
+                agent_key="content.worker.linker",
+                system=LINKER_SYSTEM_PROMPT,
+                user=user_prompt,
+                max_tokens=8192,
+                metadata=metadata,
+                max_retries=2,
+                base_delay=3.0,
+            )
+        else:
+            response = await llm_call(
+                model=model,
+                system=LINKER_SYSTEM_PROMPT,
+                user=user_prompt,
+                max_tokens=8192,
+                metadata=metadata,
+                max_retries=2,
+                base_delay=3.0,
+            )
 
         linked_text = response.content
 

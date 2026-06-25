@@ -17,6 +17,7 @@ from typing import Optional, Sequence
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.db.enums import CMSProvider
 from core.db.models.cms import (
     CMSConnectionModel,
     CMSPublishRecordModel,
@@ -71,6 +72,25 @@ class CMSConnectionRepository(SQLAlchemyRepository[CMSConnectionModel]):
                 CMSConnectionModel.company_slug == company_slug,
                 CMSConnectionModel.tenant_id == tenant_id,
                 CMSConnectionModel.is_active.is_(True),
+            )
+            .limit(1)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_active_by_webflow_site_id(
+        self,
+        site_id: str,
+    ) -> Optional[CMSConnectionModel]:
+        """Return active Webflow connection matching provider_config.site_id."""
+        if not site_id:
+            return None
+        stmt = (
+            select(CMSConnectionModel)
+            .where(
+                CMSConnectionModel.is_active.is_(True),
+                CMSConnectionModel.provider == CMSProvider.webflow,
+                CMSConnectionModel.provider_config["site_id"].as_string() == site_id,
             )
             .limit(1)
         )
@@ -209,6 +229,22 @@ class CMSSyncedPostRepository(SQLAlchemyRepository[CMSSyncedPostModel]):
             **kwargs,
         )
 
+    async def delete_by_cms_post_id(
+        self,
+        connection_id: _uuid.UUID,
+        cms_post_id: str,
+    ) -> bool:
+        """Remove a synced post row when Webflow deletes the CMS item."""
+        from sqlalchemy import delete
+
+        del_stmt = delete(CMSSyncedPostModel).where(
+            CMSSyncedPostModel.connection_id == connection_id,
+            CMSSyncedPostModel.cms_post_id == cms_post_id,
+        )
+        result = await self._session.execute(del_stmt)
+        await self._session.flush()
+        return result.rowcount > 0
+
     async def get_stale(
         self,
         company_slug: str,
@@ -274,3 +310,37 @@ class CMSSyncedPostRepository(SQLAlchemyRepository[CMSSyncedPostModel]):
         )
         result = await self._session.execute(stmt)
         return result.scalars().all()
+
+    async def batch_link_inventory_ids(
+        self,
+        connection_id: _uuid.UUID,
+        pairs: list[tuple[_uuid.UUID, Any]],
+    ) -> int:
+        """Batch update content_inventory_id FK on synced posts.
+
+        Args:
+            connection_id: The CMS connection these posts belong to.
+            pairs: List of ``(content_inventory_id, cms_post_id_str)`` tuples.
+
+        Returns:
+            Number of rows updated.
+        """
+        if not pairs:
+            return 0
+
+        count = 0
+        for inventory_id, cms_post_id in pairs:
+            if cms_post_id is None:
+                continue
+            stmt = (
+                update(CMSSyncedPostModel)
+                .where(
+                    CMSSyncedPostModel.connection_id == connection_id,
+                    CMSSyncedPostModel.cms_post_id == str(cms_post_id),
+                )
+                .values(content_inventory_id=inventory_id)
+            )
+            result = await self._session.execute(stmt)
+            count += result.rowcount
+        await self._session.flush()
+        return count

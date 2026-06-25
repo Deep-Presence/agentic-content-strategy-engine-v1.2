@@ -19,6 +19,7 @@ except ImportError:
     litellm = None  # type: ignore[assignment]
 
 from core.config.settings import settings
+from core.model_config.runtime import actual_provider, resolve_model_config_for_agent
 from core.models.voice_style_guide import (
     VSG_MIN_AUTHORS,
     AuthorBrief,
@@ -87,6 +88,20 @@ def _extract_assistant_continuation_content(response: Any, fallback_text: str) -
     return fallback_text
 
 
+def _messages_to_system_user(messages: List[Dict[str, Any]]) -> Tuple[str, str]:
+    """Flatten a role-based conversation into a system prompt and user payload."""
+    system = ""
+    user_parts: List[str] = []
+    for message in messages:
+        role = str(message.get("role") or "user")
+        content = message.get("content") or ""
+        if role == "system" and not system:
+            system = str(content)
+            continue
+        user_parts.append(f"{role.upper()}:\n{content}")
+    return system, "\n\n".join(user_parts)
+
+
 async def _run_discovery_completion(
     *,
     model: str,
@@ -114,22 +129,51 @@ async def _run_discovery_completion(
     if metadata is not None:
         _kwargs["metadata"] = metadata
 
+    from core.shared_tools.cost_tracker import extract_usage_litellm, track_llm_cost
+    from core.shared_tools.tracing import extract_provider
+
+    _total_pt, _total_ct = 0, 0
     for turn in range(_MAX_PAUSE_TURNS + 1):
         _kwargs["messages"] = convo
         response = await asyncio.wait_for(
             litellm.acompletion(**_kwargs),
             timeout=timeout_s,
         )
+        _pt, _ct = extract_usage_litellm(response)
+        _total_pt += _pt
+        _total_ct += _ct
+        track_llm_cost(
+            model=model, provider=extract_provider(model),
+            pipeline="voice_style_guide",
+            pipeline_step=f"author_discovery/turn-{turn}",
+            prompt_tokens=_pt, completion_tokens=_ct,
+            call_site="core.research.voice_style_guide.agents",
+        )
         choice = response.choices[0]
         raw_text = _extract_text_content(choice.message.content)
         finish_reason = getattr(choice, "finish_reason", None)
         if finish_reason != "pause_turn":
+            if turn > 0:
+                track_llm_cost(
+                    model=model, provider=extract_provider(model),
+                    pipeline="voice_style_guide",
+                    pipeline_step="author_discovery/total",
+                    prompt_tokens=_total_pt, completion_tokens=_total_ct,
+                    call_site="core.research.voice_style_guide.agents",
+                )
             return response, raw_text
 
         if turn >= _MAX_PAUSE_TURNS:
             logger.warning(
                 "Author discovery hit pause_turn limit (%d); returning partial response.",
                 _MAX_PAUSE_TURNS,
+            )
+            track_llm_cost(
+                model=model, provider=extract_provider(model),
+                pipeline="voice_style_guide",
+                pipeline_step="author_discovery/total",
+                prompt_tokens=_total_pt, completion_tokens=_total_ct,
+                call_site="core.research.voice_style_guide.agents",
             )
             return response, raw_text
 
@@ -404,36 +448,62 @@ async def run_author_discovery(
         )
 
         model = settings.voice_style_guide_discovery_model
-        api_key = settings.anthropic_api_key
-
-        # Web search tool for real-time author verification.
-        # Incompatible with response_format=json_object (citations conflict),
-        # so we rely on the system prompt for JSON instruction instead.
-        _web_search_tool = {
-            "type": "web_search_20250305",
-            "name": "web_search",
-            "max_uses": 5,
-        }
-
         _disc_meta = {
             "pipeline": "voice_style_guide",
             "pipeline_step": "author_discovery",
-            "provider": extract_provider(model),
+            "provider": "openrouter" if input_data.workspace_id else extract_provider(model),
             "model": model,
             "company_slug": input_data.company_slug or "",
         }
-        _, raw_text = await _run_discovery_completion(
-            model=model,
-            api_key=api_key,
-            messages=[
+
+        async def _run_discovery_messages(
+            messages: List[Dict[str, Any]],
+            *,
+            pipeline_step: str,
+        ) -> str:
+            if input_data.workspace_id:
+                from core.content_engine.llm_client import llm_call_for_agent
+
+                call_system, call_user = _messages_to_system_user(messages)
+                response = await llm_call_for_agent(
+                    workspace_id=input_data.workspace_id,
+                    workspace_slug=input_data.workspace_slug or input_data.company_slug or "",
+                    agent_key="research.vsg.author_discovery",
+                    system=call_system,
+                    user=call_user,
+                    temperature=0.7,
+                    max_tokens=8192,
+                    metadata={**_disc_meta, "pipeline_step": pipeline_step},
+                )
+                return response.content
+
+            api_key = settings.anthropic_api_key
+            # Web search tool for real-time author verification.
+            # Incompatible with response_format=json_object (citations conflict),
+            # so we rely on the system prompt for JSON instruction instead.
+            web_search_tool = {
+                "type": "web_search_20250305",
+                "name": "web_search",
+                "max_uses": 5,
+            }
+            _, text = await _run_discovery_completion(
+                model=model,
+                api_key=api_key,
+                messages=messages,
+                temperature=0.7,
+                max_tokens=8192,
+                tools=[web_search_tool],
+                timeout_s=timeout_s,
+                metadata={**_disc_meta, "pipeline_step": pipeline_step},
+            )
+            return text
+
+        raw_text = await _run_discovery_messages(
+            [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.7,
-            max_tokens=8192,
-            tools=[_web_search_tool],
-            timeout_s=timeout_s,
-            metadata=_disc_meta,
+            pipeline_step="author_discovery",
         )
         log_generation(
             span, "vsg-author-discovery", model,
@@ -460,20 +530,14 @@ async def run_author_discovery(
                 f"{{title, type, relevance}}), selection_rationale, per_persona_resonance."
             )
             try:
-                _, retry_text = await _run_discovery_completion(
-                    model=model,
-                    api_key=api_key,
-                    messages=[
+                retry_text = await _run_discovery_messages(
+                    [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                         {"role": "assistant", "content": raw_text},
                         {"role": "user", "content": repair_prompt},
                     ],
-                    temperature=0.7,
-                    max_tokens=8192,
-                    tools=[_web_search_tool],
-                    timeout_s=timeout_s,
-                    metadata=_disc_meta,
+                    pipeline_step="author_discovery_repair",
                 )
                 logger.info(
                     "Author discovery retry response length=%d, first 500 chars: %s",
@@ -542,26 +606,55 @@ async def run_author_research(
         )
         full_prompt = f"{system_prompt}\n\n{user_prompt}"
 
-        result_md = await asyncio.wait_for(
+        resolved = None
+        if input_data.workspace_id:
+            resolved = await resolve_model_config_for_agent(
+                workspace_id=input_data.workspace_id,
+                workspace_slug=input_data.workspace_slug or input_data.company_slug or "",
+                agent_key="research.vsg.author_research",
+            )
+        effective_model = (
+            resolved.model
+            if resolved is not None
+            else settings.perplexity_deep_research_model
+        )
+        resolved_timeout = getattr(resolved, "timeout_s", None) if resolved is not None else None
+        effective_timeout_s = (
+            resolved_timeout if isinstance(resolved_timeout, (int, float)) else timeout_s
+        )
+        result_md, _pplx_usage = await asyncio.wait_for(
             asyncio.to_thread(
                 perplexity_client.research,
                 query=full_prompt,
-                timeout_s=timeout_s,
+                timeout_s=effective_timeout_s,
+                model=effective_model,
+                pipeline="voice_style_guide",
+                pipeline_step="author_research",
+                company_slug=input_data.company_slug or "",
+                api_key=getattr(resolved, "api_key", None),
+                base_url=getattr(resolved, "base_url", None),
+                workspace_id=input_data.workspace_id if resolved is not None else None,
+                agent_key="research.vsg.author_research" if resolved is not None else "",
+                credential_id=getattr(resolved, "credential_id", None),
+                model_config_id=getattr(resolved, "model_config_id", None),
+                actual_provider=actual_provider(effective_model) if resolved is not None else "",
+                workspace_billed=resolved is not None,
             ),
-            timeout=timeout_s,
+            timeout=effective_timeout_s,
         )
 
         log_generation(
             span, f"vsg-author-research-{brief.author_id}",
-            settings.perplexity_deep_research_model,
+            effective_model,
             full_prompt[:2000], result_md[:2000] if result_md else "",
             metadata={
                 "pipeline": "voice_style_guide",
                 "pipeline_step": "author_research",
                 "provider": "perplexity",
-                "model": settings.perplexity_deep_research_model,
+                "model": effective_model,
                 "company_slug": input_data.company_slug or "",
             },
+            usage=_pplx_usage,
         )
         end_span(span, output={"word_count": len(result_md.split()) if result_md else 0})
 
@@ -621,7 +714,6 @@ async def run_voice_synthesis(
         )
 
         model = settings.voice_style_guide_synthesis_model
-        api_key = settings.anthropic_api_key
 
         _synth_meta = {
             "pipeline": "voice_style_guide",
@@ -630,24 +722,41 @@ async def run_voice_synthesis(
             "model": model,
             "company_slug": input_data.company_slug or "",
         }
-        response = await asyncio.wait_for(
-            litellm.acompletion(
-                model=model,
-                api_key=api_key,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
+        if input_data.workspace_id:
+            from core.content_engine.llm_client import llm_call_for_agent
+
+            response = await llm_call_for_agent(
+                workspace_id=input_data.workspace_id,
+                workspace_slug=input_data.workspace_slug or input_data.company_slug or "",
+                agent_key="research.vsg.synthesis",
+                system=system_prompt,
+                user=user_prompt,
                 temperature=0.3,
                 max_tokens=8192,
                 metadata=_synth_meta,
-            ),
-            timeout=timeout_s,
-        )
-
-        guide_md = response.choices[0].message.content or ""
+            )
+            guide_md = response.content
+            response_model = response.model or model
+        else:
+            from core.shared_tools.openrouter_client import get_async_client
+            or_client = get_async_client()
+            response = await asyncio.wait_for(
+                or_client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=0.3,
+                    max_tokens=8192,
+                    extra_body={"metadata": _synth_meta},
+                ),
+                timeout=timeout_s,
+            )
+            guide_md = response.choices[0].message.content or ""
+            response_model = getattr(response, "model", None) or model
         log_generation(
-            span, "vsg-voice-synthesis", model,
+            span, "vsg-voice-synthesis", response_model,
             user_prompt[:2000], guide_md[:2000],
             metadata=_synth_meta,
         )

@@ -7,11 +7,13 @@ from api.schemas.brand_data import SPATrendResponse
 from api.schemas.content_data import EmbeddingProjectionResponse
 from api.schemas.gap_data import (
     ClusterListResponse,
+    ClusterProfileListResponse,
     GapSummaryResponse,
     HeatmapResponse,
     PlatformListResponse,
     QueryListResponse,
     SignalAveragesResponse,
+    TerritoryGapsResponse,
 )
 
 
@@ -24,7 +26,7 @@ class GapDataServiceProtocol(Protocol):
     - ``DbGapDataService``: SQL queries against Postgres (Phase 3, Step 3)
     """
 
-    async def get_summary(self, effective_slug: str) -> GapSummaryResponse: ...
+    async def get_summary(self, effective_slug: str, *, ga_run_id: Optional[str] = None) -> GapSummaryResponse: ...
 
     async def get_queries(
         self,
@@ -54,3 +56,11 @@ class GapDataServiceProtocol(Protocol):
     ) -> EmbeddingProjectionResponse: ...
 
     async def get_spa_trend(self, effective_slug: str) -> SPATrendResponse: ...
+
+    async def get_cluster_profiles(
+        self, effective_slug: str,
+    ) -> ClusterProfileListResponse: ...
+
+    async def get_territory_gaps(
+        self, effective_slug: str,
+    ) -> TerritoryGapsResponse: ...

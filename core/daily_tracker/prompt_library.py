@@ -25,6 +25,7 @@ from core.storage.backends.base import StorageBackend
 
 from core.db.repositories.daily_tracker_repo import TrackedPromptRepository
 from core.models.daily_tracker import (
+    FanoutQuery,
     PromptLibraryFilter,
     PromptSource,
     TrackedPrompt,
@@ -60,6 +61,7 @@ class PromptLibraryService:
         text: str,
         category: str | None = None,
         tags: list[str] | None = None,
+        workspace_id: str | None = None,
     ) -> TrackedPrompt:
         """Create a new tracked prompt.
 
@@ -81,13 +83,18 @@ class PromptLibraryService:
                 f"Prompt with this text already exists for company {company_id}"
             )
 
-        orm_obj = await self._repo.create(
-            company_id=company_id,
-            text=text,
-            category=category,
-            tags=tags or [],
-            source=PromptSource.MANUAL.value,
-        )
+        import uuid as _uuid
+
+        create_kwargs: dict[str, object] = {
+            "company_id": company_id,
+            "text": text,
+            "category": category,
+            "tags": tags or [],
+            "source": PromptSource.MANUAL.value,
+        }
+        if workspace_id:
+            create_kwargs["workspace_id"] = _uuid.UUID(workspace_id)
+        orm_obj = await self._repo.create(**create_kwargs)
         return self._orm_to_pydantic(orm_obj)
 
     async def list_prompts(
@@ -134,6 +141,15 @@ class PromptLibraryService:
             return None
         return self._orm_to_pydantic(orm_obj)
 
+    async def get_prompt_for_company(
+        self, prompt_id: str, company_id: str
+    ) -> TrackedPrompt | None:
+        """Get a prompt scoped to a company/workspace slug (tenant-safe)."""
+        orm_obj = await self._repo.get_by_id_for_company(prompt_id, company_id)
+        if orm_obj is None:
+            return None
+        return self._orm_to_pydantic(orm_obj)
+
     async def update_prompt(
         self, prompt_id: str, **kwargs: object
     ) -> TrackedPrompt:
@@ -154,6 +170,15 @@ class PromptLibraryService:
             raise ValueError(f"Prompt {prompt_id} not found")
         return self._orm_to_pydantic(orm_obj)
 
+    async def update_prompt_for_company(
+        self, prompt_id: str, company_id: str, **kwargs: object
+    ) -> TrackedPrompt:
+        """Update a prompt only when it belongs to the company/workspace."""
+        existing = await self._repo.get_by_id_for_company(prompt_id, company_id)
+        if existing is None:
+            raise ValueError(f"Prompt {prompt_id} not found")
+        return await self.update_prompt(prompt_id, **kwargs)
+
     async def delete_prompt(self, prompt_id: str) -> bool:
         """Delete a prompt by ID.
 
@@ -164,6 +189,13 @@ class PromptLibraryService:
             True if deleted, False if not found.
         """
         return await self._repo.delete(prompt_id)
+
+    async def delete_prompt_for_company(self, prompt_id: str, company_id: str) -> bool:
+        """Delete a prompt only when it belongs to the company/workspace."""
+        existing = await self._repo.get_by_id_for_company(prompt_id, company_id)
+        if existing is None:
+            return False
+        return await self.delete_prompt(prompt_id)
 
     async def toggle_prompt(
         self, prompt_id: str, active: bool
@@ -184,6 +216,15 @@ class PromptLibraryService:
         if orm_obj is None:
             raise ValueError(f"Prompt {prompt_id} not found")
         return self._orm_to_pydantic(orm_obj)
+
+    async def toggle_prompt_for_company(
+        self, prompt_id: str, company_id: str, active: bool
+    ) -> TrackedPrompt:
+        """Toggle active state only for prompts in the company/workspace."""
+        existing = await self._repo.get_by_id_for_company(prompt_id, company_id)
+        if existing is None:
+            raise ValueError(f"Prompt {prompt_id} not found")
+        return await self.toggle_prompt(prompt_id, active)
 
     # ── Import ────────────────────────────────────────────────────────
 
@@ -304,6 +345,147 @@ class PromptLibraryService:
         orm_objs = await self._repo.bulk_create(to_create)
         return [self._orm_to_pydantic(o) for o in orm_objs]
 
+    # ── Fanout query management ────────────────────────────────────────
+
+    async def list_fanout_queries(
+        self, parent_prompt_id: str
+    ) -> list[TrackedPrompt]:
+        """List active fanout children for a parent prompt.
+
+        Args:
+            parent_prompt_id: Parent prompt UUID string.
+
+        Returns:
+            List of fanout TrackedPrompt objects.
+        """
+        import uuid as _uuid
+
+        parent_uuid = _uuid.UUID(parent_prompt_id)
+        rows = await self._repo.list_by_parent(parent_uuid, active_only=True)
+        return [self._orm_to_pydantic(r) for r in rows]
+
+    async def create_fanout_queries(
+        self,
+        parent_prompt_id: str,
+        company_id: str,
+        queries: list[FanoutQuery],
+    ) -> list[TrackedPrompt]:
+        """Bulk-create fanout prompt rows from LLM-generated queries.
+
+        Each fanout is a ``tracked_prompts`` row with
+        ``source='fanout'``, ``parent_prompt_id`` set, and the intent
+        axis stored in ``fanout_axis``.
+
+        Args:
+            parent_prompt_id: Parent prompt UUID string.
+            company_id: Company identifier.
+            queries: List of FanoutQuery objects from the generator.
+
+        Returns:
+            List of created TrackedPrompt objects.
+        """
+        import uuid as _uuid
+
+        parent_uuid = _uuid.UUID(parent_prompt_id)
+        to_create: list[dict[str, object]] = []
+
+        for q in queries:
+            if not q.query_text.strip():
+                continue
+            # Skip duplicates within this company
+            if await self._repo.exists_by_text(company_id, q.query_text.strip()):
+                logger.debug("Fanout: skipping duplicate: %s", q.query_text[:60])
+                continue
+            to_create.append(
+                {
+                    "company_id": company_id,
+                    "text": q.query_text.strip(),
+                    "source": PromptSource.FANOUT.value,
+                    "source_metadata": {"reasoning": q.reasoning},
+                    "parent_prompt_id": parent_uuid,
+                    "fanout_axis": q.axis,
+                    "tags": [],
+                    "active": True,
+                    "pinned": False,
+                }
+            )
+
+        if not to_create:
+            return []
+
+        orm_objs = await self._repo.bulk_create(to_create)
+        logger.info(
+            "Created %d fanout queries for parent %s",
+            len(orm_objs),
+            parent_prompt_id,
+        )
+        return [self._orm_to_pydantic(o) for o in orm_objs]
+
+    async def regenerate_fanout_queries(
+        self,
+        parent_prompt_id: str,
+        company_id: str,
+        queries: list[FanoutQuery],
+    ) -> list[TrackedPrompt]:
+        """Delete non-pinned fanouts and create fresh ones.
+
+        Pinned fanouts are preserved through regeneration.
+
+        Args:
+            parent_prompt_id: Parent prompt UUID string.
+            company_id: Company identifier.
+            queries: New FanoutQuery objects from the generator.
+
+        Returns:
+            List of newly created TrackedPrompt objects.
+        """
+        import uuid as _uuid
+
+        parent_uuid = _uuid.UUID(parent_prompt_id)
+        deleted_count = await self._repo.delete_unpinned_fanouts(parent_uuid)
+        logger.info(
+            "Deleted %d unpinned fanouts for parent %s before regeneration",
+            deleted_count,
+            parent_prompt_id,
+        )
+        return await self.create_fanout_queries(
+            parent_prompt_id, company_id, queries
+        )
+
+    async def pin_fanout(self, fanout_id: str) -> TrackedPrompt:
+        """Pin a fanout query so it survives regeneration.
+
+        Args:
+            fanout_id: Fanout prompt UUID string.
+
+        Returns:
+            Updated TrackedPrompt.
+
+        Raises:
+            ValueError: If fanout not found.
+        """
+        orm_obj = await self._repo.update(fanout_id, pinned=True)
+        if orm_obj is None:
+            raise ValueError(f"Fanout {fanout_id} not found")
+        return self._orm_to_pydantic(orm_obj)
+
+    async def unpin_fanout(self, fanout_id: str) -> TrackedPrompt:
+        """Unpin a fanout query.
+
+        Args:
+            fanout_id: Fanout prompt UUID string.
+
+        Returns:
+            Updated TrackedPrompt.
+
+        Raises:
+            ValueError: If fanout not found.
+        """
+        orm_obj = await self._repo.update(fanout_id, pinned=False)
+        if orm_obj is None:
+            raise ValueError(f"Fanout {fanout_id} not found")
+        return self._orm_to_pydantic(orm_obj)
+
     # ── Private helpers ───────────────────────────────────────────────
 
     def _orm_to_pydantic(self, model: Any) -> TrackedPrompt:
@@ -325,6 +507,9 @@ class PromptLibraryService:
             source_metadata=model.source_metadata,
             active=model.active,
             platforms=model.platforms or [],
+            parent_prompt_id=str(model.parent_prompt_id) if getattr(model, "parent_prompt_id", None) else None,
+            fanout_axis=getattr(model, "fanout_axis", None),
+            pinned=getattr(model, "pinned", False),
             created_at=model.created_at,
             updated_at=model.updated_at,
         )

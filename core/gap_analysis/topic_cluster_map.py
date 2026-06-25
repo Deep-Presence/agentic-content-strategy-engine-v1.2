@@ -3,12 +3,8 @@
 Maps buyer_stage × intent_type → C1-C9 query clusters. Pure data module
 with zero LLM calls. Used by ``generate_queries_from_topics()`` in S2.
 
-The mapping table encodes:
-  - 6 valid cells (tofu×info, tofu×commercial, mofu×info, mofu×commercial,
-    bofu×commercial, bofu×transactional)
-  - 6 excluded cells (return None → skip query generation)
-
-Each valid cell specifies primary clusters (3-5 queries), secondary clusters
+All 12 buyer_stage × intent_type cells have cluster mappings.
+Each cell specifies primary clusters (3-5 queries), secondary clusters
 (1-2 queries), and a queries_range for per-topic budget.
 """
 from __future__ import annotations
@@ -128,17 +124,58 @@ _CLUSTER_MAP: Dict[Tuple[str, str], ClusterMapping] = {
         queries_range=(3, 5),
         brand_rule="brand_names_required_for_c8",
     ),
+    # Cell 7: TOFU × Transactional
+    # Early-stage buyer discovering solutions with purchase-ready intent
+    ("tofu", "transactional"): ClusterMapping(
+        primary=("C5", "C6"),
+        secondary=("C9",),
+        queries_range=(3, 5),
+        brand_rule="no_brand_names",
+    ),
+    # Cell 8: TOFU × Navigational
+    # Awareness-stage buyer searching for specific brands or products
+    ("tofu", "navigational"): ClusterMapping(
+        primary=("C5", "C8"),
+        secondary=("C6",),
+        queries_range=(3, 5),
+        brand_rule="brand_names_required_for_c8",
+    ),
+    # Cell 9: MOFU × Navigational
+    # Consideration-stage buyer researching specific brand offerings
+    ("mofu", "navigational"): ClusterMapping(
+        primary=("C8", "C3"),
+        secondary=("C4",),
+        queries_range=(3, 5),
+        brand_rule="brand_names_required_for_c8",
+    ),
+    # Cell 10: MOFU × Transactional
+    # Buyer evaluating with purchase intent — comparing before buying
+    ("mofu", "transactional"): ClusterMapping(
+        primary=("C9", "C4"),
+        secondary=("C7",),
+        queries_range=(4, 6),
+        brand_rule="no_brand_names",
+    ),
+    # Cell 11: BOFU × Informational
+    # Decision-stage buyer seeking deep technical understanding
+    ("bofu", "informational"): ClusterMapping(
+        primary=("C1", "C2"),
+        secondary=("C4",),
+        queries_range=(3, 5),
+        brand_rule="no_brand_names",
+    ),
+    # Cell 12: BOFU × Navigational
+    # Decision-stage buyer navigating to specific vendor pages
+    ("bofu", "navigational"): ClusterMapping(
+        primary=("C8", "C9"),
+        secondary=(),
+        queries_range=(3, 5),
+        brand_rule="brand_names_required_for_c8",
+    ),
 }
 
-# Excluded combinations — these produce no useful queries
-_EXCLUDED_COMBOS: Dict[Tuple[str, str], str] = {
-    ("tofu", "transactional"): "Awareness-stage buyers are not ready to transact",
-    ("tofu", "navigational"): "Awareness-stage buyers are not searching for specific brands",
-    ("mofu", "navigational"): "Consideration-stage navigational queries are too brand-specific",
-    ("mofu", "transactional"): "Consideration-stage buyers are evaluating, not purchasing",
-    ("bofu", "informational"): "Decision-stage buyers don't need basic educational content",
-    ("bofu", "navigational"): "Navigational queries have no content strategy value",
-}
+# No excluded combinations — all buyer_stage × intent_type combos are valid.
+_EXCLUDED_COMBOS: Dict[Tuple[str, str], str] = {}
 
 
 # ---------------------------------------------------------------------------

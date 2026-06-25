@@ -22,7 +22,6 @@ from core.services.json_gap_data import JsonGapDataService
 from core.services.json_kb_data import JsonKBDataService
 from core.services.json_persona_data import JsonPersonaDataService
 from core.services.json_site_audit_data import JsonSiteAuditDataService
-from core.services.json_topic_discovery_data import JsonTopicDiscoveryDataService
 from core.services.json_vsg_data import JsonVSGDataService
 from core.services.kb_data import KBDataServiceProtocol
 from core.services.persona_data import PersonaDataServiceProtocol
@@ -30,6 +29,7 @@ from core.services.site_audit_data import SiteAuditDataServiceProtocol
 from core.services.task_store import TaskStoreProtocol
 from core.services.topic_discovery_data import TopicDiscoveryDataServiceProtocol
 from core.services.vsg_data import VSGDataServiceProtocol
+from core.services.workspace_protocol import WorkspaceServiceProtocol
 
 _logger = logging.getLogger(__name__)
 
@@ -85,10 +85,21 @@ def _build_db_auth_service(request: Request, session: Any) -> AuthServiceProtoco
         from core.db.repositories.invite_repo import InviteRepository
         from core.db.repositories.pipeline_defaults_repo import PipelineDefaultsRepository
         from core.db.repositories.product_repo import ProductRepository
+        from core.db.repositories.workspace_repo import (
+            WorkspaceMembershipRepository,
+            WorkspaceRepository,
+        )
+        from core.services.workspace_service import WorkspaceService
 
         secret_key = getattr(request.app.state, "secret_key", None)
         if secret_key is None:
             return None
+        workspace_service = WorkspaceService(
+            workspace_repo=WorkspaceRepository(session),
+            membership_repo=WorkspaceMembershipRepository(session),
+            company_repo=CompanyRepository(session),
+            auth_repo=AuthRepository(session),
+        )
         return DbAuthService(
             company_repo=CompanyRepository(session),
             auth_repo=AuthRepository(session),
@@ -96,6 +107,7 @@ def _build_db_auth_service(request: Request, session: Any) -> AuthServiceProtoco
             product_repo=ProductRepository(session),
             defaults_repo=PipelineDefaultsRepository(session),
             secret_key=secret_key,
+            workspace_service=workspace_service,
         )
     except Exception:
         _logger.debug("Failed to build DbAuthService", exc_info=True)
@@ -130,6 +142,100 @@ async def get_auth_service(
                 "Failed to construct DbAuthService — check DATABASE_URL and secret_key."
             )
         yield db_service
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+
+
+def _build_db_workspace_service(request: Request, session: Any) -> WorkspaceServiceProtocol | None:
+    try:
+        from core.db.repositories.auth_repo import AuthRepository
+        from core.db.repositories.company_repo import CompanyRepository
+        from core.db.repositories.workspace_repo import (
+            WorkspaceMembershipRepository,
+            WorkspaceRepository,
+        )
+        from core.services.workspace_service import WorkspaceService
+
+        return WorkspaceService(
+            workspace_repo=WorkspaceRepository(session),
+            membership_repo=WorkspaceMembershipRepository(session),
+            company_repo=CompanyRepository(session),
+            auth_repo=AuthRepository(session),
+        )
+    except Exception:
+        _logger.debug("Failed to build WorkspaceService", exc_info=True)
+        return None
+
+
+async def get_workspace_service(
+    request: Request,
+) -> AsyncGenerator[WorkspaceServiceProtocol, None]:
+    """Return the workspace service with proper DB session lifecycle."""
+    service = getattr(request.app.state, "workspace_service", None)
+    if service is not None:
+        yield service
+        return
+
+    sf = getattr(request.app.state, "db_session_factory", None)
+    if sf is None:
+        raise RuntimeError(
+            "DATABASE_URL is required for workspace service. "
+            "Set it in your environment or .env file."
+        )
+    session = sf()
+    try:
+        db_service = _build_db_workspace_service(request, session)
+        if db_service is None:
+            raise RuntimeError(
+                "Failed to construct WorkspaceService — check DATABASE_URL."
+            )
+        yield db_service
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+
+
+async def get_model_config_service(
+    request: Request,
+) -> AsyncGenerator[Any, None]:
+    """Return the BYOK model config service with proper DB session lifecycle."""
+    service = getattr(request.app.state, "model_config_service", None)
+    if service is not None:
+        yield service
+        return
+
+    sf = getattr(request.app.state, "db_session_factory", None)
+    if sf is None:
+        raise RuntimeError(
+            "DATABASE_URL is required for model configuration service."
+        )
+
+    from core.config.settings import settings
+    from core.db.repositories.cost_repo import CostEventRepository
+    from core.db.repositories.model_config_repo import (
+        WorkspaceAgentModelConfigRepository,
+        WorkspaceLLMCredentialRepository,
+    )
+    from core.model_config.credentials import resolve_fernet_key
+    from core.model_config.service import ModelConfigService
+
+    session = sf()
+    try:
+        _ = settings.credential_fernet_key or settings.cms_fernet_key
+        service = ModelConfigService(
+            credential_repo=WorkspaceLLMCredentialRepository(session),
+            config_repo=WorkspaceAgentModelConfigRepository(session),
+            cost_repo=CostEventRepository(session),
+            fernet_key=resolve_fernet_key(),
+        )
+        yield service
         await session.commit()
     except Exception:
         await session.rollback()
@@ -596,11 +702,9 @@ def _build_db_td_data_service(request: Request, session: Any) -> TopicDiscoveryD
             td_repo=TopicDiscoveryRepository(session),
             taxonomy_repo=TaxonomyTreeRepository(session),
             assignment_repo=TopicAssignmentRepository(session),
-            artifacts_root=request.app.state.artifacts_root,
             node_repo=SubdomainNodeRepository(session),
             source_result_repo=SourceResultRepository(session),
             persona_affinity_repo=PersonaAffinityRepository(session),
-            backend=getattr(request.app.state, "storage_backend", None),
         )
     except Exception:
         _logger.debug("Failed to build DbTopicDiscoveryDataService", exc_info=True)
@@ -612,37 +716,38 @@ async def get_td_data_service(
 ) -> AsyncGenerator[TopicDiscoveryDataServiceProtocol, None]:
     """Return the TD data service with proper DB session lifecycle.
 
-    Priority: pre-built override → DbTopicDiscoveryDataService (DATABASE_URL) →
-    JsonTopicDiscoveryDataService.
+    Priority: pre-built override → DbTopicDiscoveryDataService (DATABASE_URL).
+    Raises 503 when database is unavailable (no JSON fallback).
     """
     service = getattr(request.app.state, "td_data_service", None)
     if service is not None:
         yield service
         return
     sf = getattr(request.app.state, "db_session_factory", None)
-    if sf is not None:
-        session = sf()
-        try:
-            db_service = _build_db_td_data_service(request, session)
-            if db_service is not None:
-                yield db_service
-                await session.commit()
-            else:
-                await session.close()
-                yield JsonTopicDiscoveryDataService(
-                    artifacts_root=request.app.state.artifacts_root,
-                    backend=getattr(request.app.state, "storage_backend", None),
-                )
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
-        return
-    yield JsonTopicDiscoveryDataService(
-        artifacts_root=request.app.state.artifacts_root,
-        backend=getattr(request.app.state, "storage_backend", None),
-    )
+    if sf is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Topic discovery data service unavailable (requires DATABASE_URL)",
+        )
+    session = sf()
+    try:
+        db_service = _build_db_td_data_service(request, session)
+        if db_service is not None:
+            yield db_service
+            await session.commit()
+        else:
+            raise HTTPException(
+                status_code=503,
+                detail="Failed to construct topic discovery data service",
+            )
+    except HTTPException:
+        await session.close()
+        raise
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
 
 
 # ── Daily Tracker dependencies ───────────────────────────────────────
@@ -799,21 +904,25 @@ class _DbResponseDataProvider:
     async def get_responses_for_company(
         self, company_id: str, *, days: int | None = None,
     ) -> list[dict[str, Any]]:
-        """Fetch responses for a company's recent runs."""
-        runs = await self._run_repo.list_runs(company_id, limit=100)
-        all_responses: list[dict[str, Any]] = []
-        for run in runs:
-            rows = await self._response_repo.get_responses_by_run(run.id)
-            all_responses.extend(self._row_to_dict(r) for r in rows)
-        return all_responses
+        """Fetch responses for a company, optionally limited to N days.
+
+        Uses a single JOIN query instead of N+1 (one per run).
+        """
+        rows = await self._response_repo.get_responses_by_company(
+            company_id, days=days,
+        )
+        return [self._row_to_dict(r) for r in rows]
 
     @staticmethod
     def _row_to_dict(row: Any) -> dict[str, Any]:
         """Convert an ORM DailyRunResponseModel to a response dict."""
         return {
             "prompt_id": str(row.prompt_id),
+            "parent_prompt_id": str(row.parent_prompt_id) if row.parent_prompt_id else None,
+            "run_id": str(row.run_id),
             "engine": row.engine,
             "response_text": row.response_text,
+            "timestamp": row.created_at.isoformat() if row.created_at else None,
             "mention_analysis": {
                 "brand_mentioned": row.brand_mentioned,
                 "brand_mention_count": row.brand_mention_count,
@@ -865,8 +974,32 @@ async def get_cms_service(
             CMSPublishRecordRepository,
             CMSSyncedPostRepository,
         )
+        from core.db.repositories.company_repo import CompanyRepository
+        from core.db.repositories.content_inventory_repo import (
+            ContentInventoryRepository,
+        )
+        from core.db.repositories.content_inventory_prompt_repo import (
+            ContentInventoryPromptRepository,
+        )
         from core.db.repositories.content_repo import ContentRepository
+        from core.db.repositories.daily_tracker_repo import (
+            TrackedPromptRepository,
+        )
+        from core.daily_tracker.content_to_prompt import ContentToPromptService
+        from core.daily_tracker.content_to_prompt_orchestrator import (
+            ContentToPromptOrchestrator,
+        )
         from core.services.cms_service import CMSService
+        from core.services.content_inventory_service import ContentInventoryService
+
+        inventory_repo = ContentInventoryRepository(session)
+        inventory_svc = ContentInventoryService(inventory_repo=inventory_repo)
+        prompt_orchestrator = ContentToPromptOrchestrator(
+            generator=ContentToPromptService(),
+            prompt_repo=TrackedPromptRepository(session),
+            link_repo=ContentInventoryPromptRepository(session),
+            inventory_repo=inventory_repo,
+        )
 
         svc = CMSService(
             connection_repo=CMSConnectionRepository(session),
@@ -875,6 +1008,182 @@ async def get_cms_service(
             storage=get_storage_backend(request),
             fernet_key=settings.cms_fernet_key,
             content_repo=ContentRepository(session),
+            inventory_service=inventory_svc,
+            company_repo=CompanyRepository(session),
+            content_to_prompt_orchestrator=prompt_orchestrator,
+            webflow_oauth_client_id=settings.webflow_oauth_client_id,
+            webflow_oauth_client_secret=settings.webflow_oauth_client_secret,
+            webflow_oauth_redirect_uri=settings.webflow_oauth_redirect_uri,
+            webflow_oauth_frontend_settings_url=settings.webflow_oauth_frontend_settings_url,
+            webflow_webhook_public_url=settings.webflow_webhook_public_url,
+        )
+        yield svc
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+
+
+# ── GA4 Analytics Service ─────────────────────────────────────────────
+
+
+async def get_ga4_analytics_service(
+    request: Request,
+) -> AsyncGenerator[Any, None]:
+    """Return the GA4AnalyticsService with proper DB session lifecycle.
+
+    GA4 requires DB (encrypted OAuth tokens in Postgres).
+    No JSON fallback — raises 503 if DATABASE_URL or fernet key not set.
+    Tests bypass DI via ``app.state.ga4_analytics_service`` pre-built override.
+    """
+    # 1. Pre-built override (tests set app.state.ga4_analytics_service)
+    service = getattr(request.app.state, "ga4_analytics_service", None)
+    if service is not None:
+        yield service
+        return
+
+    # 2. Require DB
+    sf = getattr(request.app.state, "db_session_factory", None)
+    if sf is None:
+        raise HTTPException(
+            status_code=503,
+            detail="GA4 analytics requires database — set DATABASE_URL",
+        )
+
+    from core.config.settings import settings
+
+    fernet_key = settings.cms_fernet_key
+    if not fernet_key:
+        raise HTTPException(
+            status_code=503,
+            detail="GA4 analytics requires CMS_FERNET_KEY to be set",
+        )
+
+    session = sf()
+    try:
+        from core.analytics.service import GA4AnalyticsService
+        from core.db.repositories.analytics_repo import (
+            AnalyticsConnectionRepository,
+            GA4ConversionEventRepository,
+            GA4TrafficDataRepository,
+        )
+
+        svc = GA4AnalyticsService(
+            connection_repo=AnalyticsConnectionRepository(session),
+            traffic_repo=GA4TrafficDataRepository(session),
+            conversion_repo=GA4ConversionEventRepository(session),
+            fernet_key=fernet_key,
+            client_id=settings.google_oauth_client_id or "",
+            client_secret=settings.google_oauth_client_secret or "",
+            redirect_uri=settings.google_oauth_redirect_uri,
+            ai_referral_sources=settings.ai_referral_sources,
+            lookback_days=settings.ga4_sync_lookback_days,
+        )
+        yield svc
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+
+
+# ── Content Inventory Service ─────────────────────────────────────────
+
+
+async def get_content_inventory_service(
+    request: Request,
+) -> AsyncGenerator[Any, None]:
+    """Return the Content Inventory service with proper DB session lifecycle.
+
+    Content Inventory requires DB (all data in Postgres + pgvector).
+    No JSON fallback — raises 503 if DATABASE_URL not set.
+    Tests bypass DI via ``app.state.content_inventory_service`` override.
+    """
+    # 1. Pre-built override (tests set app.state.content_inventory_service)
+    service = getattr(request.app.state, "content_inventory_service", None)
+    if service is not None:
+        yield service
+        return
+
+    # 2. Require DB
+    sf = getattr(request.app.state, "db_session_factory", None)
+    if sf is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Content Inventory requires database — set DATABASE_URL",
+        )
+
+    session = sf()
+    try:
+        from core.db.repositories.content_inventory_repo import (
+            ContentInventoryRepository,
+        )
+        from core.services.content_inventory_service import ContentInventoryService
+
+        svc = ContentInventoryService(
+            inventory_repo=ContentInventoryRepository(session),
+        )
+        yield svc
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+
+
+# ── Content Performance Service ──────────────────────────────────────
+
+
+async def get_content_performance_service(
+    request: Request,
+) -> AsyncGenerator[Any, None]:
+    """Return the Content Performance service with proper DB session lifecycle.
+
+    Joins content_inventory + ga4_traffic_data for per-page analytics.
+    DB-only (both tables in Postgres) — raises 503 if DATABASE_URL not set.
+    Tests bypass DI via ``app.state.content_performance_service`` override.
+    """
+    # 1. Pre-built override (tests set app.state.content_performance_service)
+    service = getattr(request.app.state, "content_performance_service", None)
+    if service is not None:
+        yield service
+        return
+
+    # 2. Require DB
+    sf = getattr(request.app.state, "db_session_factory", None)
+    if sf is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Content performance requires database — set DATABASE_URL",
+        )
+
+    session = sf()
+    try:
+        from core.db.repositories.analytics_repo import (
+            AnalyticsConnectionRepository,
+            GA4TrafficDataRepository,
+        )
+        from core.db.repositories.content_inventory_prompt_repo import (
+            ContentInventoryPromptRepository,
+        )
+        from core.db.repositories.content_inventory_repo import (
+            ContentInventoryRepository,
+        )
+        from core.db.repositories.gap_analysis_repo import GapAnalysisRepository
+        from core.services.content_performance_service import (
+            ContentPerformanceService,
+        )
+
+        svc = ContentPerformanceService(
+            traffic_repo=GA4TrafficDataRepository(session),
+            inventory_repo=ContentInventoryRepository(session),
+            connection_repo=AnalyticsConnectionRepository(session),
+            ci_prompt_repo=ContentInventoryPromptRepository(session),
+            gap_repo=GapAnalysisRepository(session),
         )
         yield svc
         await session.commit()

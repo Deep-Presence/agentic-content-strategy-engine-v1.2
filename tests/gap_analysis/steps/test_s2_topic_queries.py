@@ -472,7 +472,7 @@ class TestGenerateQueriesFromTopics:
         with patch(
             "core.gap_analysis.steps.s2_generate_queries._call_openai",
             new_callable=AsyncMock,
-            return_value=llm_response,
+            return_value=(llm_response, (100, 50)),
         ), patch(
             "core.gap_analysis.steps.s2_generate_queries.async_embed_texts",
             new_callable=AsyncMock,
@@ -525,7 +525,7 @@ class TestGenerateQueriesFromTopics:
                         "query_text": f"What is AP automation? variant {call_count}",
                     },
                 ]
-            })
+            }), (100, 50)
 
         # Make embeddings similar enough for dedup
         mock_embs = [[1.0, 0.0], [0.99, 0.01]]
@@ -580,7 +580,7 @@ class TestGenerateQueriesFromTopics:
                         "query_text": "AP automation vs manual processing",
                     },
                 ]
-            })
+            }), (100, 50)
 
         mock_embs = [[1.0, 0.0]]
 
@@ -616,7 +616,7 @@ class TestGenerateQueriesFromTopics:
 
         async def capture_llm(prompt, model):
             captured_prompts.append(prompt)
-            return json.dumps({"queries": []})
+            return json.dumps({"queries": []}), (0, 0)
 
         with patch(
             "core.gap_analysis.steps.s2_generate_queries._call_openai",

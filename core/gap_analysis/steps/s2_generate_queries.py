@@ -20,7 +20,6 @@ from core.gap_analysis.topic_cluster_map import (
     CLUSTER_INTENT_PATTERNS,
     get_cluster_brand_policy,
     get_cluster_mapping,
-    is_excluded_combo,
 )
 from core.shared_tools.async_embedding_client import async_embed_texts
 from core.shared_tools.tracing import log_generation
@@ -161,7 +160,35 @@ def _repair_truncated_json(raw: str) -> str:
     return raw
 
 
-async def _call_openai(prompt: str, model: str) -> str:
+async def _call_openai(
+    prompt: str,
+    model: str,
+    *,
+    workspace_id: str = "",
+    workspace_slug: str = "",
+    company_slug: str = "",
+    pipeline_step: str = "s2_query_generation",
+) -> tuple[str, tuple[int, int]]:
+    """Call the query-generation LLM and return ``(text, (prompt_tokens, completion_tokens))``."""
+    if workspace_id:
+        from core.content_engine.llm_client import llm_call_for_agent
+
+        response = await llm_call_for_agent(
+            workspace_id=workspace_id,
+            workspace_slug=workspace_slug or company_slug,
+            agent_key="gap.query_generation",
+            system="You generate B2B search queries and return valid JSON only.",
+            user=prompt,
+            max_tokens=16384,
+            metadata={
+                "pipeline": "gap_analysis",
+                "pipeline_step": pipeline_step,
+                "company_slug": company_slug or workspace_slug,
+            },
+        )
+        return response.content, (response.input_tokens, response.output_tokens)
+
+    # Legacy no-workspace path: native OpenAI Responses API.
     api_key = settings.openai_api_key
     if not api_key:
         raise RuntimeError(
@@ -174,7 +201,32 @@ async def _call_openai(prompt: str, model: str) -> str:
         reasoning={"effort": "medium"},
         max_output_tokens=16384,
     )
-    return getattr(response, "output_text", None) or ""
+    from core.shared_tools.cost_tracker import extract_usage_openai_responses
+
+    text = getattr(response, "output_text", None) or ""
+    usage = extract_usage_openai_responses(response)
+    return text, usage
+
+
+async def _call_query_generation_llm(
+    prompt: str,
+    model: str,
+    *,
+    workspace_id: str = "",
+    workspace_slug: str = "",
+    company_slug: str = "",
+    pipeline_step: str,
+) -> tuple[str, tuple[int, int]]:
+    if workspace_id:
+        return await _call_openai(
+            prompt,
+            model,
+            workspace_id=workspace_id,
+            workspace_slug=workspace_slug,
+            company_slug=company_slug,
+            pipeline_step=pipeline_step,
+        )
+    return await _call_openai(prompt, model)
 
 
 # ---------------------------------------------------------------------------
@@ -440,6 +492,9 @@ async def _validate_coverage(
     model: str,
     *,
     trace_span: Optional[Any] = None,
+    company_slug: str = "",
+    workspace_id: str = "",
+    workspace_slug: str = "",
 ) -> List[GeneratedQuery]:
     """Ensure balanced cluster distribution; generate fill-ins for underrepresented clusters."""
     if not queries or not clusters:
@@ -509,13 +564,31 @@ Context:
 
     try:
         t0 = time.monotonic()
-        response_text = await _call_openai(fill_prompt, model)
+        response_text, _usage_tup = await _call_query_generation_llm(
+            fill_prompt,
+            model,
+            workspace_id=workspace_id,
+            workspace_slug=workspace_slug,
+            company_slug=company_slug,
+            pipeline_step="s2_query_gen_fillin",
+        )
         elapsed = time.monotonic() - t0
         logger.info("S2 fill-in LLM call: model=%s, elapsed=%.1fs", model, elapsed)
+        if not workspace_id:
+            from core.shared_tools.cost_tracker import track_llm_cost
+
+            track_llm_cost(
+                model=model, provider="openai", pipeline="gap_analysis",
+                pipeline_step="s2_query_gen_fillin", prompt_tokens=_usage_tup[0],
+                completion_tokens=_usage_tup[1],
+                company_slug=company_slug,
+                call_site="core.gap_analysis.steps.s2_generate_queries",
+            )
         if trace_span:
-            log_generation(trace_span, "s2-fill-in-generation", model, fill_prompt[:500], response_text[:500], usage=None,
-                           metadata={"pipeline": "gap_analysis", "pipeline_step": "s2_query_gen_fillin", "provider": "openai", "model": model,
-                                     "company_slug": getattr(input_data, "company_slug", "") or ""})
+            log_generation(trace_span, "s2-fill-in-generation", model, fill_prompt[:500], response_text[:500],
+                           usage={"prompt_tokens": _usage_tup[0], "completion_tokens": _usage_tup[1]},
+                           metadata={"pipeline": "gap_analysis", "pipeline_step": "s2_query_gen_fillin", "provider": "openrouter" if workspace_id else "openai", "model": model,
+                                     "company_slug": company_slug})
         payload = _extract_json(response_text)
         raw_fill = payload.get("queries", [])
         start_idx = len(queries) + 1
@@ -577,13 +650,34 @@ async def generate_queries(
     )
 
     t0 = time.monotonic()
-    response_text = await _call_openai(prompt, model_name)
+    workspace_id = getattr(input_data, "workspace_id", "") or ""
+    workspace_slug = getattr(input_data, "workspace_slug", "") or ""
+    company_slug = getattr(input_data, "company_slug", "") or ""
+    response_text, _usage_tup = await _call_query_generation_llm(
+        prompt,
+        model_name,
+        workspace_id=workspace_id,
+        workspace_slug=workspace_slug,
+        company_slug=company_slug,
+        pipeline_step="s2_query_gen_seed",
+    )
     elapsed = time.monotonic() - t0
     logger.info("S2 seed LLM call: model=%s, elapsed=%.1fs", model_name, elapsed)
+    if not workspace_id:
+        from core.shared_tools.cost_tracker import track_llm_cost
+
+        track_llm_cost(
+            model=model_name, provider="openai", pipeline="gap_analysis",
+            pipeline_step="s2_query_gen_seed", prompt_tokens=_usage_tup[0],
+            completion_tokens=_usage_tup[1],
+            company_slug=company_slug,
+            call_site="core.gap_analysis.steps.s2_generate_queries",
+        )
     if trace_span:
-        log_generation(trace_span, "s2-seed-generation", model_name, prompt[:500], response_text[:500], usage=None,
-                       metadata={"pipeline": "gap_analysis", "pipeline_step": "s2_query_gen_seed", "provider": "openai", "model": model_name,
-                                 "company_slug": getattr(input_data, "company_slug", "") or ""})
+        log_generation(trace_span, "s2-seed-generation", model_name, prompt[:500], response_text[:500],
+                       usage={"prompt_tokens": _usage_tup[0], "completion_tokens": _usage_tup[1]},
+                       metadata={"pipeline": "gap_analysis", "pipeline_step": "s2_query_gen_seed", "provider": "openrouter" if workspace_id else "openai", "model": model_name,
+                                 "company_slug": company_slug})
     payload = _extract_json(response_text)
     raw_queries = payload.get("queries", [])
 
@@ -614,6 +708,9 @@ async def generate_queries(
         persona_context=persona_context,
         model=model_name,
         trace_span=trace_span,
+        company_slug=company_slug,
+        workspace_id=workspace_id,
+        workspace_slug=workspace_slug,
     )
 
     # Re-assign sequential query IDs
@@ -846,6 +943,8 @@ async def generate_queries_from_topics(
     *,
     trace_span: Optional[Any] = None,
     company_slug: str = "",
+    workspace_id: str = "",
+    workspace_slug: str = "",
     storage: Optional[Any] = None,
 ) -> List[GeneratedQuery]:
     """Generate queries from approved TopicAssignments (TD → GA bridge).
@@ -885,13 +984,6 @@ async def generate_queries_from_topics(
         stage = topic.buyer_stage.value
         intent = topic.intent_type.value
 
-        if is_excluded_combo(stage, intent):
-            logger.info(
-                "Skipping excluded combo %s × %s for topic '%s'",
-                stage, intent, topic.topic_text[:50],
-            )
-            continue
-
         mapping = get_cluster_mapping(stage, intent)
         if mapping is None:
             continue
@@ -910,15 +1002,32 @@ async def generate_queries_from_topics(
 
         try:
             t0 = time.monotonic()
-            response_text = await _call_openai(prompt, model_name)
+            response_text, _usage_tup = await _call_query_generation_llm(
+                prompt,
+                model_name,
+                workspace_id=workspace_id,
+                workspace_slug=workspace_slug,
+                company_slug=company_slug,
+                pipeline_step="s2_query_gen_topic",
+            )
             elapsed = time.monotonic() - t0
             logger.info(
                 "S2 topic-scoped LLM call: model=%s, topic='%s', elapsed=%.1fs",
                 model_name, topic.topic_text[:50], elapsed,
             )
+            if not workspace_id:
+                from core.shared_tools.cost_tracker import track_llm_cost
+
+                track_llm_cost(
+                    model=model_name, provider="openai", pipeline="gap_analysis",
+                    pipeline_step="s2_query_gen_topic", prompt_tokens=_usage_tup[0],
+                    completion_tokens=_usage_tup[1], company_slug=company_slug,
+                    call_site="core.gap_analysis.steps.s2_generate_queries",
+                )
             if trace_span:
-                log_generation(trace_span, "s2-topic-scoped-generation", model_name, prompt[:500], response_text[:500], usage=None,
-                               metadata={"pipeline": "gap_analysis", "pipeline_step": "s2_query_gen_topic", "provider": "openai", "model": model_name,
+                log_generation(trace_span, "s2-topic-scoped-generation", model_name, prompt[:500], response_text[:500],
+                               usage={"prompt_tokens": _usage_tup[0], "completion_tokens": _usage_tup[1]},
+                               metadata={"pipeline": "gap_analysis", "pipeline_step": "s2_query_gen_topic", "provider": "openrouter" if workspace_id else "openai", "model": model_name,
                                          "company_slug": company_slug})
             payload = _extract_json(response_text)
             raw_queries = payload.get("queries", [])

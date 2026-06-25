@@ -41,6 +41,14 @@ dependencies = [
     "markdown>=3.5.0",
     # Structured logging (Layer 1 — JSON output + contextvars propagation)
     "structlog>=24.1",
+    # Google Analytics (GA4) — OAuth + Admin API + Data API
+    "google-analytics-data>=0.18.0",
+    "google-analytics-admin>=0.22.0",
+    "google-auth>=2.20.0",
+    "google-auth-oauthlib>=1.2.0",
+    "google-auth-httplib2>=0.2.0",
+    # Robust JSON repair for malformed LLM output
+    "json-repair>=0.39",
 ]
 
 [project.optional-dependencies]

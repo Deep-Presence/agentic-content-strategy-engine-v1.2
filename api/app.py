@@ -26,7 +26,7 @@ from api.exceptions import (
 from api.tasks.exceptions import ApprovalDeliveryError
 from api.auth.middleware import AuthMiddleware
 from api.auth.store import AuthStore
-from api.routers import artifacts, audience_persona, auth, brand_data, cms, companies, content, content_data, content_v13, cps, daily_tracker, events, gap_analysis, gap_data, health, knowledge_base, knowledge_docs, onboarding, research_orchestrator, settings, site_audit as site_audit_router, tasks, topic_discovery, voice_style_guide
+from api.routers import analytics, artifacts, audience_persona, auth, brand_data, cms, companies, company_stream, content, content_data, content_inventory, content_performance, content_to_prompt, content_v13, cps, daily_tracker, events, gap_analysis, gap_data, health, knowledge_base, knowledge_docs, model_config, onboarding, research_orchestrator, settings, site_audit as site_audit_router, tasks, topic_discovery, voice_style_guide, workspaces
 from api.tasks.exceptions import TaskConflictError, TaskNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -79,6 +79,9 @@ async def _init_task_store(app: FastAPI):
     db_store = DbTaskStore(
         session_factory=session_factory,
         max_concurrent=api_settings.max_concurrent_pipelines,
+        max_concurrent_content_engine_per_company=(
+            api_settings.max_concurrent_content_engine_per_company
+        ),
         redis_client=redis_sync,
         worker_id=_generate_worker_id(),
     )
@@ -87,6 +90,40 @@ async def _init_task_store(app: FastAPI):
         "Using DbTaskStore (recovered %d orphans)", orphan_count
     )
     return db_store
+
+
+async def _recover_td_entry_scheduler(app: FastAPI) -> None:
+    task_store = getattr(app.state, "task_store", None)
+    session_factory = getattr(app.state, "db_session_factory", None)
+    event_bus = getattr(app.state, "event_bus", None)
+    if task_store is None or session_factory is None or event_bus is None:
+        return
+
+    from api.tasks.runner import dispatch_queued_td_content_runs
+    from core.services.content_engine_topic_runs import ContentEngineTopicRunService
+
+    service = ContentEngineTopicRunService(session_factory)
+    tasks = task_store.list_tasks()
+    recovery = await service.reconcile_startup_scheduler(
+        task_by_id={task.task_id: task for task in tasks},
+    )
+
+    for company_slug in recovery.companies_to_dispatch:
+        await dispatch_queued_td_content_runs(
+            company_slug=company_slug,
+            task_store=task_store,
+            event_bus=event_bus,
+            session_factory=session_factory,
+        )
+
+    logger.info(
+        "TD scheduler recovery completed: queued_ready=%d requeued=%d waiting_human_restored=%d stale_task_ids_cleared=%d companies_dispatched=%d",
+        recovery.queued_ready_count,
+        recovery.requeued_count,
+        recovery.waiting_human_restored_count,
+        recovery.stale_task_ids_cleared_count,
+        len(recovery.companies_to_dispatch),
+    )
 
 
 @asynccontextmanager
@@ -136,6 +173,19 @@ async def lifespan(app: FastAPI):
             loop=asyncio.get_running_loop(),
         )
         logger.info("Using RedisEventBus (Redis Streams)")
+
+    redis_client = getattr(app.state, "redis", None)
+    if redis_client is None or not getattr(app.state, "redis_healthy", False):
+        raise RuntimeError(
+            "REDIS_URL is required and Redis must be healthy for company event streaming."
+        )
+    from core.events.company_event_bus import company_event_bus
+
+    company_event_bus.configure(
+        redis=redis_client,
+        loop=asyncio.get_running_loop(),
+    )
+    logger.info("Using CompanyEventBus (Redis Streams)")
 
     # Only set defaults if not already overridden (e.g., by tests)
     if not hasattr(app.state, "task_store") or app.state.task_store is None:
@@ -212,6 +262,11 @@ async def lifespan(app: FastAPI):
             logger.exception("DB health check failed — DB may be unreachable")
     else:
         logger.info("DB health check: skipped (no DATABASE_URL)")
+
+    try:
+        await _recover_td_entry_scheduler(app)
+    except Exception:
+        logger.exception("TD scheduler startup recovery failed")
 
     logger.info(
         "API started — task store: %s", type(app.state.task_store).__name__
@@ -325,6 +380,8 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(auth.router)
     app.include_router(companies.router)
+    app.include_router(workspaces.router)
+    app.include_router(model_config.router)
     app.include_router(gap_analysis.router)
     app.include_router(gap_data.router)
     app.include_router(events.router)
@@ -345,6 +402,11 @@ def create_app() -> FastAPI:
     app.include_router(site_audit_router.router)
     app.include_router(daily_tracker.router)
     app.include_router(cms.router)
+    app.include_router(analytics.router)
+    app.include_router(content_inventory.router)
+    app.include_router(content_performance.router)
+    app.include_router(content_to_prompt.router)
     app.include_router(tasks.router)
+    app.include_router(company_stream.router)
 
     return app

@@ -47,6 +47,17 @@ class TestDbTaskStoreCRUD:
         assert task.product_slug == "widget"
 
     @pytest.mark.asyncio
+    async def test_create_task_with_workspace_id(self, store):
+        with patch(_PATCH_TARGET, return_value=MagicMock()):
+            task = store.create_task(
+                "gap_analysis",
+                "second-co",
+                workspace_id="11111111-1111-1111-1111-111111111111",
+            )
+        assert task.company_slug == "second-co"
+        assert task.workspace_id == "11111111-1111-1111-1111-111111111111"
+
+    @pytest.mark.asyncio
     async def test_get_task(self, store):
         with patch(_PATCH_TARGET, return_value=MagicMock()):
             task = store.create_task("research", "test-co")

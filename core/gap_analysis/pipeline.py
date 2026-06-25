@@ -9,7 +9,7 @@ import time
 import uuid
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -238,6 +238,7 @@ async def run_gap_analysis(
     run_id: Optional[uuid.UUID] = None,
     company_id: Optional[uuid.UUID] = None,
     trace_parent: Optional[object] = None,
+    langsmith_project: Optional[str] = None,
 ) -> GapReport:
     skip_steps = skip_steps or []
     slug = _company_slug(input_data)
@@ -268,7 +269,7 @@ async def run_gap_analysis(
                 "max_queries": input_data.max_queries,
                 "skip_steps": skip_steps,
             },
-            project_name=_settings.gap_analysis_langsmith_project,
+            project_name=langsmith_project or _settings.gap_analysis_langsmith_project,
         )
 
     # Fast/demo mode: cap queries and use only fastest engines
@@ -387,7 +388,14 @@ async def run_gap_analysis(
                         ]
                         platform_results.extend(items)
                 else:
-                    platform_results = await search_platforms(queries, input_data.platforms, trace_span=s3_span)
+                    platform_results = await search_platforms(
+                        queries,
+                        input_data.platforms,
+                        trace_span=s3_span,
+                        workspace_id=input_data.workspace_id,
+                        workspace_slug=input_data.workspace_slug,
+                        company_slug=slug,
+                    )
                     save_platform_results(platform_results, storage, f"{ga_prefix}/platform_results")
                 logger.info("Step 3 completed: search_platforms (%.1fs)", time.monotonic() - s3_start)
 
@@ -587,7 +595,15 @@ async def run_gap_analysis(
                         else visualization_paths,
                     )
                 else:
-                    report = await generate_gap_report(analysis, queries, enriched, trace_span=s8_span, company_slug=slug)
+                    report = await generate_gap_report(
+                        analysis,
+                        queries,
+                        enriched,
+                        trace_span=s8_span,
+                        company_slug=slug,
+                        workspace_id=input_data.workspace_id,
+                        workspace_slug=input_data.workspace_slug,
+                    )
                     report.visualization_paths = list(visualization_paths.values())
                     save_report(report, storage, ga_prefix, analysis=analysis)
                 s8_elapsed = time.monotonic() - step_start
@@ -632,6 +648,8 @@ async def run_topic_scoped_gap_analysis(
     session_factory: Optional[async_sessionmaker] = None,
     run_id: Optional[uuid.UUID] = None,
     company_id: Optional[uuid.UUID] = None,
+    event_bus: Optional[Any] = None,
+    task_id: Optional[str] = None,
 ) -> tuple[GapReport, Dict[str, List[str]]]:
     """Run a topic-scoped gap analysis for TD-approved TopicAssignments.
 
@@ -662,7 +680,16 @@ async def run_topic_scoped_gap_analysis(
     # Auto-resolve persona paths
     _resolve_persona_paths(base_input, slug, storage=storage)
 
+    # SSE emit helper — best-effort, never fails the pipeline
+    def _ga_emit(event_type: str, data: Dict[str, Any]) -> None:
+        if event_bus is not None and task_id is not None:
+            try:
+                event_bus.publish(task_id, event_type, data)
+            except Exception:
+                pass  # SSE failure must not crash GA
+
     # ── S1: Reuse cached company embeddings ──
+    _ga_emit("ga_step_start", {"step": "s1", "name": "Embed Company Assets", "step_num": 1, "total_steps": 8})
     with scoped_bind(step_name="s1_embed_company_assets"):
         s1_start = time.monotonic()
         cache_slug = existing_ga_slug or slug
@@ -696,8 +723,10 @@ async def run_topic_scoped_gap_analysis(
                 pass
         s1_elapsed = time.monotonic() - s1_start
         logger.info("S1 completed (%.1fs)", s1_elapsed)
+        _ga_emit("ga_step_complete", {"step": "s1", "step_num": 1, "total_steps": 8, "elapsed_s": round(s1_elapsed, 1)})
 
     # ── S2: Topic-scoped query generation ──
+    _ga_emit("ga_step_start", {"step": "s2", "name": "Generate Queries", "step_num": 2, "total_steps": 8})
     with scoped_bind(step_name="s2_generate_queries"):
         s2_start = time.monotonic()
         queries = await generate_queries_from_topics(
@@ -710,6 +739,8 @@ async def run_topic_scoped_gap_analysis(
             product_slug=base_input.product_slug,
             product_description=base_input.product_description,
             company_slug=slug,
+            workspace_id=base_input.workspace_id,
+            workspace_slug=base_input.workspace_slug,
             storage=storage,
         )
         storage.write(
@@ -718,6 +749,7 @@ async def run_topic_scoped_gap_analysis(
         )
         s2_elapsed = time.monotonic() - s2_start
         logger.info("S2 completed: %d queries (%.1fs)", len(queries), s2_elapsed)
+        _ga_emit("ga_step_complete", {"step": "s2", "step_num": 2, "total_steps": 8, "elapsed_s": round(s2_elapsed, 1)})
 
         if not queries:
             logger.warning("Topic-scoped S2 produced 0 queries. Returning empty report.")
@@ -725,17 +757,26 @@ async def run_topic_scoped_gap_analysis(
             return empty_report, {}
 
     # ── S3: Search platforms ──
+    _ga_emit("ga_step_start", {"step": "s3", "name": "Search Platforms", "step_num": 3, "total_steps": 8})
     with scoped_bind(step_name="s3_search_platforms"):
         s3_start = time.monotonic()
-        platform_results = await search_platforms(queries, base_input.platforms)
+        platform_results = await search_platforms(
+            queries,
+            base_input.platforms,
+            workspace_id=base_input.workspace_id,
+            workspace_slug=base_input.workspace_slug,
+            company_slug=slug,
+        )
         save_platform_results(platform_results, storage, f"{scoped_prefix}/platform_results")
 
         _flag_company_citations(platform_results, base_input.domain)
         company_citation_map = _build_company_citation_map(platform_results)
         s3_elapsed = time.monotonic() - s3_start
         logger.info("S3 completed: %d results (%.1fs)", len(platform_results), s3_elapsed)
+        _ga_emit("ga_step_complete", {"step": "s3", "step_num": 3, "total_steps": 8, "elapsed_s": round(s3_elapsed, 1)})
 
     # ── S4: Enrich citations ──
+    _ga_emit("ga_step_start", {"step": "s4", "name": "Enrich Citations", "step_num": 4, "total_steps": 8})
     with scoped_bind(step_name="s4_enrich_citations"):
         s4_start = time.monotonic()
         query_lookup = {q.query_id: q for q in queries}
@@ -743,16 +784,20 @@ async def run_topic_scoped_gap_analysis(
         save_enriched_citations(enriched, storage, f"{scoped_prefix}/enriched_citations.json")
         s4_elapsed = time.monotonic() - s4_start
         logger.info("S4 completed: %d enriched (%.1fs)", len(enriched), s4_elapsed)
+        _ga_emit("ga_step_complete", {"step": "s4", "step_num": 4, "total_steps": 8, "elapsed_s": round(s4_elapsed, 1)})
 
     # ── S5: Embed content ──
+    _ga_emit("ga_step_start", {"step": "s5", "name": "Embed Content", "step_num": 5, "total_steps": 8})
     with scoped_bind(step_name="s5_embed_content"):
         s5_start = time.monotonic()
         queries, enriched = await embed_all(queries, enriched, company_slug=slug)
         save_embeddings(queries, enriched, storage, f"{scoped_prefix}/embeddings")
         s5_elapsed = time.monotonic() - s5_start
         logger.info("S5 completed (%.1fs)", s5_elapsed)
+        _ga_emit("ga_step_complete", {"step": "s5", "step_num": 5, "total_steps": 8, "elapsed_s": round(s5_elapsed, 1)})
 
     # ── S6: Analyze gaps ──
+    _ga_emit("ga_step_start", {"step": "s6", "name": "Analyze Gaps", "step_num": 6, "total_steps": 8})
     with scoped_bind(step_name="s6_compute_gap_analysis"):
         s6_start = time.monotonic()
         analysis = compute_gap_analysis(
@@ -768,16 +813,20 @@ async def run_topic_scoped_gap_analysis(
         )
         s6_elapsed = time.monotonic() - s6_start
         logger.info("S6 completed (%.1fs)", s6_elapsed)
+        _ga_emit("ga_step_complete", {"step": "s6", "step_num": 6, "total_steps": 8, "elapsed_s": round(s6_elapsed, 1)})
 
     # ── S7: Skip visualizations by default ──
+    _ga_emit("ga_step_start", {"step": "s7", "name": "Visualize", "step_num": 7, "total_steps": 8})
     with scoped_bind(step_name="s7_generate_visualizations"):
         if not skip_visualizations:
             generate_visualizations(
                 queries, enriched, company_units, analysis,
                 storage=storage, prefix=f"{scoped_prefix}/visualizations",
             )
+    _ga_emit("ga_step_complete", {"step": "s7", "step_num": 7, "total_steps": 8, "elapsed_s": 0.0})
 
     # ── S8: Report + per-topic aggregation ──
+    _ga_emit("ga_step_start", {"step": "s8", "name": "Generate Report", "step_num": 8, "total_steps": 8})
     with scoped_bind(step_name="s8_generate_gap_report"):
         s8_start = time.monotonic()
         report = await generate_gap_report(analysis, queries, enriched, company_slug=slug)
@@ -799,6 +848,7 @@ async def run_topic_scoped_gap_analysis(
         )
         s8_elapsed = time.monotonic() - s8_start
         logger.info("S8 completed (%.1fs)", s8_elapsed)
+        _ga_emit("ga_step_complete", {"step": "s8", "step_num": 8, "total_steps": 8, "elapsed_s": round(s8_elapsed, 1)})
 
     total = time.monotonic() - pipeline_start
     logger.info(

@@ -12,6 +12,13 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from core.db.enums import CMSPostStatus, CMSProvider
+from core.cms.webflow_models import (
+    WebflowAuthKind,
+    WebflowCollectionConfig,
+    WebflowFieldMapping,
+    WebflowProviderConfig,
+    WebflowPublishMode,
+)
 
 # Re-export for convenience so adapter code can do:
 #   from core.cms.models import CMSProvider, CMSPostStatus
@@ -23,9 +30,15 @@ __all__ = [
     "CMSMediaUpload",
     "CMSPost",
     "CMSPostCreate",
+    "CMSPublishMetadata",
     "CMSPostStatus",
     "CMSPostUpdate",
     "CMSProvider",
+    "WebflowAuthKind",
+    "WebflowCollectionConfig",
+    "WebflowFieldMapping",
+    "WebflowProviderConfig",
+    "WebflowPublishMode",
 ]
 
 
@@ -43,6 +56,7 @@ class CMSConnectionConfig(BaseModel):
     api_key: str = ""
     username: str = ""
     extra: dict[str, Any] = Field(default_factory=dict)
+    provider_config: dict[str, Any] = Field(default_factory=dict)
 
 
 class CMSConnectionStatus(BaseModel):
@@ -96,8 +110,14 @@ class CMSPostCreate(BaseModel):
     categories: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     featured_image_id: str | None = None
+    featured_image_url: str = ""
     seo_title: str = ""
     seo_description: str = ""
+    canonical_url: str = ""
+    published_at: datetime | None = None
+    author: str = ""
+    schema_markup: bool = False
+    collection_id: str = ""
 
 
 class CMSPostUpdate(BaseModel):
@@ -112,6 +132,23 @@ class CMSPostUpdate(BaseModel):
     slug: str | None = None
     seo_title: str | None = None
     seo_description: str | None = None
+    canonical_url: str | None = None
+    collection_id: str = ""
+
+
+class CMSPublishMetadata(BaseModel):
+    """Normalized SEO/publish metadata provided by the product UI."""
+
+    slug: str = ""
+    meta_title: str = ""
+    meta_description: str = ""
+    canonical_url: str = ""
+    schema_markup: bool = False
+    publish_date: str = ""
+    author: str = ""
+    tags: list[str] = Field(default_factory=list)
+    featured_image_url: str = ""
+    featured_image_alt: str = ""
 
 
 # ── Categories ────────────────────────────────────────────────────────

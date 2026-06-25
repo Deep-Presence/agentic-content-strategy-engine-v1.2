@@ -5,14 +5,14 @@ auth, guard, schema validation.
 """
 from __future__ import annotations
 
-import json
-from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
+from fastapi import FastAPI
 
+from api.dependencies import get_td_data_service
 from api.tasks.models import TaskStatus
+from tests._support.model_config_service import FailingModelConfigService
 
 
 # ── Constants ─────────────────────────────────────────────────────────
@@ -26,6 +26,51 @@ PREFIX = "/api/v1/topic-discovery"
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _mock_td_guard(app: FastAPI):
+    """Patch the DB-backed guard so tests don't need a real session_factory.
+
+    Default: guard returns (False, None) — allows pipeline starts.
+    Guard-specific tests override via their own mock.
+    Also sets ``app.state.db_session_factory`` so the guard code path
+    doesn't short-circuit with 503 before calling the patched guard.
+    """
+    app.state.db_session_factory = MagicMock()
+    with patch(
+        "api.routers.topic_discovery._td_should_guard_db",
+        new_callable=AsyncMock,
+        return_value=(False, None),
+    ) as mock_guard:
+        yield mock_guard
+
+
+@pytest.fixture
+def td_svc_mock():
+    """AsyncMock for TD data service with sensible defaults."""
+    mock = AsyncMock()
+    mock.get_taxonomy.return_value = None
+    mock.get_matrix.return_value = None
+    mock.get_scored_subdomains.return_value = None
+    mock.get_persona_affinity.return_value = None
+    mock.get_discovery_summary.return_value = None
+    mock.list_assignments.return_value = {"items": [], "total": 0, "page": 1, "page_size": 50}
+    mock.update_assignment_status.return_value = None
+    mock.create_assignment.return_value = None
+    return mock
+
+
+@pytest.fixture(autouse=True)
+def _override_td_svc(app: FastAPI, td_svc_mock: AsyncMock):
+    """Inject mock TD data service via dependency override."""
+
+    async def _override():
+        yield td_svc_mock
+
+    app.dependency_overrides[get_td_data_service] = _override
+    yield
+    app.dependency_overrides.pop(get_td_data_service, None)
 
 
 @pytest.fixture
@@ -47,27 +92,6 @@ def mock_td_runner():
 
         mock_fn.side_effect = _complete_task
         yield mock_fn
-
-
-def _write_td_manifest(
-    artifacts_root: Path,
-    slug: str,
-    taxonomy_version: int = 0,
-    matrix_version: int = 0,
-    status: str = "draft",
-) -> Path:
-    """Write a TD manifest for guard tests."""
-    td_dir = artifacts_root / "topic_discovery" / slug
-    td_dir.mkdir(parents=True, exist_ok=True)
-    manifest = {
-        "slug": slug,
-        "taxonomy_version": taxonomy_version,
-        "matrix_version": matrix_version,
-        "status": status,
-    }
-    manifest_path = td_dir / "_manifest.json"
-    manifest_path.write_text(json.dumps(manifest))
-    return manifest_path
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -105,6 +129,25 @@ class TestStartTopicDiscovery:
             json={"company_name": "Other Corp", "domain": "other.com"},
         )
         assert resp.status_code == 403
+
+    def test_missing_byok_config_blocks_start_before_task_creation(self, client):
+        service = FailingModelConfigService()
+        client.app.state.model_config_service = service
+
+        with patch(
+            "api.routers.topic_discovery.create_task_durable",
+            new_callable=AsyncMock,
+        ) as create_task:
+            resp = client.post(f"{PREFIX}/start", json=MINIMAL_PAYLOAD)
+
+        assert resp.status_code == 409
+        detail = resp.json()["detail"]
+        assert detail["code"] == "byok_model_config_required"
+        assert detail["missing_credential"] is True
+        assert "topic_discovery.source_a_company" in detail["required_agent_keys"]
+        assert "shared.embeddings.default" in detail["required_agent_keys"]
+        assert "shared.embeddings.default" in service.preflight_calls[0][1]
+        create_task.assert_not_awaited()
 
     def test_start_auto_approve_valid(self, client, mock_td_runner):
         resp = client.post(
@@ -155,10 +198,11 @@ class TestStartTopicDiscovery:
 class TestStartTDGuard:
     """Tests for the guard that blocks re-runs when discovery is complete."""
 
-    def test_guard_blocks_when_approved(self, client, artifacts_root):
-        _write_td_manifest(
-            artifacts_root, "test-co",
-            taxonomy_version=1, matrix_version=1, status="approved",
+    def test_guard_blocks_when_approved(self, client, _mock_td_guard):
+        _mock_td_guard.return_value = (
+            True,
+            "Topic discovery already complete (taxonomy v1, status=approved). "
+            "Pass force_rerun=true to re-run.",
         )
         resp = client.post(f"{PREFIX}/start", json=MINIMAL_PAYLOAD)
         assert resp.status_code == 200
@@ -166,11 +210,8 @@ class TestStartTDGuard:
         assert data["status"] == "already_exists"
         assert data["already_exists"] is True
 
-    def test_guard_allows_with_force_rerun(self, client, mock_td_runner, artifacts_root):
-        _write_td_manifest(
-            artifacts_root, "test-co",
-            taxonomy_version=1, matrix_version=1, status="approved",
-        )
+    def test_guard_allows_with_force_rerun(self, client, mock_td_runner, _mock_td_guard):
+        _mock_td_guard.return_value = (True, "already complete")
         resp = client.post(
             f"{PREFIX}/start",
             json={**MINIMAL_PAYLOAD, "force_rerun": True},
@@ -178,14 +219,13 @@ class TestStartTDGuard:
         assert resp.status_code == 202
 
     def test_guard_allows_when_no_manifest(self, client, mock_td_runner):
+        # Default guard returns (False, None) — no blocking
         resp = client.post(f"{PREFIX}/start", json=MINIMAL_PAYLOAD)
         assert resp.status_code == 202
 
-    def test_guard_allows_when_draft(self, client, mock_td_runner, artifacts_root):
-        _write_td_manifest(
-            artifacts_root, "test-co",
-            taxonomy_version=1, matrix_version=0, status="draft",
-        )
+    def test_guard_allows_when_draft(self, client, mock_td_runner, _mock_td_guard):
+        # Guard returns (False, None) for draft status
+        _mock_td_guard.return_value = (False, None)
         resp = client.post(f"{PREFIX}/start", json=MINIMAL_PAYLOAD)
         assert resp.status_code == 202
 
@@ -451,28 +491,16 @@ class TestApproveMatrix:
 class TestGetLatestTaxonomy:
     """Tests for GET /topic-discovery/{slug}/taxonomy."""
 
-    def test_taxonomy_found(self, client, artifacts_root):
-        from core.models.topic_discovery import (
-            SubdomainNode,
-            TaxonomyTree,
-            TopicDiscoveryManifest,
-        )
-        from core.topic_discovery.storage import TopicDiscoveryStorage
-
-        storage = TopicDiscoveryStorage(artifacts_root, "test-co")
-        tree = TaxonomyTree(
-            root_nodes=[
-                SubdomainNode(name="Finance", description="Finance topics"),
-                SubdomainNode(name="HR", description="HR topics"),
+    def test_taxonomy_found(self, client, td_svc_mock):
+        td_svc_mock.get_taxonomy.return_value = {
+            "version": 1,
+            "total_subdomains": 2,
+            "coverage_score": 0.85,
+            "root_nodes": [
+                {"name": "Finance", "description": "Finance topics"},
+                {"name": "HR", "description": "HR topics"},
             ],
-            total_subdomains=2,
-            coverage_score=0.85,
-        )
-        ver = storage.write_taxonomy(tree)
-        # Update manifest so the router can read the version
-        manifest = storage.read_manifest()
-        manifest.taxonomy_version = ver
-        storage.write_manifest(manifest)
+        }
 
         resp = client.get(f"{PREFIX}/test-co/taxonomy")
         assert resp.status_code == 200
@@ -505,27 +533,19 @@ class TestGetLatestTaxonomy:
 class TestGetLatestMatrix:
     """Tests for GET /topic-discovery/{slug}/matrix."""
 
-    def test_matrix_found(self, client, artifacts_root):
-        from core.models.topic_discovery import TopicAssignment, TopicAssignmentMatrix
-        from core.topic_discovery.storage import TopicDiscoveryStorage
-
-        storage = TopicDiscoveryStorage(artifacts_root, "test-co")
-        matrix = TopicAssignmentMatrix(
-            assignments=[
-                TopicAssignment(
-                    topic_text="How to manage expenses",
-                    subdomain_name="Finance",
-                    buyer_stage="tofu",
-                    intent_type="informational",
-                ),
+    def test_matrix_found(self, client, td_svc_mock):
+        td_svc_mock.get_matrix.return_value = {
+            "version": 1,
+            "total_assignments": 1,
+            "assignments": [
+                {
+                    "topic_text": "How to manage expenses",
+                    "subdomain_name": "Finance",
+                    "buyer_stage": "tofu",
+                    "intent_type": "informational",
+                },
             ],
-            total_assignments=1,
-        )
-        ver = storage.write_matrix(matrix)
-        # Update manifest so the router can read the version
-        manifest = storage.read_manifest()
-        manifest.matrix_version = ver
-        storage.write_manifest(manifest)
+        }
 
         resp = client.get(f"{PREFIX}/test-co/matrix")
         assert resp.status_code == 200
@@ -661,23 +681,16 @@ class TestSchemaValidation:
 
     # ── L4: Typed response models ────────────────────────────────────
 
-    def test_taxonomy_response_has_typed_fields(self, client, artifacts_root):
+    def test_taxonomy_response_has_typed_fields(self, client, td_svc_mock):
         """L4: Taxonomy response validates against TaxonomyReadResponse."""
         from api.schemas.topic_discovery import TaxonomyReadResponse
-        from core.topic_discovery.storage import TopicDiscoveryStorage
-        from core.models.topic_discovery import TaxonomyTree, SubdomainNode
 
-        storage = TopicDiscoveryStorage(artifacts_root, "test-co")
-        tree = TaxonomyTree(
-            domain_name="test",
-            root_nodes=[SubdomainNode(name="A")],
-            total_subdomains=1,
-            coverage_score=0.9,
-        )
-        ver = storage.write_taxonomy(tree)
-        manifest = storage.read_manifest()
-        manifest.taxonomy_version = ver
-        storage.write_manifest(manifest)
+        td_svc_mock.get_taxonomy.return_value = {
+            "version": 1,
+            "total_subdomains": 1,
+            "coverage_score": 0.9,
+            "root_nodes": [{"name": "A"}],
+        }
 
         resp = client.get(f"{PREFIX}/test-co/taxonomy")
         assert resp.status_code == 200
@@ -686,21 +699,15 @@ class TestSchemaValidation:
         assert data.total_subdomains == 1
         assert data.coverage_score == 0.9
 
-    def test_matrix_response_has_typed_fields(self, client, artifacts_root):
+    def test_matrix_response_has_typed_fields(self, client, td_svc_mock):
         """L4: Matrix response validates against MatrixReadResponse."""
         from api.schemas.topic_discovery import MatrixReadResponse
-        from core.topic_discovery.storage import TopicDiscoveryStorage
-        from core.models.topic_discovery import TopicAssignmentMatrix, TopicAssignment
 
-        storage = TopicDiscoveryStorage(artifacts_root, "test-co")
-        matrix = TopicAssignmentMatrix(
-            assignments=[TopicAssignment(topic_text="test")],
-            total_assignments=1,
-        )
-        ver = storage.write_matrix(matrix)
-        manifest = storage.read_manifest()
-        manifest.matrix_version = ver
-        storage.write_manifest(manifest)
+        td_svc_mock.get_matrix.return_value = {
+            "version": 1,
+            "total_assignments": 1,
+            "assignments": [{"topic_text": "test"}],
+        }
 
         resp = client.get(f"{PREFIX}/test-co/matrix")
         assert resp.status_code == 200
@@ -836,24 +843,20 @@ class TestApproveSubdomains:
 class TestGetScoredSubdomains:
     """Tests for GET /topic-discovery/{slug}/scored-subdomains."""
 
-    def test_scored_subdomains_found(self, client, artifacts_root):
-        from core.models.topic_discovery import ScoredSubdomainList, SubdomainScore
-        from core.topic_discovery.storage import TopicDiscoveryStorage
-
-        storage = TopicDiscoveryStorage(artifacts_root, "test-co")
-        scored = ScoredSubdomainList(
-            scores=[
-                SubdomainScore(
-                    subdomain_id="sd-1",
-                    subdomain_name="Finance",
-                    composite_score=0.85,
-                    rank=1,
-                ),
+    def test_scored_subdomains_found(self, client, td_svc_mock):
+        td_svc_mock.get_scored_subdomains.return_value = {
+            "version": 1,
+            "total_scored": 1,
+            "signals_used": ["source_confidence", "persona_breadth"],
+            "scores": [
+                {
+                    "subdomain_id": "sd-1",
+                    "subdomain_name": "Finance",
+                    "composite_score": 0.85,
+                    "rank": 1,
+                },
             ],
-            total_scored=1,
-            signals_used=["source_confidence", "persona_breadth"],
-        )
-        storage.write_scoring(scored)
+        }
 
         resp = client.get(f"{PREFIX}/test-co/scored-subdomains")
         assert resp.status_code == 200
@@ -883,29 +886,21 @@ class TestGetScoredSubdomains:
 class TestGetPersonaAffinity:
     """Tests for GET /topic-discovery/{slug}/personas."""
 
-    def test_personas_found(self, client, artifacts_root):
-        from core.models.topic_discovery import (
-            PersonaAffinityIndex,
-            PersonaSubdomainEntry,
-        )
-        from core.topic_discovery.storage import TopicDiscoveryStorage
-
-        storage = TopicDiscoveryStorage(artifacts_root, "test-co")
-        index = PersonaAffinityIndex(
-            persona_entries={
+    def test_personas_found(self, client, td_svc_mock):
+        td_svc_mock.get_persona_affinity.return_value = {
+            "total_personas": 1,
+            "total_subdomains": 1,
+            "persona_entries": {
                 "david": [
-                    PersonaSubdomainEntry(
-                        subdomain_id="sd-1",
-                        subdomain_name="Finance",
-                        affinity_score=0.75,
-                        provenance="source_b",
-                    ),
+                    {
+                        "subdomain_id": "sd-1",
+                        "subdomain_name": "Finance",
+                        "affinity_score": 0.75,
+                        "provenance": "source_b",
+                    },
                 ],
             },
-            total_personas=1,
-            total_subdomains=1,
-        )
-        storage.write_persona_affinity(index)
+        }
 
         resp = client.get(f"{PREFIX}/test-co/personas")
         assert resp.status_code == 200
@@ -922,40 +917,26 @@ class TestGetPersonaAffinity:
         resp = client.get(f"{PREFIX}/other-co/personas")
         assert resp.status_code == 403
 
-    def test_personas_with_persona_id_filter(self, client, artifacts_root):
-        from core.models.topic_discovery import (
-            PersonaAffinityIndex,
-            PersonaSubdomainEntry,
-        )
-        from core.topic_discovery.storage import TopicDiscoveryStorage
-
-        storage = TopicDiscoveryStorage(artifacts_root, "test-co")
-        index = PersonaAffinityIndex(
-            persona_entries={
+    def test_personas_with_persona_id_filter(self, client, td_svc_mock):
+        td_svc_mock.get_persona_affinity.return_value = {
+            "total_personas": 1,
+            "total_subdomains": 1,
+            "persona_entries": {
                 "david": [
-                    PersonaSubdomainEntry(
-                        subdomain_id="sd-1",
-                        subdomain_name="Finance",
-                        affinity_score=0.75,
-                    ),
-                ],
-                "marcus": [
-                    PersonaSubdomainEntry(
-                        subdomain_id="sd-2",
-                        subdomain_name="HR",
-                        affinity_score=0.6,
-                    ),
+                    {
+                        "subdomain_id": "sd-1",
+                        "subdomain_name": "Finance",
+                        "affinity_score": 0.75,
+                    },
                 ],
             },
-            total_personas=2,
-            total_subdomains=2,
-        )
-        storage.write_persona_affinity(index)
+        }
 
         resp = client.get(f"{PREFIX}/test-co/personas?persona_id=david")
         assert resp.status_code == 200
         data = resp.json()
         assert "david" in data["persona_entries"]
+        # When persona_id filter is applied, only david is returned
         assert "marcus" not in data["persona_entries"]
 
 
@@ -1031,12 +1012,44 @@ class TestStartTopicExpansion:
             mock_fn.side_effect = _complete_task
             yield mock_fn
 
-    def test_expand_success(self, client, mock_expansion_runner, artifacts_root):
-        """POST /expand succeeds when Pipeline A has completed."""
-        _write_td_manifest(
-            artifacts_root, "test-co",
-            taxonomy_version=1, status="discovery_complete",
+    @pytest.fixture
+    def _mock_expand_manifest_completed(self, app):
+        """Provide a mock db_session_factory and mock db_read_manifest for expand pre-check."""
+        from core.models.topic_discovery import TopicDiscoveryManifest, TopicDiscoveryStatus
+
+        app.state.db_session_factory = MagicMock()
+
+        manifest = TopicDiscoveryManifest(
+            slug="test-co",
+            taxonomy_version=1,
+            status=TopicDiscoveryStatus.discovery_complete,
         )
+
+        with patch(
+            "core.topic_discovery.db_ops.db_read_manifest",
+            new_callable=AsyncMock,
+            return_value=manifest,
+        ):
+            yield
+
+    @pytest.fixture
+    def _mock_expand_manifest_empty(self, app):
+        """Provide a mock db_session_factory that returns an empty manifest (no discovery)."""
+        from core.models.topic_discovery import TopicDiscoveryManifest
+
+        app.state.db_session_factory = MagicMock()
+
+        manifest = TopicDiscoveryManifest(slug="test-co", taxonomy_version=0)
+
+        with patch(
+            "core.topic_discovery.db_ops.db_read_manifest",
+            new_callable=AsyncMock,
+            return_value=manifest,
+        ):
+            yield
+
+    def test_expand_success(self, client, mock_expansion_runner, _mock_expand_manifest_completed):
+        """POST /expand succeeds when Pipeline A has completed."""
         resp = client.post(
             f"{PREFIX}/expand",
             json={
@@ -1050,7 +1063,7 @@ class TestStartTopicExpansion:
         assert data["status"] == "started"
         assert "run_id" in data
 
-    def test_expand_missing_discovery_409(self, client, artifacts_root):
+    def test_expand_missing_discovery_409(self, client, _mock_expand_manifest_empty):
         """POST /expand returns 409 when Pipeline A hasn't run."""
         resp = client.post(
             f"{PREFIX}/expand",
@@ -1061,6 +1074,35 @@ class TestStartTopicExpansion:
         )
         assert resp.status_code == 409
         assert "not been completed" in resp.json()["detail"]
+
+    def test_expand_missing_byok_config_blocks_before_task_creation(
+        self,
+        client,
+        _mock_expand_manifest_completed,
+    ):
+        service = FailingModelConfigService()
+        client.app.state.model_config_service = service
+
+        with patch(
+            "api.routers.topic_discovery.create_task_durable",
+            new_callable=AsyncMock,
+        ) as create_task:
+            resp = client.post(
+                f"{PREFIX}/expand",
+                json={
+                    **MINIMAL_PAYLOAD,
+                    "subdomain_ids": ["sd-1"],
+                },
+            )
+
+        assert resp.status_code == 409
+        detail = resp.json()["detail"]
+        assert detail["code"] == "byok_model_config_required"
+        assert detail["missing_credential"] is True
+        assert "topic_discovery.subdomain_expansion" in detail["required_agent_keys"]
+        assert "topic_discovery.cannibalization_embedding" in detail["required_agent_keys"]
+        assert "topic_discovery.subdomain_expansion" in service.preflight_calls[0][1]
+        create_task.assert_not_awaited()
 
     def test_expand_empty_subdomain_ids_422(self, client):
         """POST /expand with empty subdomain_ids is rejected by schema."""
@@ -1096,12 +1138,8 @@ class TestStartTopicExpansion:
         )
         assert resp.status_code == 403
 
-    def test_expand_auto_approve_only_2_valid(self, client, mock_expansion_runner, artifacts_root):
+    def test_expand_auto_approve_only_2_valid(self, client, mock_expansion_runner, _mock_expand_manifest_completed):
         """Pipeline B only supports checkpoint 2 for auto-approve."""
-        _write_td_manifest(
-            artifacts_root, "test-co",
-            taxonomy_version=1, status="discovery_complete",
-        )
         resp = client.post(
             f"{PREFIX}/expand",
             json={
@@ -1136,20 +1174,31 @@ class TestStartTopicExpansion:
         )
         assert resp.status_code == 422
 
-    def test_expand_with_product_slug(self, client, mock_expansion_runner, artifacts_root):
+    def test_expand_with_product_slug(self, client, mock_expansion_runner, app):
         """Expansion with product_slug uses effective_slug."""
-        _write_td_manifest(
-            artifacts_root, "test-co__cards",
-            taxonomy_version=1, status="discovery_complete",
+        from core.models.topic_discovery import TopicDiscoveryManifest, TopicDiscoveryStatus
+
+        app.state.db_session_factory = MagicMock()
+
+        manifest = TopicDiscoveryManifest(
+            slug="test-co__cards",
+            taxonomy_version=1,
+            status=TopicDiscoveryStatus.discovery_complete,
         )
-        resp = client.post(
-            f"{PREFIX}/expand",
-            json={
-                **MINIMAL_PAYLOAD,
-                "product_slug": "cards",
-                "subdomain_ids": ["sd-1"],
-            },
-        )
+
+        with patch(
+            "core.topic_discovery.db_ops.db_read_manifest",
+            new_callable=AsyncMock,
+            return_value=manifest,
+        ):
+            resp = client.post(
+                f"{PREFIX}/expand",
+                json={
+                    **MINIMAL_PAYLOAD,
+                    "product_slug": "cards",
+                    "subdomain_ids": ["sd-1"],
+                },
+            )
         assert resp.status_code == 202
         data = resp.json()
         assert data["effective_slug"] == "test-co__cards"
@@ -1163,11 +1212,11 @@ class TestStartTopicExpansion:
 class TestGetExpansionStatus:
     """Tests for GET /topic-discovery/{slug}/expansion-status."""
 
-    def test_expansion_status_found(self, client, artifacts_root):
+    def test_expansion_status_found(self, client, app):
         from core.models.topic_discovery import SubdomainNode, TaxonomyTree
-        from core.topic_discovery.storage import TopicDiscoveryStorage
 
-        storage = TopicDiscoveryStorage(artifacts_root, "test-co")
+        app.state.db_session_factory = MagicMock()
+
         tree = TaxonomyTree(
             domain_name="test.com",
             root_nodes=[
@@ -1186,9 +1235,13 @@ class TestGetExpansionStatus:
             ],
             total_subdomains=3,
         )
-        storage.write_taxonomy(tree)
 
-        resp = client.get(f"{PREFIX}/test-co/expansion-status")
+        with patch(
+            "core.topic_discovery.db_ops.db_read_taxonomy",
+            new_callable=AsyncMock,
+            return_value=tree,
+        ):
+            resp = client.get(f"{PREFIX}/test-co/expansion-status")
         assert resp.status_code == 200
         data = resp.json()
         assert data["slug"] == "test-co"
@@ -1201,8 +1254,15 @@ class TestGetExpansionStatus:
         assert data["available_for_expansion"][0]["id"] == "sd-2"
         assert data["available_for_expansion"][1]["id"] == "sd-3"
 
-    def test_expansion_status_not_found(self, client):
-        resp = client.get(f"{PREFIX}/test-co/expansion-status")
+    def test_expansion_status_not_found(self, client, app):
+        app.state.db_session_factory = MagicMock()
+
+        with patch(
+            "core.topic_discovery.db_ops.db_read_taxonomy",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            resp = client.get(f"{PREFIX}/test-co/expansion-status")
         assert resp.status_code == 404
 
     def test_expansion_status_tenant_isolation_403(self, client):

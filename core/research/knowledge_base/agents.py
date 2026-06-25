@@ -2,7 +2,7 @@
 
 Tier 1 (Agents 1-4): Perplexity sonar-deep-research via asyncio.to_thread + wait_for.
 Tier 2 (Agent 5): Anthropic AsyncAnthropic + web_search_20250305 server-side tool.
-Tier 3 (Synthesis): LangGraph create_react_agent + Claude Opus with read_file tool.
+Tier 3 (Synthesis): LangGraph create_react_agent + Claude Opus via OpenRouter (ChatOpenAI) with read_file tool.
 """
 from __future__ import annotations
 
@@ -15,10 +15,15 @@ from typing import Any, Dict, List, Optional
 from core.storage.backends.base import StorageBackend
 
 import anthropic
-from langchain.chat_models import init_chat_model
 from langgraph.prebuilt import create_react_agent
 
+from core.shared_tools.openrouter_client import (
+    build_chat_openai_for_key,
+    build_chat_openai_via_openrouter,
+)
+
 from core.config.settings import settings
+from core.model_config.runtime import actual_provider, resolve_model_config_for_agent
 from core.models.knowledge_base import KBAgentResult, KBDocType, KnowledgeBaseInput
 from core.research.knowledge_base.tools import make_read_file_tool
 from core.research.prompts.brand_perception import (
@@ -62,40 +67,6 @@ _MAX_PAUSE_TURNS = 5
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
-
-
-def _build_model(model_string: str, **kwargs: Any) -> Any:
-    """Build a LangChain chat model from a provider:model string.
-
-    Handles three formats:
-    - ``"anthropic:claude-opus-4-6"`` (colon separator)
-    - ``"anthropic/claude-opus-4-6"`` (slash separator)
-    - ``"gpt-4o"`` (bare model name — provider inferred)
-
-    Injects API keys from settings so LangChain doesn't depend on env vars.
-    """
-    provider = None
-    model_name = model_string
-    if ":" in model_string:
-        provider, model_name = model_string.split(":", 1)
-    elif "/" in model_string:
-        provider, model_name = model_string.split("/", 1)
-
-    # Inject API keys from settings — LangChain reads env vars directly,
-    # but our keys live in .env.local via pydantic-settings, not os.environ.
-    if provider == "anthropic" and "api_key" not in kwargs:
-        if settings.anthropic_api_key:
-            kwargs["api_key"] = settings.anthropic_api_key
-    elif provider == "openai" and "api_key" not in kwargs:
-        if settings.openai_api_key:
-            kwargs["api_key"] = settings.openai_api_key
-    elif provider == "google" and "api_key" not in kwargs:
-        if getattr(settings, "google_api_key", None):
-            kwargs["api_key"] = settings.google_api_key
-
-    if provider:
-        return init_chat_model(model_name, model_provider=provider, **kwargs)
-    return init_chat_model(model_string, **kwargs)
 
 
 def _extract_synthesis_output(messages: Optional[List[Any]]) -> str:
@@ -147,6 +118,9 @@ async def _run_perplexity_agent(
     span_name: str = "agent",
     model: Optional[str] = None,
     company_slug: str = "",
+    workspace_id: str = "",
+    workspace_slug: str = "",
+    agent_key: str = "",
 ) -> KBAgentResult:
     """Shared runner for Perplexity-based agents."""
     span = create_span(
@@ -156,14 +130,37 @@ async def _run_perplexity_agent(
     )
     start = time.time()
     try:
-        result_md = await asyncio.wait_for(
-            asyncio.to_thread(
-                perplexity_client.research, query=full_prompt, timeout_s=timeout_s,
-                model=model,
-            ),
-            timeout=timeout_s,
+        resolved = None
+        if workspace_id and agent_key:
+            resolved = await resolve_model_config_for_agent(
+                workspace_id=workspace_id,
+                workspace_slug=workspace_slug or company_slug,
+                agent_key=agent_key,
+            )
+        effective_model = resolved.model if resolved is not None else model
+        resolved_timeout = getattr(resolved, "timeout_s", None) if resolved is not None else None
+        effective_timeout_s = (
+            resolved_timeout if isinstance(resolved_timeout, (int, float)) else timeout_s
         )
-        _effective_model = model or settings.perplexity_deep_research_model
+        result_md, _pplx_usage = await asyncio.wait_for(
+            asyncio.to_thread(
+                perplexity_client.research, query=full_prompt, timeout_s=effective_timeout_s,
+                model=effective_model,
+                pipeline="knowledge_base",
+                pipeline_step=doc_type.value,
+                company_slug=company_slug,
+                api_key=getattr(resolved, "api_key", None),
+                base_url=getattr(resolved, "base_url", None),
+                workspace_id=workspace_id if resolved is not None else None,
+                agent_key=agent_key if resolved is not None else "",
+                credential_id=getattr(resolved, "credential_id", None),
+                model_config_id=getattr(resolved, "model_config_id", None),
+                actual_provider=actual_provider(effective_model or "") if resolved is not None else "",
+                workspace_billed=resolved is not None,
+            ),
+            timeout=effective_timeout_s,
+        )
+        _effective_model = effective_model or settings.perplexity_deep_research_model
         _kb_meta = {
             "pipeline": "knowledge_base",
             "pipeline_step": doc_type.value,
@@ -178,6 +175,7 @@ async def _run_perplexity_agent(
             full_prompt[:2000],
             result_md[:2000] if result_md else "",
             metadata=_kb_meta,
+            usage=_pplx_usage,
         )
         end_span(span, output={"word_count": len(result_md.split()) if result_md else 0})
         return KBAgentResult(
@@ -216,6 +214,9 @@ async def run_company_overview_agent(
         KBDocType.COMPANY_OVERVIEW, full_prompt, parent_span, timeout_s, "company-overview",
         model=settings.research_kb_company_overview_model,
         company_slug=input_data.company_slug or "",
+        workspace_id=input_data.workspace_id,
+        workspace_slug=input_data.workspace_slug,
+        agent_key="research.kb.company_overview",
     )
 
 
@@ -233,6 +234,9 @@ async def run_customer_reviews_agent(
         KBDocType.CUSTOMER_REVIEWS, full_prompt, parent_span, timeout_s, "customer-reviews",
         model=settings.research_kb_customer_reviews_model,
         company_slug=input_data.company_slug or "",
+        workspace_id=input_data.workspace_id,
+        workspace_slug=input_data.workspace_slug,
+        agent_key="research.kb.customer_reviews",
     )
 
 
@@ -253,6 +257,9 @@ async def run_competitor_scanner_agent(
         KBDocType.COMPETITOR_REGISTRY, full_prompt, parent_span, timeout_s, "competitor-scanner",
         model=settings.research_kb_competitor_scanner_model,
         company_slug=input_data.company_slug or "",
+        workspace_id=input_data.workspace_id,
+        workspace_slug=input_data.workspace_slug,
+        agent_key="research.kb.competitor_scanner",
     )
 
 
@@ -275,6 +282,9 @@ async def run_weakness_analyst_agent(
         KBDocType.WEAKNESS_ANALYSIS, full_prompt, parent_span, timeout_s, "weakness-analyst",
         model=settings.research_kb_weakness_analyst_model,
         company_slug=input_data.company_slug or "",
+        workspace_id=input_data.workspace_id,
+        workspace_slug=input_data.workspace_slug,
+        agent_key="research.kb.weakness_analyst",
     )
 
 
@@ -303,6 +313,41 @@ async def run_brand_perception_agent(
         user_prompt = build_brand_perception_user_prompt(
             input_data, upstream_docs, revision_note=revision_note,
         )
+        bp_model = settings.research_kb_brand_perception_model
+        _bp_meta = {
+            "pipeline": "knowledge_base",
+            "pipeline_step": "brand_perception",
+            "provider": "openrouter" if input_data.workspace_id else "anthropic",
+            "model": bp_model,
+            "company_slug": input_data.company_slug or "",
+        }
+
+        if input_data.workspace_id:
+            from core.content_engine.llm_client import llm_call_for_agent
+
+            response = await llm_call_for_agent(
+                workspace_id=input_data.workspace_id,
+                workspace_slug=input_data.workspace_slug or input_data.company_slug or "",
+                agent_key="research.kb.brand_perception",
+                system=system_prompt,
+                user=user_prompt,
+                max_tokens=8192,
+                metadata=_bp_meta,
+            )
+            result_md = response.content
+            log_generation(
+                span, "brand-perception/byok", response.model or bp_model,
+                user_prompt[:2000], result_md[:2000],
+                metadata={**_bp_meta, "model": response.model or bp_model},
+            )
+            end_span(span, output={"word_count": len(result_md.split()) if result_md else 0})
+            return KBAgentResult(
+                doc_type=KBDocType.BRAND_PERCEPTION,
+                content_md=result_md,
+                word_count=len(result_md.split()) if result_md else 0,
+                execution_time_s=time.time() - start,
+                is_partial=False,
+            )
 
         client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         messages = [{"role": "user", "content": user_prompt}]
@@ -322,14 +367,16 @@ async def run_brand_perception_agent(
             ),
             timeout=timeout_s,
         )
-        bp_model = settings.research_kb_brand_perception_model
-        _bp_meta = {
-            "pipeline": "knowledge_base",
-            "pipeline_step": "brand_perception",
-            "provider": "anthropic",
-            "model": bp_model,
-            "company_slug": input_data.company_slug or "",
-        }
+        from core.shared_tools.cost_tracker import extract_usage_anthropic_sdk, track_llm_cost
+
+        _pt, _ct = extract_usage_anthropic_sdk(response)
+        _total_pt, _total_ct = _pt, _ct
+        track_llm_cost(
+            model=bp_model, provider="anthropic", pipeline="knowledge_base",
+            pipeline_step="brand_perception/turn-0", prompt_tokens=_pt,
+            completion_tokens=_ct, company_slug=input_data.company_slug or "",
+            call_site="core.research.knowledge_base.agents",
+        )
         log_generation(
             span, "brand-perception/turn-0", bp_model,
             user_prompt[:2000], _extract_text_with_citations(response)[:2000],
@@ -359,12 +406,29 @@ async def run_brand_perception_agent(
                 ),
                 timeout=timeout_s,
             )
+            _pt, _ct = extract_usage_anthropic_sdk(response)
+            _total_pt += _pt
+            _total_ct += _ct
+            track_llm_cost(
+                model=bp_model, provider="anthropic", pipeline="knowledge_base",
+                pipeline_step=f"brand_perception/turn-{pause_turns}",
+                prompt_tokens=_pt, completion_tokens=_ct,
+                company_slug=input_data.company_slug or "",
+                call_site="core.research.knowledge_base.agents",
+            )
             log_generation(
                 span, f"brand-perception/turn-{pause_turns}", bp_model,
                 "(continuation)", _extract_text_with_citations(response)[:2000],
                 metadata=_bp_meta,
             )
 
+        track_llm_cost(
+            model=bp_model, provider="anthropic", pipeline="knowledge_base",
+            pipeline_step="brand_perception/total",
+            prompt_tokens=_total_pt, completion_tokens=_total_ct,
+            company_slug=input_data.company_slug or "",
+            call_site="core.research.knowledge_base.agents",
+        )
         is_partial = pause_turns >= _MAX_PAUSE_TURNS
 
         result_md = _extract_text_with_citations(response)
@@ -419,7 +483,7 @@ def build_synthesis_agent(
         CompiledStateGraph ready for .ainvoke().
     """
     if model is None:
-        model = _build_model(settings.research_kb_synthesis_model)
+        model = build_chat_openai_via_openrouter(settings.research_kb_synthesis_model)
 
     if storage_backend is None:
         from core.storage import get_storage_backend
@@ -508,7 +572,29 @@ async def run_synthesis_agent(
             get_delta_synthesis_system_prompt() if delta_mode
             else get_synthesis_system_prompt()
         )
-        model = _build_model(settings.research_kb_synthesis_model)
+        resolved = None
+        if input_data.workspace_id:
+            resolved = await resolve_model_config_for_agent(
+                workspace_id=input_data.workspace_id,
+                workspace_slug=input_data.workspace_slug or input_data.company_slug or "",
+                agent_key="research.kb.synthesis",
+            )
+        if resolved is not None:
+            model_kwargs: Dict[str, Any] = {}
+            if resolved.temperature is not None:
+                model_kwargs["temperature"] = resolved.temperature
+            if resolved.max_tokens is not None:
+                model_kwargs["max_tokens"] = resolved.max_tokens
+            model = build_chat_openai_for_key(
+                resolved.api_key,
+                resolved.model,
+                base_url=resolved.base_url,
+                **model_kwargs,
+            )
+            synthesis_model = resolved.model
+        else:
+            model = build_chat_openai_via_openrouter(settings.research_kb_synthesis_model)
+            synthesis_model = settings.research_kb_synthesis_model
 
         # Resolve storage backend — prefer explicit, fall back for compat
         if storage_backend is None:
@@ -546,8 +632,8 @@ async def run_synthesis_agent(
         _synth_meta = {
             "pipeline": "knowledge_base",
             "pipeline_step": "synthesis",
-            "provider": extract_provider(settings.research_kb_synthesis_model),
-            "model": settings.research_kb_synthesis_model,
+            "provider": extract_provider(synthesis_model),
+            "model": synthesis_model,
             "company_slug": input_data.company_slug or "",
         }
         invoke_config: Dict[str, Any] = {"metadata": _synth_meta}
@@ -583,10 +669,47 @@ async def run_synthesis_agent(
                 execution_time_s=time.time() - start,
             )
 
+        from core.shared_tools.cost_tracker import track_llm_cost
+
+        # Extract real token counts from the last AI message (OpenRouter via ChatOpenAI).
+        # In multi-step ReAct, this captures only the final call; OpenRouter dashboard
+        # tracks all calls server-side for accurate total cost.
+        _pt, _ct, _method = 0, 0, "char_count"
+        for msg in reversed(result.get("messages", [])):
+            if getattr(msg, "type", None) == "ai":
+                _meta = getattr(msg, "response_metadata", {})
+                _usage = _meta.get("token_usage", {}) if isinstance(_meta, dict) else {}
+                if isinstance(_usage, dict):
+                    _pt = _usage.get("prompt_tokens", 0) or 0
+                    _ct = _usage.get("completion_tokens", 0) or 0
+                if _pt or _ct:
+                    _method = "sdk"
+                break
+        if not (_pt or _ct):
+            _pt = len(user_prompt) // 4
+            _ct = len(output_md) // 4
+
+        track_llm_cost(
+            model=synthesis_model,
+            provider=extract_provider(synthesis_model),
+            pipeline="knowledge_base", pipeline_step="synthesis",
+            prompt_tokens=_pt, completion_tokens=_ct,
+            company_slug=input_data.company_slug or "",
+            call_site="core.research.knowledge_base.agents",
+            source="openrouter",
+            workspace_id=input_data.workspace_id if resolved is not None else None,
+            agent_key="research.kb.synthesis" if resolved is not None else "",
+            credential_id=getattr(resolved, "credential_id", None),
+            model_config_id=getattr(resolved, "model_config_id", None),
+            actual_provider=actual_provider(synthesis_model) if resolved is not None else "",
+            workspace_billed=resolved is not None,
+            extra={"estimation_method": _method},
+        )
+
         log_generation(
             span,
             "synthesis",
-            settings.research_kb_synthesis_model,
+            synthesis_model,
             user_prompt[:2000],
             output_md[:2000],
             metadata=_synth_meta,

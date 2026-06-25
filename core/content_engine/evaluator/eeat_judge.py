@@ -13,7 +13,7 @@ import logging
 from typing import Any, Optional
 
 from core.config.settings import settings
-from core.content_engine.llm_client import llm_call
+from core.content_engine.llm_client import llm_call, llm_call_for_agent
 from core.content_engine.prompts.eeat_judge_prompts import (
     EEAT_JUDGE_SYSTEM_PROMPT,
     build_eeat_judge_user_prompt,
@@ -32,6 +32,7 @@ async def evaluate_eeat(
     *,
     trace: Optional[Any] = None,
     company_slug: str = "",
+    workspace_id: str = "",
 ) -> DimensionResult:
     """Evaluate E-E-A-T signals in content using LLM-as-judge.
 
@@ -71,31 +72,45 @@ async def evaluate_eeat(
 
     response = None  # Sentinel: guards log_generation usage reporting on llm_call failure
     try:
-        response = await llm_call(
-            model=model,
-            system=EEAT_JUDGE_SYSTEM_PROMPT,
-            user=user_prompt,
-            max_tokens=2048,
-            temperature=0.0,
-            metadata={
-                "agent": "eeat_judge",
-                "brief_id": content.brief_id,
-                "pipeline": "content_engine",
-                "pipeline_step": "eeat_judge",
-                "provider": extract_provider(model),
-                "model": model,
-                "company_slug": company_slug,
-            },
-        )
+        metadata = {
+            "agent": "eeat_judge",
+            "agent_key": "content.judge.eeat",
+            "brief_id": content.brief_id,
+            "pipeline": "content_engine",
+            "pipeline_step": "eeat_judge",
+            "provider": extract_provider(model),
+            "model": model,
+            "company_slug": company_slug,
+        }
+        if workspace_id:
+            response = await llm_call_for_agent(
+                workspace_id=workspace_id,
+                workspace_slug=company_slug,
+                agent_key="content.judge.eeat",
+                system=EEAT_JUDGE_SYSTEM_PROMPT,
+                user=user_prompt,
+                max_tokens=2048,
+                temperature=0.0,
+                response_format={"type": "json_object"},
+                metadata=metadata,
+            )
+        else:
+            response = await llm_call(
+                model=model,
+                system=EEAT_JUDGE_SYSTEM_PROMPT,
+                user=user_prompt,
+                max_tokens=2048,
+                temperature=0.0,
+                response_format={"type": "json_object"},
+                metadata=metadata,
+            )
 
         # Parse JSON response
-        raw = response.content.strip()
-        # Handle markdown code fences
-        if raw.startswith("```"):
-            lines = raw.split("\n")
-            raw = "\n".join(lines[1:-1]) if len(lines) > 2 else raw
+        import json_repair
+        from core.content_engine.utils import _extract_json_block
 
-        parsed = json.loads(raw)
+        raw = _extract_json_block(response.content)
+        parsed = json_repair.loads(raw)
 
         score = float(parsed.get("score", 0.0))
         passed = bool(parsed.get("passed", score >= 0.6))

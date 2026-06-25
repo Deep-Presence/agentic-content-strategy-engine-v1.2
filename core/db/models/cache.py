@@ -75,6 +75,12 @@ class UrlEnrichmentCacheModel(UUIDPKMixin, Base):
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
     authority_type: Mapped[str | None] = mapped_column(String, nullable=True)
     content_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    modified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
     paragraph_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
     scraped_at: Mapped[datetime] = mapped_column(

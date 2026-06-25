@@ -36,6 +36,7 @@ class TopicDiscoveryDataServiceProtocol(Protocol):
         buyer_stage: Optional[str] = None,
         intent_type: Optional[str] = None,
         persona_id: Optional[str] = None,
+        status: Optional[str] = None,
         page: int = 1,
         page_size: int = 50,
     ) -> dict: ...
@@ -53,3 +54,16 @@ class TopicDiscoveryDataServiceProtocol(Protocol):
         *,
         persona_id: Optional[str] = None,
     ) -> Optional[dict]: ...
+
+    async def update_assignment_status(
+        self,
+        effective_slug: str,
+        assignment_id: str,
+        status: str,
+    ) -> Optional[dict]: ...
+
+    async def create_assignment(
+        self,
+        effective_slug: str,
+        assignment_data: dict,
+    ) -> dict: ...

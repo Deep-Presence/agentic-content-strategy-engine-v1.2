@@ -28,6 +28,24 @@ SIMPLE_HTML = """
 </body></html>
 """
 
+FRESHNESS_HTML = """
+<html>
+  <head>
+    <meta property="article:published_time" content="2025-01-15T10:00:00Z" />
+    <meta property="article:modified_time" content="2025-03-02T12:30:00Z" />
+  </head>
+  <body>
+    <article>
+      <h1>Freshness Test</h1>
+      <p>This article body is long enough to survive the parser and make the
+      enrichment pipeline produce a real citation object for freshness testing.</p>
+      <p>It includes enough text to exceed the minimum thresholds used by the
+      content extraction heuristics in the enrichment step.</p>
+    </article>
+  </body>
+</html>
+"""
+
 
 def _make_platform_result(
     engine: str = "perplexity",
@@ -280,6 +298,38 @@ class TestAsyncEnrichCitations:
         assert "beta" in urls[1]
         assert "gamma" in urls[2]
 
+    @pytest.mark.asyncio
+    async def test_extracts_published_and_modified_dates(self):
+        """Enriched citations should carry parsed publish/modified dates."""
+        results = [_make_platform_result(
+            citations=[{"url": "https://example.com/fresh", "title": "Fresh"}]
+        )]
+
+        mock_response = httpx.Response(
+            200,
+            text=FRESHNESS_HTML,
+            headers={"content-type": "text/html; charset=utf-8"},
+            request=httpx.Request("GET", "https://example.com/fresh"),
+        )
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "core.gap_analysis.steps.s4_enrich_citations.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            from core.gap_analysis.steps.s4_enrich_citations import enrich_citations
+
+            enriched = await enrich_citations(results)
+
+        assert len(enriched) == 1
+        assert enriched[0].published_at is not None
+        assert enriched[0].modified_at is not None
+        assert enriched[0].published_at.isoformat() == "2025-01-15T10:00:00+00:00"
+        assert enriched[0].modified_at.isoformat() == "2025-03-02T12:30:00+00:00"
+
 
 class TestConcurrencyLimit:
     """[Codex] Tests for concurrency limit enforcement."""
@@ -358,8 +408,8 @@ class TestThreadOffloadedParsing:
             new_callable=AsyncMock,
         ) as mock_to_thread:
             # Make to_thread return valid parse results
-            from core.gap_analysis.steps.s4_enrich_citations import _extract_paragraphs
-            mock_to_thread.return_value = _extract_paragraphs(SIMPLE_HTML)
+            from core.gap_analysis.steps.s4_enrich_citations import _parse_html_payload
+            mock_to_thread.return_value = _parse_html_payload(SIMPLE_HTML)
 
             from core.gap_analysis.steps.s4_enrich_citations import enrich_citations
             enriched = await enrich_citations(results)

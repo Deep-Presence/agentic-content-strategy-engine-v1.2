@@ -7,9 +7,11 @@ UUIDs are serialized as ``str`` (D2: UUIDPKMixin).
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
+
+from api.schemas.content_data import ContentPublishMetadata
 
 
 # ── Request Schemas ───────────────────────────────────────────────────
@@ -22,6 +24,7 @@ class CMSConnectRequest(BaseModel):
     site_url: str  # NOT HttpUrl — D9
     username: str = ""
     api_key: str
+    provider_config: dict[str, Any] | None = None
 
 
 class CMSPublishRequest(BaseModel):
@@ -33,6 +36,8 @@ class CMSPublishRequest(BaseModel):
     status: str = "draft"  # "draft" | "publish"
     slug_override: Optional[str] = None
     categories: list[str] = Field(default_factory=list)
+    publish_metadata: Optional[ContentPublishMetadata] = None
+    collection_id: Optional[str] = None
 
 
 class CMSRefreshRequest(BaseModel):
@@ -61,6 +66,7 @@ class CMSConnectResponse(BaseModel):
     cms_version: str = ""
     user_display_name: str = ""
     error: Optional[str] = None
+    sync_task_id: Optional[str] = None  # Set when auto-sync is triggered on first connect
 
 
 class CMSConnectionInfoResponse(BaseModel):
@@ -74,6 +80,7 @@ class CMSConnectionInfoResponse(BaseModel):
     is_active: bool = False
     last_sync_at: Optional[datetime] = None
     sync_post_count: int = 0
+    provider_config: dict[str, Any] = Field(default_factory=dict)
 
 
 class CMSPublishResponse(BaseModel):
@@ -149,3 +156,112 @@ class CMSCategoryItem(BaseModel):
     slug: str = ""
     parent_id: Optional[str] = None
     post_count: int = 0
+
+
+# ── Webflow configure (WF-2) ──────────────────────────────────────────
+
+
+class WebflowFieldMappingResponse(BaseModel):
+    """Normalized ↔ Webflow field slug mapping for one collection."""
+
+    title_field: str = "name"
+    slug_field: str = "slug"
+    body_field: str = ""
+    excerpt_field: str = ""
+    seo_title_field: str = ""
+    seo_description_field: str = ""
+    category_field: str = ""
+    tags_field: str = ""
+    featured_image_field: str = ""
+
+
+class WebflowCollectionSummary(BaseModel):
+    """Webflow CMS collection available on the connected site."""
+
+    collection_id: str = ""
+    collection_slug: str = ""
+    display_name: str = ""
+    singular_name: str = ""
+
+
+class WebflowFieldSchemaItem(BaseModel):
+    """One field from a Webflow collection schema."""
+
+    slug: str = ""
+    display_name: str = ""
+    field_type: str = ""
+    is_required: bool = False
+
+
+class WebflowCollectionFieldsResponse(BaseModel):
+    """Collection schema + heuristic mapping suggestion for the configure UI."""
+
+    collection_id: str = ""
+    fields: list[WebflowFieldSchemaItem] = Field(default_factory=list)
+    suggested_mapping: WebflowFieldMappingResponse = Field(
+        default_factory=WebflowFieldMappingResponse
+    )
+
+
+class WebflowCollectionConfigInput(BaseModel):
+    """One collection entry in a configure request."""
+
+    collection_id: str = ""
+    collection_slug: str = ""
+    display_name: str = ""
+    enabled: bool = True
+    is_default_publish_target: bool = False
+    field_mapping: WebflowFieldMappingResponse = Field(
+        default_factory=WebflowFieldMappingResponse
+    )
+
+
+class WebflowConfigureRequest(BaseModel):
+    """Save Webflow multi-collection config after the connect wizard."""
+
+    site_id: str = ""
+    collections: list[WebflowCollectionConfigInput] = Field(default_factory=list)
+    publish_mode: str = "live_direct"
+    default_collection_id: str = ""
+    trigger_sync: bool = True
+
+
+class WebflowConfigureResponse(BaseModel):
+    """Result of saving Webflow provider_config."""
+
+    configured: bool = True
+    provider_config: dict[str, Any] = Field(default_factory=dict)
+    sync_task_id: Optional[str] = None
+
+
+class WebflowAuthorizeResponse(BaseModel):
+    """OAuth consent URL for Webflow connect."""
+
+    authorization_url: str = ""
+
+
+class WebflowSiteSummary(BaseModel):
+    """One Webflow site accessible to the connected account."""
+
+    site_id: str = ""
+    display_name: str = ""
+    short_name: str = ""
+    preview_url: str = ""
+
+
+class WebflowSelectSiteRequest(BaseModel):
+    """Bind OAuth connection to a Webflow site."""
+
+    site_id: str = ""
+    site_url: str = ""
+
+
+class WebflowSelectSiteResponse(BaseModel):
+    """Result of selecting a Webflow site."""
+
+    connected: bool = False
+    site_name: str = ""
+    site_url: str = ""
+    cms_version: str = ""
+    user_display_name: str = ""
+    error: Optional[str] = None

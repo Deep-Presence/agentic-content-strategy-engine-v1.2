@@ -1,166 +1,83 @@
 'use client';
 
-import { useState } from 'react';
-import { TabBar, Skeleton } from '@/components/ui';
-import { useAuthStore } from '@/stores/auth';
-import { useGapSummary } from '@/lib/hooks/useGapAnalysis';
-import { PerformanceTab } from './_components/PerformanceTab';
-import { ShareOfVoiceTab } from './_components/ShareOfVoiceTab';
-import { CitationsTab } from './_components/CitationsTab';
-import { CompetitorsTab } from './_components/CompetitorsTab';
-import { BrandHealthTab } from './_components/BrandHealthTab';
-
-const TABS = [
-  { id: 'performance', label: 'Performance', closable: false },
-  { id: 'sov', label: 'Share of Voice', closable: false },
-  { id: 'citations', label: 'Citations', closable: false },
-  { id: 'competitors', label: 'Competitors', closable: false },
-  { id: 'brand-health', label: 'Brand Health', closable: false },
-];
+import { useState, useCallback } from 'react';
+import { CitationFilterBar } from './_components/filter-bar';
+import { KPIStrip } from './_components/kpi-strip';
+import { CitationMomentum } from './_components/citation-momentum';
+import { CompetitorLeaderboard } from './_components/competitor-leaderboard';
+import { VisibilityPipeline } from './_components/visibility-pipeline';
+import { SentimentSection } from './_components/sentiment-section';
+import { PlatformIntelligence } from './_components/platform-intelligence';
+import { CitationURLsTable } from './_components/citation-urls-table';
+import { UncitedQueriesDrawer } from './_components/uncited-queries-drawer';
 
 export default function AnalyticsPage() {
-  const slug = useAuthStore((s) => s.company?.slug);
-  const { data: summary, isLoading, error } = useGapSummary(slug);
-  const [activeTab, setActiveTab] = useState('performance');
+  const [platform, setPlatform] = useState('All Platforms');
+  const [cluster, setCluster] = useState('All Clusters');
+  const [uncitedDrawerOpen, setUncitedDrawerOpen] = useState(false);
 
-  // Compute KPI values from API data
-  const counts = summary?.classification_counts;
-  const totalQueries = summary?.total_queries ?? 0;
-  const companyWins = counts?.company_wins ?? 0;
-  const citationPresence = totalQueries > 0 ? ((companyWins / totalQueries) * 100).toFixed(1) : '—';
-  const spaScore = summary?.spa_score?.t_stat?.toFixed(3) ?? '—';
-
-  if (isLoading) {
-    return (
-      <div className="space-y-4">
-        <div className="w-full"><Skeleton className="h-[80px] w-full rounded-md" /></div>
-        <Skeleton className="h-[36px] w-full rounded-md" />
-        <Skeleton className="h-[400px] w-full rounded-md" />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 text-center">
-        <p className="text-[14px] text-error mb-2">Failed to load analytics data</p>
-        <p className="text-[12px] text-text-tertiary">{error.detail}</p>
-      </div>
-    );
-  }
-
-  if (!summary) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 text-center">
-        <p className="text-[14px] text-text-secondary mb-2">No gap analysis data yet</p>
-        <p className="text-[12px] text-text-tertiary">Run a gap analysis pipeline to see performance metrics here.</p>
-      </div>
-    );
-  }
+  const openUncitedDrawer = useCallback(() => setUncitedDrawerOpen(true), []);
+  const closeUncitedDrawer = useCallback(() => setUncitedDrawerOpen(false), []);
 
   return (
-    <div className="space-y-4">
-      {/* Top KPI Row — Full Width, Big Numbers */}
-      <div className="w-full px-0">
-        <div className="grid grid-cols-5 bg-surface border border-border rounded-md overflow-hidden">
-          <KPICell
-            label="SOV %"
-            value="—"
-            delta="Coming Soon"
-          />
-          <KPICell
-            label="Citation Presence"
-            value={`${citationPresence}%`}
-            border
-          />
-          <KPICell
-            label="SPA Score"
-            value={spaScore}
-            border
-          />
-          <KPICell
-            label="Queries Tracked"
-            value={String(totalQueries)}
-            border
-          />
-          <KPICell
-            label="Total Citations"
-            value={String(summary.total_citations)}
-            border
-          />
-        </div>
+    <div className="-m-4">
+      {/* Page Header */}
+      <div className="px-6 pt-4 pb-0">
+        <h1
+          className="text-[22px] font-semibold"
+          style={{ fontFamily: 'var(--font-display)', color: 'var(--text-primary)' }}
+        >
+          Citation Intelligence
+        </h1>
+        <p className="text-[13px]" style={{ fontFamily: 'var(--font-body)', color: 'var(--text-secondary)' }}>
+          Track how your brand is cited across AI platforms
+        </p>
       </div>
 
-      {/* Tab Bar */}
-      <TabBar
-        tabs={TABS}
-        activeTab={activeTab}
-        onTabClick={setActiveTab}
+      {/* Global Filter Bar */}
+      <CitationFilterBar
+        platform={platform}
+        onPlatformChange={setPlatform}
+        cluster={cluster}
+        onClusterChange={setCluster}
       />
 
-      {/* Tab Content — each tab fetches its own data via slug */}
-      <div>
-        {activeTab === 'performance' && slug && (
-          <PerformanceTab slug={slug} />
-        )}
-        {activeTab === 'sov' && slug && (
-          <ShareOfVoiceTab slug={slug} />
-        )}
-        {activeTab === 'citations' && slug && (
-          <CitationsTab slug={slug} />
-        )}
-        {activeTab === 'competitors' && slug && (
-          <CompetitorsTab slug={slug} />
-        )}
-        {activeTab === 'brand-health' && slug && (
-          <BrandHealthTab slug={slug} />
-        )}
-      </div>
-    </div>
-  );
-}
+      {/* Page Content */}
+      <div className="px-6 py-4 flex flex-col gap-4">
+        {/* KPI Strip — 4 cards */}
+        <KPIStrip onUncitedClick={openUncitedDrawer} />
 
-/* ── KPI Cell with proper sizing ────────────────────────────────── */
-function KPICell({
-  label,
-  value,
-  delta,
-  deltaType,
-  border,
-}: {
-  label: string;
-  value: string;
-  delta?: string;
-  deltaType?: 'positive' | 'negative';
-  border?: boolean;
-}) {
-  return (
-    <div
-      className={`p-4 min-h-[80px] flex flex-col justify-center ${
-        border ? 'border-l border-border' : ''
-      }`}
-    >
-      <p className="text-[10px] font-medium uppercase tracking-[0.06em] text-text-tertiary leading-[1.4]">
-        {label}
-      </p>
-      <div className="flex items-baseline gap-2 mt-1">
-        <p className="font-display text-[28px] font-semibold tracking-[-0.02em] text-text-primary leading-none">
-          {value}
-        </p>
-        {delta && (
-          <p
-            className={`text-[12px] font-medium ${
-              deltaType === 'positive'
-                ? 'text-success'
-                : deltaType === 'negative'
-                  ? 'text-error'
-                  : 'text-text-tertiary'
-            }`}
-          >
-            {delta}
-          </p>
-        )}
+        <div style={{ height: 1, background: 'var(--border)', margin: '24px 0' }} />
+
+        {/* Section 1: Citation Momentum + Leaderboard */}
+        <div className="grid gap-4" style={{ gridTemplateColumns: '1fr 280px' }}>
+          <CitationMomentum />
+          <CompetitorLeaderboard />
+        </div>
+
+        <div style={{ height: 1, background: 'var(--border)', margin: '24px 0' }} />
+
+        {/* Section 2: Visibility Pipeline */}
+        <VisibilityPipeline onViewAll={openUncitedDrawer} />
+
+        <div style={{ height: 1, background: 'var(--border)', margin: '24px 0' }} />
+
+        {/* Section 3: How AI Engines Talk About You */}
+        <SentimentSection />
+
+        <div style={{ height: 1, background: 'var(--border)', margin: '24px 0' }} />
+
+        {/* Section 4: Platform Intelligence Grid */}
+        <PlatformIntelligence />
+
+        <div style={{ height: 1, background: 'var(--border)', margin: '24px 0' }} />
+
+        {/* Section 5: Citation URLs Table */}
+        <CitationURLsTable />
       </div>
+
+      {/* Uncited Queries Drawer */}
+      <UncitedQueriesDrawer open={uncitedDrawerOpen} onClose={closeUncitedDrawer} />
     </div>
   );
 }

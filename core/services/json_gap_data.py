@@ -14,11 +14,13 @@ from api.schemas.brand_data import SPATrendResponse
 from api.schemas.content_data import EmbeddingProjectionResponse
 from api.schemas.gap_data import (
     ClusterListResponse,
+    ClusterProfileListResponse,
     GapSummaryResponse,
     HeatmapResponse,
     PlatformListResponse,
     QueryListResponse,
     SignalAveragesResponse,
+    TerritoryGapsResponse,
 )
 from api.services import gap_data_service as _gap_svc
 from api.services import brand_data_service as _brand_svc
@@ -36,9 +38,9 @@ class JsonGapDataService:
         self._storage = storage
         self._task_store = task_store
 
-    async def get_summary(self, effective_slug: str) -> GapSummaryResponse:
+    async def get_summary(self, effective_slug: str, *, ga_run_id: Optional[str] = None) -> GapSummaryResponse:
         return await asyncio.to_thread(
-            _gap_svc.get_summary, self._storage, effective_slug,
+            _gap_svc.get_summary, self._storage, effective_slug, ga_run_id=ga_run_id,
         )
 
     async def get_queries(
@@ -101,4 +103,18 @@ class JsonGapDataService:
     async def get_spa_trend(self, effective_slug: str) -> SPATrendResponse:
         return await asyncio.to_thread(
             _brand_svc.get_spa_trend, self._task_store, effective_slug,
+        )
+
+    async def get_cluster_profiles(
+        self, effective_slug: str,
+    ) -> ClusterProfileListResponse:
+        return await asyncio.to_thread(
+            _gap_svc.get_cluster_profiles, self._storage, effective_slug,
+        )
+
+    async def get_territory_gaps(
+        self, effective_slug: str,
+    ) -> TerritoryGapsResponse:
+        return await asyncio.to_thread(
+            _gap_svc.get_territory_gaps, self._storage, effective_slug,
         )

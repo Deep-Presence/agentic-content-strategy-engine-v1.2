@@ -14,7 +14,7 @@ from typing import Any, Optional
 
 from core.config.settings import settings
 from core.content_engine.context_router import format_scorecard_as_markdown
-from core.content_engine.llm_client import llm_call
+from core.content_engine.llm_client import llm_call, llm_call_for_agent
 from core.content_engine.prompts.strategic_planner_prompts import (
     STRATEGIC_PLANNER_SYSTEM_PROMPT,
     build_strategic_planner_user_prompt,
@@ -36,6 +36,7 @@ async def select_topics(
     user_feedback: str = "",
     parent_span: Optional[Any] = None,
     company_slug: str = "",
+    workspace_id: str = "",
 ) -> StrategicPlannerOutput:
     """Run the Strategic Planner to select top-K content opportunities.
 
@@ -77,24 +78,42 @@ async def select_topics(
         max_topics,
     )
 
-    # Call LLM via LiteLLM
-    response = await llm_call(
-        model=model,
-        system=STRATEGIC_PLANNER_SYSTEM_PROMPT,
-        user=user_prompt,
-        max_tokens=4096,
-        temperature=0.0,
-        metadata={
-            "agent": "strategic_planner",
-            "total_queries": scorecard.total_queries,
-            "max_topics": max_topics,
-            "pipeline": "content_engine",
-            "pipeline_step": "strategic_planner",
-            "provider": extract_provider(model),
-            "model": model,
-            "company_slug": company_slug,
-        },
-    )
+    metadata = {
+        "agent": "strategic_planner",
+        "agent_key": "content.strategic_planner",
+        "total_queries": scorecard.total_queries,
+        "max_topics": max_topics,
+        "pipeline": "content_engine",
+        "pipeline_step": "strategic_planner",
+        "provider": extract_provider(model),
+        "model": model,
+        "company_slug": company_slug,
+    }
+
+    if workspace_id:
+        response = await llm_call_for_agent(
+            workspace_id=workspace_id,
+            workspace_slug=company_slug,
+            agent_key="content.strategic_planner",
+            system=STRATEGIC_PLANNER_SYSTEM_PROMPT,
+            user=user_prompt,
+            max_tokens=4096,
+            temperature=0.0,
+            response_format={"type": "json_object"},
+            metadata=metadata,
+        )
+    else:
+        # Direct/CLI calls keep the legacy platform client until the platform
+        # entrypoints enforce workspace-scoped BYOK preflight.
+        response = await llm_call(
+            model=model,
+            system=STRATEGIC_PLANNER_SYSTEM_PROMPT,
+            user=user_prompt,
+            max_tokens=4096,
+            temperature=0.0,
+            response_format={"type": "json_object"},
+            metadata=metadata,
+        )
 
     # Parse output
     output = safe_parse(response.content, StrategicPlannerOutput)

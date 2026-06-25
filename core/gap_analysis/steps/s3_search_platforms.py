@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 import logging
 import random
@@ -32,6 +33,11 @@ def _fmt_duration(seconds: float) -> str:
 
 # Engines that use httpx directly (need shared httpx.AsyncClient)
 _HTTPX_ENGINES = frozenset({"claude", "gemini"})
+_BYOK_SUPPORTED_SEARCH_ENGINES = frozenset({"perplexity"})
+_BYOK_DISABLED_NATIVE_SEARCH_ENGINES = frozenset({"openai", "claude", "gemini"})
+_GAP_SEARCH_AGENT_KEYS = {
+    "perplexity": "gap.search.perplexity",
+}
 
 
 def _engine_registry() -> Dict[str, SearchEngine]:
@@ -53,6 +59,26 @@ def _select_engines(names: Iterable[str]) -> List[SearchEngine]:
     return engines
 
 
+def _byok_enabled_platform_names(names: Iterable[str]) -> List[str]:
+    """Return platform names that are supported in BYOK-only v1."""
+    enabled: List[str] = []
+    disabled: List[str] = []
+    for name in names:
+        key = name.strip().lower()
+        if key in _BYOK_DISABLED_NATIVE_SEARCH_ENGINES:
+            disabled.append(key)
+            continue
+        if key in _BYOK_SUPPORTED_SEARCH_ENGINES:
+            enabled.append(key)
+    if disabled:
+        logger.warning(
+            "Skipping native search engines in BYOK-only mode: %s. "
+            "Only OpenRouter-routed Perplexity search is enabled in BYOK v1.",
+            ", ".join(sorted(set(disabled))),
+        )
+    return enabled
+
+
 def _engine_concurrency_map() -> Dict[str, int]:
     """Build per-engine concurrency limits from settings."""
     return {
@@ -61,6 +87,15 @@ def _engine_concurrency_map() -> Dict[str, int]:
         "gemini": settings.gap_analysis_s3_gemini_concurrency,
         "perplexity": settings.gap_analysis_s3_perplexity_concurrency,
     }
+
+
+async def _close_client_if_needed(client: Any) -> None:
+    close = getattr(client, "close", None)
+    if close is None:
+        return
+    result = close()
+    if inspect.isawaitable(result):
+        await result
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +184,7 @@ async def _run_one(
     query: GeneratedQuery,
     *,
     client: Any = None,
+    search_kwargs: Optional[Dict[str, Any]] = None,
     max_retries: int = 0,
     retry_base_delay_s: float = 2.0,
 ) -> PlatformResult:
@@ -163,7 +199,12 @@ async def _run_one(
 
     for attempt in range(max_retries + 1):
         try:
-            result = await engine.search(query.query_text, query.query_id, client=client)
+            result = await engine.search(
+                query.query_text,
+                query.query_id,
+                client=client,
+                **(search_kwargs or {}),
+            )
             logger.debug(
                 "[%s] query %s done in %s — %d citations",
                 engine.engine_name,
@@ -211,6 +252,12 @@ async def _run_engine_batch(
     queries: List[GeneratedQuery],
     engine_limit: int,
     global_sem: asyncio.Semaphore,
+    trace_span: Optional[Any] = None,
+    *,
+    workspace_id: str = "",
+    workspace_slug: str = "",
+    company_slug: str = "",
+    resolver: Optional[Any] = None,
 ) -> List[PlatformResult]:
     """Run all queries for a single engine with per-engine + global throttling.
 
@@ -257,6 +304,7 @@ async def _run_engine_batch(
                 result = await _run_one(
                     engine, query,
                     client=shared_client,
+                    search_kwargs=search_kwargs,
                     max_retries=max_retries,
                     retry_base_delay_s=retry_base,
                 )
@@ -274,6 +322,28 @@ async def _run_engine_batch(
         else:
             total_citations += len(result.citations)
             cb.record_success()
+            # LangSmith tracing — log per-query engine call
+            if trace_span and (result.prompt_tokens or result.completion_tokens):
+                from core.shared_tools.tracing import log_generation
+
+                log_generation(
+                    trace_span,
+                    f"s3-{engine.engine_name}/{query.query_id}",
+                    getattr(engine, "model", "") or "",
+                    query.query_text[:2000] if query.query_text else "",
+                    (result.response_text or "")[:2000],
+                    metadata={
+                        "pipeline": "gap_analysis",
+                        "pipeline_step": f"s3_{engine.engine_name}",
+                        "provider": engine.engine_name,
+                        "model": getattr(engine, "model", "") or "",
+                    },
+                    usage={
+                        "prompt_tokens": result.prompt_tokens,
+                        "completion_tokens": result.completion_tokens,
+                        "total_tokens": result.prompt_tokens + result.completion_tokens,
+                    },
+                )
 
         # Log progress every 10% or every 25 queries, whichever is smaller
         interval = max(1, min(total // 10, 25))
@@ -292,7 +362,11 @@ async def _run_engine_batch(
     # Create shared client for connection reuse; lifecycle scoped to this batch
     async with contextlib.AsyncExitStack() as stack:
         shared_client: Any = None
-        if engine.engine_name in _HTTPX_ENGINES:
+        search_kwargs: Dict[str, Any] = {}
+        if engine.engine_name in _HTTPX_ENGINES and isinstance(
+            engine,
+            (ClaudeEngine, GeminiEngine),
+        ):
             shared_client = await stack.enter_async_context(
                 httpx.AsyncClient(
                     timeout=90,
@@ -302,18 +376,50 @@ async def _run_engine_batch(
                     ),
                 )
             )
-        elif engine.engine_name == "openai":
+        elif engine.engine_name == "openai" and isinstance(engine, OpenAIEngine):
             from openai import AsyncOpenAI
 
             shared_client = await stack.enter_async_context(
                 AsyncOpenAI(api_key=settings.openai_api_key)
             )
-        elif engine.engine_name == "perplexity":
-            from perplexity import AsyncPerplexity
+        elif (
+            engine.engine_name == "perplexity"
+            and not workspace_id
+            and isinstance(engine, PerplexityEngine)
+        ):
+            from core.shared_tools.openrouter_client import get_async_client
 
-            shared_client = await stack.enter_async_context(
-                AsyncPerplexity(api_key=settings.perplexity_api_key)
+            # Singleton client — do NOT enter into exit stack
+            shared_client = get_async_client()
+        if workspace_id and engine.engine_name == "perplexity":
+            from core.model_config.runtime import (
+                actual_provider,
+                resolve_model_config_for_agent,
             )
+            from core.shared_tools.openrouter_client import build_async_client_for_key
+
+            resolved = await resolve_model_config_for_agent(
+                workspace_id=workspace_id,
+                workspace_slug=workspace_slug or company_slug,
+                agent_key=_GAP_SEARCH_AGENT_KEYS["perplexity"],
+                resolver=resolver,
+            )
+            shared_client = build_async_client_for_key(
+                resolved.api_key,
+                base_url=resolved.base_url,
+                timeout_s=resolved.timeout_s,
+            )
+            stack.push_async_callback(_close_client_if_needed, shared_client)
+            engine.model = resolved.model
+            search_kwargs = {
+                "workspace_id": workspace_id,
+                "workspace_slug": workspace_slug or company_slug,
+                "company_slug": company_slug,
+                "agent_key": _GAP_SEARCH_AGENT_KEYS["perplexity"],
+                "credential_id": resolved.credential_id,
+                "model_config_id": resolved.model_config_id,
+                "actual_provider": actual_provider(resolved.model),
+            }
 
         tasks = [asyncio.create_task(_throttled_run(q)) for q in queries]
         results = list(await asyncio.gather(*tasks))
@@ -339,6 +445,10 @@ async def search_platforms(
     concurrency: int = 6,
     *,
     trace_span: Optional[Any] = None,
+    workspace_id: str = "",
+    workspace_slug: str = "",
+    company_slug: str = "",
+    resolver: Optional[Any] = None,
 ) -> List[PlatformResult]:
     """Search all platforms with per-engine concurrency pools.
 
@@ -349,7 +459,12 @@ async def search_platforms(
     Results are sorted deterministically by (query_id, engine) to ensure
     stable URL dedup attribution in downstream steps.
     """
-    engines = _select_engines(platform_names)
+    requested_platforms = (
+        _byok_enabled_platform_names(platform_names)
+        if workspace_id
+        else platform_names
+    )
+    engines = _select_engines(requested_platforms)
     if not engines or not queries:
         return []
 
@@ -383,6 +498,11 @@ async def search_platforms(
             queries,
             engine_limits.get(engine.engine_name, concurrency),
             global_sem,
+            trace_span=trace_span,
+            workspace_id=workspace_id,
+            workspace_slug=workspace_slug,
+            company_slug=company_slug,
+            resolver=resolver,
         )
         for engine in engines
     ]

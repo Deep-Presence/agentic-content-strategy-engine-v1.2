@@ -175,6 +175,44 @@ class TestLinkContent:
         assert result.external_links_added == 0
 
     @pytest.mark.asyncio
+    async def test_byok_workspace_does_not_require_platform_perplexity_key(
+        self, sample_draft, sample_brief, linked_response_text
+    ):
+        mock_response = AsyncMock()
+        mock_response.content = linked_response_text
+        mock_response.input_tokens = 500
+        mock_response.output_tokens = 300
+        mock_response.total_tokens = 800
+
+        with (
+            patch("core.content_engine.workers.linker.settings") as mock_settings,
+            patch(
+                "core.content_engine.workers.linker.llm_call_for_agent",
+                new_callable=AsyncMock,
+                return_value=mock_response,
+            ) as mock_byok,
+            patch("core.content_engine.workers.linker.llm_call", new_callable=AsyncMock) as mock_legacy,
+        ):
+            mock_settings.perplexity_api_key = None
+            mock_settings.content_engine_v13_linker_model = "perplexity/sonar-pro"
+            result = await link_content(
+                draft=sample_draft,
+                brief=sample_brief,
+                company_name="Ramp",
+                domain="ramp.com",
+                company_slug="ramp",
+                workspace_id="workspace-123",
+            )
+
+        assert result.internal_links_added == 2
+        mock_legacy.assert_not_called()
+        mock_byok.assert_awaited_once()
+        kwargs = mock_byok.await_args.kwargs
+        assert kwargs["workspace_id"] == "workspace-123"
+        assert kwargs["agent_key"] == "content.worker.linker"
+        assert kwargs["metadata"]["agent_key"] == "content.worker.linker"
+
+    @pytest.mark.asyncio
     async def test_link_content_success(
         self, sample_draft, sample_brief, linked_response_text
     ):

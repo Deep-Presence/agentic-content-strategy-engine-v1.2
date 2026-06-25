@@ -92,7 +92,11 @@ class TopicAssignmentStatus(str, Enum):
     """Lifecycle status of a single topic assignment."""
 
     not_started = "not_started"
+    approved = "approved"
+    rejected = "rejected"
     in_gap_analysis = "in_gap_analysis"
+    gap_analysis_complete = "gap_analysis_complete"
+    in_content_production = "in_content_production"
     content_produced = "content_produced"
     published = "published"
 
@@ -113,6 +117,7 @@ class TopicDiscoveryInput(BaseModel):
     domain: Optional[str] = None
     company_slug: Optional[str] = None
     company_id: Optional[str] = None
+    workspace_id: str = ""
     product_slug: Optional[str] = None
     product_name: Optional[str] = None
     seed_urls: List[str] = Field(default_factory=list)
@@ -159,6 +164,7 @@ class TopicExpansionInput(BaseModel):
     domain: Optional[str] = None
     company_slug: Optional[str] = None
     company_id: Optional[str] = None
+    workspace_id: str = ""
     product_slug: Optional[str] = None
     product_name: Optional[str] = None
     effective_slug: str = ""
@@ -313,6 +319,7 @@ class TopicAssignment(BaseModel):
     """A single content opportunity in the dimensionality matrix."""
 
     id: str = Field(default_factory=_uuid)
+    display_id: str = ""
     subdomain_id: str = ""
     subdomain_name: str = ""
     topic_text: str = ""
@@ -329,6 +336,8 @@ class TopicAssignment(BaseModel):
     # Persona identity (replaces anonymous "Persona N" labels)
     persona_id: str = ""
     persona_name: str = ""
+    # Per-assignment persona affinity: {persona_id: 0.0-1.0 score}
+    persona_affinity: Dict[str, float] = Field(default_factory=dict)
 
 
 class TopicAssignmentMatrix(BaseModel):
@@ -403,6 +412,10 @@ class PersonaAffinityIndex(BaseModel):
     version: int = 1
     persona_entries: Dict[str, List[PersonaSubdomainEntry]] = Field(
         default_factory=dict
+    )
+    persona_metadata: Dict[str, Dict[str, str]] = Field(
+        default_factory=dict,
+        description="persona_id → {persona_name, career_role}",
     )
     total_personas: int = 0
     total_subdomains: int = 0

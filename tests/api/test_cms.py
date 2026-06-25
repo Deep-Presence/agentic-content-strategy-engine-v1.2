@@ -50,6 +50,7 @@ def _mock_connection(**overrides):
     conn.is_active = True
     conn.last_sync_at = datetime.now(timezone.utc)
     conn.sync_post_count = 10
+    conn.provider_config = {}
     for k, v in overrides.items():
         setattr(conn, k, v)
     return conn
@@ -138,6 +139,20 @@ def mock_cms_service():
     svc.list_synced_posts = AsyncMock(return_value=[])
     svc.list_publish_history = AsyncMock(return_value=[])
     svc.list_categories = AsyncMock(return_value=[])
+    svc.list_webflow_collections = AsyncMock(return_value=[])
+    svc.get_webflow_collection_fields = AsyncMock(return_value={
+        "collection_id": "coll-1",
+        "fields": [],
+        "suggested_mapping": {
+            "title_field": "name",
+            "slug_field": "slug",
+            "body_field": "post-body",
+        },
+    })
+    svc.configure_webflow = AsyncMock(return_value={
+        "configured": True,
+        "provider_config": {"site_id": "site-1", "collections": []},
+    })
 
     return svc
 
@@ -249,6 +264,89 @@ class TestCMSConnect:
             })
         assert resp.status_code == 200
         mock_inv.assert_called_once_with("test-co", "test-co")
+
+    def test_connect_first_time_triggers_auto_sync(
+        self, client: TestClient, mock_cms_service: AsyncMock,
+    ) -> None:
+        """First-time connect (last_sync_at=None) fires a background sync."""
+        mock_cms_service.get_connection.return_value = _mock_connection(last_sync_at=None)
+        with (
+            patch("api.tasks.runner.run_cms_sync_task", new_callable=AsyncMock),
+            patch("api.routers.cms.invalidate_connection_info"),
+        ):
+            resp = client.post("/api/v1/cms/connect", json={
+                "provider": "wordpress",
+                "site_url": "https://blog.testco.com",
+                "api_key": "k",
+            })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["connected"] is True
+        assert data["sync_task_id"] is not None
+
+    def test_connect_reconnect_skips_auto_sync(
+        self, client: TestClient, mock_cms_service: AsyncMock,
+    ) -> None:
+        """Reconnect (last_sync_at set) does NOT fire a background sync."""
+        mock_cms_service.get_connection.return_value = _mock_connection(
+            last_sync_at=datetime.now(timezone.utc),
+        )
+        with patch("api.routers.cms.invalidate_connection_info"):
+            resp = client.post("/api/v1/cms/connect", json={
+                "provider": "wordpress",
+                "site_url": "https://blog.testco.com",
+                "api_key": "k",
+            })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["sync_task_id"] is None
+
+    def test_connect_duplicate_sync_caught(
+        self, client: TestClient, mock_cms_service: AsyncMock, app,
+    ) -> None:
+        """If slug lock is held, auto-sync skips silently (no crash)."""
+        from core.services.task_store import TaskConflictError
+        mock_cms_service.get_connection.return_value = _mock_connection(last_sync_at=None)
+        with (
+            patch("api.routers.cms.invalidate_connection_info"),
+            patch.object(
+                app.state.task_store, "create_task",
+                side_effect=TaskConflictError("cms_sync:test-co"),
+            ),
+        ):
+            resp = client.post("/api/v1/cms/connect", json={
+                "provider": "wordpress",
+                "site_url": "https://blog.testco.com",
+                "api_key": "k",
+            })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["connected"] is True
+        assert data["sync_task_id"] is None
+
+    def test_connect_failed_no_auto_sync(
+        self, client: TestClient, mock_cms_service: AsyncMock,
+    ) -> None:
+        """Failed connect (connected=False) does NOT trigger auto-sync."""
+        mock_cms_service.connect.return_value = {
+            "connected": False,
+            "site_name": "",
+            "site_url": "",
+            "cms_version": "",
+            "user_display_name": "",
+            "capabilities": [],
+            "error": "Bad creds",
+        }
+        with patch("api.routers.cms.invalidate_connection_info"):
+            resp = client.post("/api/v1/cms/connect", json={
+                "provider": "wordpress",
+                "site_url": "https://x.com",
+                "api_key": "k",
+            })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["connected"] is False
+        assert data["sync_task_id"] is None
 
 
 # ── 2. Get Connection ─────────────────────────────────────────────────
@@ -539,6 +637,33 @@ class TestCMSPublish:
         call_kwargs = mock_cms_service.publish_brief.call_args.kwargs
         assert call_kwargs.get("slug_override") == "custom-slug"
 
+    def test_publish_with_publish_metadata(
+        self, client: TestClient, mock_cms_service: AsyncMock,
+    ) -> None:
+        mock_cms_service.get_connection.return_value = _mock_connection()
+        resp = client.post("/api/v1/cms/publish", json={
+            "brief_id": "brief-abc123",
+            "effective_slug": "test-co",
+            "status": "publish",
+            "publish_metadata": {
+                "slug": "no-code-web-development-enterprise-overview",
+                "meta_title": "No-Code Web Development in the Enterprise | Deep Presence",
+                "meta_description": "A plain-English guide to no-code for enterprise teams.",
+                "canonical_url": "https://blogs.example.com/no-code-web-development-enterprise-overview",
+                "schema_markup": True,
+                "publish_date": "2026-04-11",
+                "author": "Aryan Keshri",
+                "tags": ["no-code", "enterprise"],
+            },
+        })
+
+        assert resp.status_code == 200
+        call_kwargs = mock_cms_service.publish_brief.call_args.kwargs
+        assert call_kwargs["publish_metadata"].slug == "no-code-web-development-enterprise-overview"
+        assert call_kwargs["publish_metadata"].meta_title == "No-Code Web Development in the Enterprise | Deep Presence"
+        assert call_kwargs["publish_metadata"].canonical_url == "https://blogs.example.com/no-code-web-development-enterprise-overview"
+        assert call_kwargs["publish_metadata"].tags == ["no-code", "enterprise"]
+
     def test_publish_with_product_slug(
         self, client: TestClient, mock_cms_service: AsyncMock,
     ) -> None:
@@ -550,6 +675,17 @@ class TestCMSPublish:
         assert resp.status_code == 200
         call_kwargs = mock_cms_service.publish_brief.call_args.kwargs
         assert call_kwargs.get("effective_slug") == "test-co__ramp-cards"
+
+    def test_publish_invalidates_ga4_caches(
+        self, client: TestClient, mock_cms_service: AsyncMock,
+    ) -> None:
+        mock_cms_service.get_connection.return_value = _mock_connection()
+        with patch("api.routers.cms.invalidate_all_ga4_caches") as mock_inv:
+            resp = client.post("/api/v1/cms/publish", json={
+                "brief_id": "brief-001",
+            })
+        assert resp.status_code == 200
+        mock_inv.assert_called_once_with("test-co")
 
 
 # ── 9. Refresh ────────────────────────────────────────────────────────
@@ -590,6 +726,17 @@ class TestCMSRefresh:
             "brief_id": "r",
         })
         assert resp.status_code == 403
+
+    def test_refresh_invalidates_ga4_caches(
+        self, client: TestClient, mock_cms_service: AsyncMock,
+    ) -> None:
+        mock_cms_service.get_connection.return_value = _mock_connection()
+        with patch("api.routers.cms.invalidate_all_ga4_caches") as mock_inv:
+            resp = client.post("/api/v1/cms/refresh/wp-456", json={
+                "brief_id": "refresh-001",
+            })
+        assert resp.status_code == 200
+        mock_inv.assert_called_once_with("test-co")
 
     def test_refresh_requires_auth(self, public_client: TestClient) -> None:
         resp = public_client.post("/api/v1/cms/refresh/wp-456", json={
@@ -660,3 +807,98 @@ class TestCMSCategories:
     def test_categories_requires_auth(self, public_client: TestClient) -> None:
         resp = public_client.get("/api/v1/cms/categories")
         assert resp.status_code in (401, 403)
+
+
+# ── 12–14. Webflow configure ──────────────────────────────────────────
+
+
+class TestWebflowConfigure:
+    """Webflow-specific CMS configure endpoints."""
+
+    def _webflow_connection(self):
+        return _mock_connection(provider=MagicMock(value="webflow"))
+
+    def test_list_collections_success(
+        self, client: TestClient, mock_cms_service: AsyncMock,
+    ) -> None:
+        mock_cms_service.get_connection.return_value = self._webflow_connection()
+        mock_cms_service.list_webflow_collections.return_value = [
+            {
+                "collection_id": "coll-1",
+                "collection_slug": "blog",
+                "display_name": "Blog Posts",
+                "singular_name": "Blog Post",
+            }
+        ]
+        resp = client.get("/api/v1/cms/webflow/collections")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["collection_id"] == "coll-1"
+
+    def test_list_collections_requires_webflow(
+        self, client: TestClient, mock_cms_service: AsyncMock,
+    ) -> None:
+        mock_cms_service.get_connection.return_value = _mock_connection()
+        resp = client.get("/api/v1/cms/webflow/collections")
+        assert resp.status_code == 422
+
+    def test_collection_fields_success(
+        self, client: TestClient, mock_cms_service: AsyncMock,
+    ) -> None:
+        mock_cms_service.get_connection.return_value = self._webflow_connection()
+        resp = client.get("/api/v1/cms/webflow/collections/coll-1/fields")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["collection_id"] == "coll-1"
+        assert data["suggested_mapping"]["body_field"] == "post-body"
+
+    def test_configure_success(
+        self, client: TestClient, mock_cms_service: AsyncMock,
+    ) -> None:
+        mock_cms_service.get_connection.return_value = self._webflow_connection()
+        with (
+            patch("api.routers.cms.invalidate_connection_info"),
+            patch("api.routers.cms._maybe_trigger_cms_sync", new_callable=AsyncMock) as mock_sync,
+        ):
+            mock_sync.return_value = "task-123"
+            resp = client.post("/api/v1/cms/webflow/configure", json={
+                "site_id": "site-1",
+                "collections": [
+                    {
+                        "collection_id": "coll-1",
+                        "enabled": True,
+                        "field_mapping": {
+                            "title_field": "name",
+                            "slug_field": "slug",
+                            "body_field": "post-body",
+                        },
+                    }
+                ],
+                "trigger_sync": True,
+            })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["configured"] is True
+        assert data["sync_task_id"] == "task-123"
+        mock_cms_service.configure_webflow.assert_awaited_once()
+
+    def test_configure_requires_member(self, viewer_client: TestClient) -> None:
+        resp = viewer_client.post("/api/v1/cms/webflow/configure", json={
+            "collections": [],
+        })
+        assert resp.status_code == 403
+
+    def test_connect_passes_provider_config(
+        self, client: TestClient, mock_cms_service: AsyncMock,
+    ) -> None:
+        with patch("api.routers.cms.invalidate_connection_info"):
+            resp = client.post("/api/v1/cms/connect", json={
+                "provider": "webflow",
+                "site_url": "https://marketing.example.com",
+                "api_key": "wf-token",
+                "provider_config": {"site_id": "site-1"},
+            })
+        assert resp.status_code == 200
+        call_kwargs = mock_cms_service.connect.call_args.kwargs
+        assert call_kwargs.get("provider_config") == {"site_id": "site-1"}

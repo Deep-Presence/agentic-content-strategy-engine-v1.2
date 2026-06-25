@@ -44,11 +44,25 @@ from core.db.repositories.company_repo import CompanyRepository
 from core.db.repositories.invite_repo import InviteRepository
 from core.db.repositories.pipeline_defaults_repo import PipelineDefaultsRepository
 from core.db.repositories.product_repo import ProductRepository
+from core.db.repositories.workspace_repo import (
+    WorkspaceMembershipRepository,
+    WorkspaceRepository,
+)
 from core.models.organization import Company, CompanyPipelineDefaults, Product, UserProfile
+from core.services.workspace_service import WorkspaceService
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _workspace_role_from_user_role(role: str | UserRole) -> str:
+    value = role.value if isinstance(role, UserRole) else str(role)
+    if value == "superuser":
+        return "owner"
+    if value == "viewer":
+        return "viewer"
+    return "member"
 
 
 class DbAuthService:
@@ -62,6 +76,7 @@ class DbAuthService:
         product_repo: ProductRepository,
         defaults_repo: PipelineDefaultsRepository,
         secret_key: str,
+        workspace_service: WorkspaceService | None = None,
     ) -> None:
         self._company_repo = company_repo
         self._auth_repo = auth_repo
@@ -69,6 +84,12 @@ class DbAuthService:
         self._product_repo = product_repo
         self._defaults_repo = defaults_repo
         self._secret_key = secret_key
+        self._workspace_service = workspace_service or WorkspaceService(
+            workspace_repo=WorkspaceRepository(auth_repo._session),
+            membership_repo=WorkspaceMembershipRepository(auth_repo._session),
+            company_repo=company_repo,
+            auth_repo=auth_repo,
+        )
 
     # ── ORM → Pydantic conversion ─────────────────────────────
 
@@ -317,6 +338,15 @@ class DbAuthService:
             role=UserRole(role),
             is_active=True,
         )
+        company = await self._company_repo.get_by_id(company_id)
+        if company is not None:
+            company_profile = self._orm_to_company(company)
+            await self._workspace_service.ensure_workspace_for_company(company_profile)
+            await self._workspace_service.ensure_workspace_membership(
+                company_profile.slug,
+                str(model.id),
+                role=_workspace_role_from_user_role(role),
+            )
         return self._orm_to_user_profile(model)
 
     async def update_user(
@@ -405,7 +435,15 @@ class DbAuthService:
         # Eagerly load products relationship to avoid lazy-load in async context
         await self._company_repo._session.refresh(company_model, ["products"])
 
-        return self._orm_to_user_profile(user_model), self._orm_to_company(company_model)
+        company = self._orm_to_company(company_model)
+        await self._workspace_service.ensure_workspace_for_company(
+            company,
+            created_by_user_id=str(user_model.id),
+            owner_user_id=str(user_model.id),
+            owner_role="owner",
+        )
+
+        return self._orm_to_user_profile(user_model), company
 
     # ── Invite flow ────────────────────────────────────────────
 
@@ -455,8 +493,15 @@ class DbAuthService:
         )
 
         await self._invite_repo.mark_redeemed(invite.id, user_model.id)
+        company_profile = self._orm_to_company(company)
+        await self._workspace_service.ensure_workspace_for_company(company_profile)
+        await self._workspace_service.ensure_workspace_membership(
+            company_profile.slug,
+            str(user_model.id),
+            role=_workspace_role_from_user_role(invite.role),
+        )
 
-        return self._orm_to_user_profile(user_model), self._orm_to_company(company)
+        return self._orm_to_user_profile(user_model), company_profile
 
     # ── Pipeline defaults ──────────────────────────────────────
 

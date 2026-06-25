@@ -34,6 +34,10 @@ _PUBLIC_PATHS: frozenset[str] = frozenset({
     "/api/v1/auth/register",
     "/api/v1/auth/login",
     "/api/v1/auth/join",
+    "/api/v1/analytics/google/callback",
+    "/api/v1/cms/webflow/callback",
+    "/api/v1/cms/webflow/webhook",
+    "/api/v1/analytics/google/sync-all",
 })
 
 _PUBLIC_PREFIXES: tuple[str, ...] = (

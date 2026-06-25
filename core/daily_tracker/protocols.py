@@ -14,6 +14,8 @@ from typing import Protocol, runtime_checkable
 from core.models.daily_tracker import (
     CompetitorMetrics,
     DailyRunResult,
+    FanoutGenerationResult,
+    FanoutQuery,
     MentionAnalysis,
     PromptLibraryFilter,
     TrackedPrompt,
@@ -64,6 +66,49 @@ class PromptLibraryServiceProtocol(Protocol):
         self, company_id: str, prompts: list[dict[str, object]]
     ) -> list[TrackedPrompt]: ...
 
+    async def list_fanout_queries(
+        self, parent_prompt_id: str
+    ) -> list[TrackedPrompt]: ...
+
+    async def create_fanout_queries(
+        self,
+        parent_prompt_id: str,
+        company_id: str,
+        queries: list[FanoutQuery],
+    ) -> list[TrackedPrompt]: ...
+
+    async def regenerate_fanout_queries(
+        self,
+        parent_prompt_id: str,
+        company_id: str,
+        queries: list[FanoutQuery],
+    ) -> list[TrackedPrompt]: ...
+
+    async def pin_fanout(self, fanout_id: str) -> TrackedPrompt: ...
+
+    async def unpin_fanout(self, fanout_id: str) -> TrackedPrompt: ...
+
+
+@runtime_checkable
+class QueryFanoutServiceProtocol(Protocol):
+    """LLM-based query fanout generator.
+
+    Generates intent-axis query variants from a parent prompt via
+    a single structured OpenRouter call.
+    """
+
+    async def generate_fanout(
+        self,
+        parent_text: str,
+        brand_name: str,
+        brand_category: str = "",
+        competitors: list[str] | None = None,
+        target_count: int = 15,
+        workspace_id: str = "",
+        workspace_slug: str = "",
+        company_slug: str = "",
+    ) -> FanoutGenerationResult: ...
+
 
 @runtime_checkable
 class PlatformRunnerServiceProtocol(Protocol):
@@ -79,6 +124,9 @@ class PlatformRunnerServiceProtocol(Protocol):
         prompts: list[TrackedPrompt],
         engines: list[str] | None = None,
         concurrency: int = 6,
+        workspace_id: str = "",
+        workspace_slug: str = "",
+        company_slug: str = "",
     ) -> DailyRunResult: ...
 
     async def get_available_engines(self) -> list[str]: ...
@@ -145,6 +193,8 @@ class DailyTrackerOrchestratorProtocol(Protocol):
         company_id: str,
         prompt_ids: list[str] | None = None,
         engines: list[str] | None = None,
-    ) -> str: ...
+        workspace_id: str = "",
+        workspace_slug: str = "",
+    ) -> DailyRunResult: ...
 
     async def get_run_status(self, run_id: str) -> dict[str, object]: ...

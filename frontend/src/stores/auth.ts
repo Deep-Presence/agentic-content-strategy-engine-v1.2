@@ -1,200 +1,148 @@
 /**
- * Auth Zustand store — manages JWT token, user, and company state.
- *
- * Persists token + user + company to localStorage so sessions survive refresh.
- * The dashboard layout uses this to gate access and redirect to /login or /onboarding.
+ * Zustand auth store — no token in client state.
+ * Token lives ONLY in httpOnly cookie (managed by BFF).
  */
+
 import { create } from 'zustand';
-import { apiGet, apiPost, ApiError } from '@/lib/api/client';
-import { AUTH, COMPANIES } from '@/lib/api/endpoints';
+import { authApi } from '@/lib/api-client';
+import { AUTH_CHANNEL } from '@/lib/auth/constants';
+import type {
+  AuthUser,
+  AuthCompany,
+  LoginPayload,
+  RegisterPayload,
+  JoinPayload,
+} from '@/lib/auth/types';
 
-// ---------------------------------------------------------------------------
-// Types (mirror backend response shapes)
-// ---------------------------------------------------------------------------
+// ── State interface ──────────────────────────────────────
 
-export interface AuthUser {
-  id: string;
-  email: string;
-  first_name: string;
-  last_name: string;
-  role: string;
-  company_id: string;
-  is_active: boolean;
-}
-
-export interface AuthCompany {
-  id: string;
-  slug: string;
-  name: string;
-  domain: string;
-}
-
-interface LoginResponse {
-  access_token: string;
-  user: AuthUser;
-  company: AuthCompany;
-}
-
-interface MeResponse {
-  user: AuthUser;
-  company: AuthCompany;
-}
-
-export interface CompanyProfile {
-  slug: string;
-  name: string;
-  domain: string;
-  has_research: boolean;
-  has_gap_analysis: boolean;
-  has_content: boolean;
-}
-
-// ---------------------------------------------------------------------------
-// Store shape
-// ---------------------------------------------------------------------------
-
-interface AuthState {
-  token: string | null;
+export interface AuthState {
   user: AuthUser | null;
   company: AuthCompany | null;
+  sessionExpiresAt: string | null; // ISO8601
+  isInitialized: boolean;
   isLoading: boolean;
-  error: string | null;
 
-  // Actions
-  login: (email: string, password: string) => Promise<void>;
-  register: (data: {
-    first_name: string;
-    last_name: string;
-    email: string;
-    password: string;
-    company_name: string;
-    company_domain: string;
-  }) => Promise<void>;
-  join: (data: {
-    invite_code: string;
-    first_name: string;
-    last_name: string;
-    email: string;
-    password: string;
-  }) => Promise<void>;
-  fetchMe: () => Promise<boolean>;
-  checkOnboardingNeeded: () => Promise<boolean>;
+  login: (payload: LoginPayload) => Promise<void>;
+  register: (payload: RegisterPayload) => Promise<void>;
+  join: (payload: JoinPayload) => Promise<void>;
+  initialize: () => Promise<void>;
   logout: () => void;
-  clearError: () => void;
-  hydrateFromStorage: () => void;
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+// ── BroadcastChannel ─────────────────────────────────────
 
-function persistAuth(token: string, user: AuthUser, company: AuthCompany) {
-  localStorage.setItem('dp_token', token);
-  localStorage.setItem('dp_user', JSON.stringify(user));
-  localStorage.setItem('dp_company', JSON.stringify(company));
+let channel: BroadcastChannel | null = null;
+
+function getChannel(): BroadcastChannel | null {
+  if (typeof window === 'undefined') return null;
+  if (typeof BroadcastChannel === 'undefined') return null;
+  if (!channel) channel = new BroadcastChannel(AUTH_CHANNEL);
+  return channel;
 }
 
-function clearPersistedAuth() {
-  localStorage.removeItem('dp_token');
-  localStorage.removeItem('dp_user');
-  localStorage.removeItem('dp_company');
+function broadcast(type: 'login' | 'logout'): void {
+  try {
+    getChannel()?.postMessage({ type });
+  } catch {
+    // non-critical
+  }
 }
 
-// ---------------------------------------------------------------------------
-// Store
-// ---------------------------------------------------------------------------
+// ── Store ────────────────────────────────────────────────
 
-export const useAuthStore = create<AuthState>((set, get) => ({
-  token: null,
+export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   company: null,
+  sessionExpiresAt: null,
+  isInitialized: false,
   isLoading: false,
-  error: null,
 
-  hydrateFromStorage: () => {
-    if (typeof window === 'undefined') return;
-    const token = localStorage.getItem('dp_token');
-    if (!token) return;
+  login: async (payload) => {
+    set({ isLoading: true });
     try {
-      const user = JSON.parse(localStorage.getItem('dp_user') ?? 'null');
-      const company = JSON.parse(localStorage.getItem('dp_company') ?? 'null');
-      if (user && company) {
-        set({ token, user, company });
-      }
+      const res = await authApi.login(payload);
+      set({
+        user: res.user,
+        company: res.company,
+        sessionExpiresAt: res.session_expires_at,
+        isInitialized: true,
+      });
+      broadcast('login');
+      const { fetchWorkspaces } = await import('@/stores/workspace').then(
+        (mod) => mod.useWorkspaceStore.getState(),
+      );
+      await fetchWorkspaces();
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  register: async (payload) => {
+    set({ isLoading: true });
+    try {
+      const res = await authApi.register(payload);
+      set({
+        user: res.user,
+        company: res.company,
+        sessionExpiresAt: res.session_expires_at,
+        isInitialized: true,
+      });
+      broadcast('login');
+      const { fetchWorkspaces } = await import('@/stores/workspace').then(
+        (mod) => mod.useWorkspaceStore.getState(),
+      );
+      await fetchWorkspaces();
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  join: async (payload) => {
+    set({ isLoading: true });
+    try {
+      const res = await authApi.join(payload);
+      set({
+        user: res.user,
+        company: res.company,
+        sessionExpiresAt: res.session_expires_at,
+        isInitialized: true,
+      });
+      broadcast('login');
+      const { fetchWorkspaces } = await import('@/stores/workspace').then(
+        (mod) => mod.useWorkspaceStore.getState(),
+      );
+      await fetchWorkspaces();
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  initialize: async () => {
+    set({ isLoading: true });
+    try {
+      const data = await authApi.me();
+      set({
+        user: data.user,
+        company: data.company,
+        sessionExpiresAt: data.session_expires_at,
+        isInitialized: true,
+        isLoading: false,
+      });
     } catch {
-      clearPersistedAuth();
-    }
-  },
-
-  login: async (email, password) => {
-    set({ isLoading: true, error: null });
-    try {
-      const res = await apiPost<LoginResponse>(AUTH.login, { email, password });
-      persistAuth(res.access_token, res.user, res.company);
-      set({ token: res.access_token, user: res.user, company: res.company, isLoading: false });
-    } catch (err) {
-      const msg = err instanceof ApiError ? err.detail : 'Login failed';
-      set({ isLoading: false, error: msg });
-      throw err;
-    }
-  },
-
-  register: async (data) => {
-    set({ isLoading: true, error: null });
-    try {
-      const res = await apiPost<LoginResponse>(AUTH.register, data);
-      persistAuth(res.access_token, res.user, res.company);
-      set({ token: res.access_token, user: res.user, company: res.company, isLoading: false });
-    } catch (err) {
-      const msg = err instanceof ApiError ? err.detail : 'Registration failed';
-      set({ isLoading: false, error: msg });
-      throw err;
-    }
-  },
-
-  join: async (data) => {
-    set({ isLoading: true, error: null });
-    try {
-      const res = await apiPost<LoginResponse>(AUTH.join, data);
-      persistAuth(res.access_token, res.user, res.company);
-      set({ token: res.access_token, user: res.user, company: res.company, isLoading: false });
-    } catch (err) {
-      const msg = err instanceof ApiError ? err.detail : 'Join failed';
-      set({ isLoading: false, error: msg });
-      throw err;
-    }
-  },
-
-  fetchMe: async () => {
-    const token = get().token ?? localStorage.getItem('dp_token');
-    if (!token) return false;
-    try {
-      const res = await apiGet<MeResponse>(AUTH.me);
-      persistAuth(token, res.user, res.company);
-      set({ token, user: res.user, company: res.company });
-      return true;
-    } catch {
-      clearPersistedAuth();
-      set({ token: null, user: null, company: null });
-      return false;
-    }
-  },
-
-  checkOnboardingNeeded: async () => {
-    const company = get().company;
-    if (!company?.slug) return true;
-    try {
-      const profile = await apiGet<CompanyProfile>(COMPANIES.profile(company.slug));
-      return !profile.has_research;
-    } catch {
-      return true;
+      set({
+        user: null,
+        company: null,
+        sessionExpiresAt: null,
+        isInitialized: true,
+        isLoading: false,
+      });
     }
   },
 
   logout: () => {
-    clearPersistedAuth();
-    set({ token: null, user: null, company: null, error: null });
+    authApi.logout().catch(() => {}); // fire-and-forget, clears httpOnly cookie
+    set({ user: null, company: null, sessionExpiresAt: null });
+    broadcast('logout');
   },
-
-  clearError: () => set({ error: null }),
 }));

@@ -182,6 +182,8 @@ class KnowledgeBaseInput(BaseModel):
     domain: Optional[str] = None
     company_slug: Optional[str] = None
     company_id: Optional[str] = None
+    workspace_id: str = ""
+    workspace_slug: str = ""
     product_slug: Optional[str] = None
     product_name: Optional[str] = None
     seed_urls: List[str] = Field(default_factory=list)
@@ -242,18 +244,49 @@ class CompetitorProfile(BaseModel):
 
     name: str = ""
     domain: str = ""
-    relevance: Literal["direct", "indirect", "mindshare", "niche"] = "direct"
+    relevance: Literal["direct", "indirect", "mindshare", "niche", "emerging"] = "direct"
     relevance_score: float = 0.0
     key_differentiators: List[str] = Field(default_factory=list)
     market_position: str = ""
+    strengths: List[str] = Field(default_factory=list)
+    weaknesses: List[str] = Field(default_factory=list)
+    funding_info: str = ""
+    primary_use_case: str = ""
 
 
 class CompetitorRegistryStructured(BaseModel):
-    """Structured output from the Competitor Scanner agent."""
+    """Structured output from the Competitor Scanner agent.
+
+    Populated by the two-pass extraction step: Pass 1 (sonar-deep-research)
+    produces markdown, Pass 2 (Claude Haiku) extracts structured JSON.
+    """
 
     direct_competitors: List[CompetitorProfile] = Field(default_factory=list)
     mindshare_competitors: List[CompetitorProfile] = Field(default_factory=list)
+    niche_competitors: List[CompetitorProfile] = Field(default_factory=list)
+    emerging_competitors: List[CompetitorProfile] = Field(default_factory=list)
     market_map: str = ""
+    competitive_positioning: str = ""
+    feature_comparison_summary: str = ""
+    total_competitor_count: int = 0
+    extraction_model: str = ""
+    extraction_timestamp: str = ""
+
+    def all_competitor_names(self) -> List[str]:
+        """Return deduplicated list of all competitor names across categories."""
+        seen: set = set()
+        names: list = []
+        for group in [
+            self.direct_competitors,
+            self.mindshare_competitors,
+            self.niche_competitors,
+            self.emerging_competitors,
+        ]:
+            for c in group:
+                if c.name and c.name not in seen:
+                    seen.add(c.name)
+                    names.append(c.name)
+        return names
 
 
 class CompetitorWeakness(BaseModel):

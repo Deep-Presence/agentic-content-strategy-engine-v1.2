@@ -86,6 +86,8 @@ class ResearchOrchestratorInput(BaseModel):
     company_name: str
     domain: str = ""
     company_slug: Optional[str] = None
+    workspace_id: str = ""
+    workspace_slug: str = ""
     product_slug: Optional[str] = None
     product_name: Optional[str] = None
 

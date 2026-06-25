@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import time
@@ -188,17 +189,45 @@ def _prefilter(
 
 def _get_llm():
     """
-    LLM used for final ranking + drafting. Uses Gemini via LangChain.
+    Legacy LLM used for final ranking + drafting without workspace context.
     """
-    from langchain_google_genai import ChatGoogleGenerativeAI
+    from core.shared_tools.openrouter_client import build_chat_openai_via_openrouter
 
-    api_key = settings.google_api_key_reddit_hil or settings.google_api_key_company_deepagent
-    if not api_key:
-        raise RuntimeError(
-            "Missing GOOGLE_API_KEY_REDDIT_HIL (recommended) or GOOGLE_API_KEY_COMPANY_DEEPAGENT (fallback)."
+    return build_chat_openai_via_openrouter(settings.google_gemini_model_reddit_hil)
+
+
+def _run_byok_select_and_draft_call(
+    *,
+    workspace_id: str,
+    workspace_slug: str,
+    prompt: str,
+) -> Any:
+    """Run the async BYOK agent wrapper from this synchronous graph."""
+
+    async def _call() -> Any:
+        from core.content_engine.llm_client import llm_call_for_agent
+
+        return await llm_call_for_agent(
+            workspace_id=workspace_id,
+            workspace_slug=workspace_slug,
+            agent_key="reddit_hil.ranking_drafting",
+            system=(
+                "You are a Reddit engagement assistant. Return only valid JSON "
+                "for human-reviewed draft notifications."
+            ),
+            user=prompt,
+            metadata={
+                "pipeline": "reddit_hil",
+                "pipeline_step": "select_and_draft",
+                "company_slug": workspace_slug,
+            },
         )
-    model_name = settings.google_gemini_model_reddit_hil
-    return ChatGoogleGenerativeAI(model=model_name, api_key=api_key)
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(_call())
+    raise RuntimeError("Reddit HIL BYOK graph must be invoked from a synchronous context")
 
 
 def _llm_select_and_draft(
@@ -208,6 +237,8 @@ def _llm_select_and_draft(
     style_md: str,
     candidates: List[Tuple[RedditThread, float]],
     top_k: int,
+    workspace_id: str = "",
+    workspace_slug: str = "",
 ) -> List[DraftNotification]:
     """
     Single LLM call that:
@@ -216,8 +247,6 @@ def _llm_select_and_draft(
     - writes drafts following the style guide
     Returns structured DraftNotification objects.
     """
-    llm = _get_llm()
-
     items = []
     for t, hscore in candidates:
         snippet = (t.selftext or "").strip()
@@ -285,10 +314,44 @@ Candidate threads (JSON):
 {json.dumps(items, ensure_ascii=False)}
 """.strip()
 
-    res = llm.invoke(prompt)
+    if workspace_id:
+        res = _run_byok_select_and_draft_call(
+            workspace_id=workspace_id,
+            workspace_slug=workspace_slug,
+            prompt=prompt,
+        )
+    else:
+        llm = _get_llm()
+        res = llm.invoke(prompt)
+
     content = getattr(res, "content", None) if res is not None else None
     if not isinstance(content, str) or not content.strip():
         raise RuntimeError("LLM returned empty content for select+draft")
+
+    # Cost tracking — try actual usage from ChatOpenAI response_metadata, fallback to char estimation
+    try:
+        from core.shared_tools.cost_tracker import track_llm_cost
+
+        if not workspace_id:
+            _usage_meta = getattr(res, "response_metadata", {}).get("token_usage", {})
+            _actual_pt = _usage_meta.get("prompt_tokens", 0) if isinstance(_usage_meta, dict) else 0
+            _actual_ct = _usage_meta.get("completion_tokens", 0) if isinstance(_usage_meta, dict) else 0
+            if _actual_pt or _actual_ct:
+                _est_pt, _est_ct, _method = _actual_pt, _actual_ct, "sdk"
+            else:
+                _est_pt = len(prompt) // 4
+                _est_ct = len(content) // 4
+                _method = "char_count"
+            track_llm_cost(
+                model=settings.google_gemini_model_reddit_hil, provider="openrouter",
+                pipeline="reddit_hil", pipeline_step="select_and_draft",
+                prompt_tokens=_est_pt, completion_tokens=_est_ct,
+                call_site="core.reddit_hil.graph",
+                source="openrouter",
+                extra={"estimation_method": _method},
+            )
+    except Exception:  # noqa: BLE001
+        pass  # Cost tracking is best-effort
 
     try:
         parsed = json.loads(content)
@@ -389,6 +452,8 @@ def _draft_reply(state: Dict[str, Any]) -> Dict[str, Any]:
         style_md=style_md,
         candidates=shortlisted,
         top_k=inp.top_k,
+        workspace_id=inp.workspace_id,
+        workspace_slug=inp.workspace_slug or inp.company_slug,
     )
     return {**state, "drafts": drafts}
 

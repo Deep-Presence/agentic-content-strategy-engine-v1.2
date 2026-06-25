@@ -58,10 +58,9 @@ class TestCompanyProfile:
         resp = client.get("/api/v1/companies/nonexistent")
         assert resp.status_code == 403
 
-    def test_returns_403_for_invalid_slug(self, client: TestClient) -> None:
-        # Invalid slug doesn't match authenticated user's company → 403
+    def test_returns_400_for_invalid_slug(self, client: TestClient) -> None:
         resp = client.get("/api/v1/companies/INVALID_SLUG!")
-        assert resp.status_code == 403
+        assert resp.status_code == 400
 
     def test_returns_profile_from_auth_store(
         self, client: TestClient, test_company

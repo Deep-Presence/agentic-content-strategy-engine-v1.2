@@ -1,132 +1,152 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { ProgressBar } from '@/components/ui';
-import { Check, AlertCircle } from 'lucide-react';
-import { useTaskStream } from '@/lib/hooks/useTaskStream';
+import { Check } from 'lucide-react';
 
-// Maps sub-pipeline names to display labels
-const PIPELINE_LABELS: Record<string, string> = {
-  site_audit: 'Site Audit',
-  kb: 'Knowledge Base',
-  knowledge_base: 'Knowledge Base',
-  ap: 'Audience Personas',
-  audience_persona: 'Audience Personas',
-  vsg: 'Voice Style Guide',
-  voice_style_guide: 'Voice Style Guide',
-  ga: 'Gap Analysis',
-  gap_analysis: 'Gap Analysis',
-  td: 'Topic Discovery',
-  topic_discovery: 'Topic Discovery',
-};
-
-const PHASE_PIPELINES: Record<string, string[]> = {
-  phase_a: ['site_audit', 'kb'],
-  phase_b: ['ap'],
-  phase_c: ['vsg', 'ga', 'td'],
-};
-
-// Ordered phases for display
 const PHASES = [
-  { id: 'site_audit', label: 'Site Audit' },
-  { id: 'kb', label: 'Knowledge Base' },
-  { id: 'ap', label: 'Audience Personas' },
-  { id: 'vsg', label: 'Voice Style Guide' },
-  { id: 'ga', label: 'Gap Analysis' },
-  { id: 'td', label: 'Topic Discovery' },
+  'Site Audit',
+  'Knowledge Base',
+  'Gap Analysis',
+  'Topic Discovery',
+  'Voice Style Guide',
+  'Audience Personas',
 ];
 
+const PHASE_COMPLETE_TIMES = [10, 20, 35, 45, 52, 58];
+
+const FEED_MESSAGES = [
+  'Crawling lovable.dev... 847 pages discovered',
+  'Analyzing page structure and metadata',
+  'Checking robots.txt and bot access policies',
+  'Scoring technical SEO dimensions',
+  'Running AEO readiness assessment',
+  'Extracting structured data from key pages',
+  'Building company overview document',
+  'Analyzing brand perception signals',
+  'Scanning competitor landscape',
+  'Aggregating customer review data',
+  'Identifying weakness patterns',
+  'Synthesizing knowledge base',
+  'Querying 4 AI platforms across 99 queries...',
+  'Collecting citations from ChatGPT',
+  'Collecting citations from Claude',
+  'Collecting citations from Perplexity',
+  'Collecting citations from Gemini',
+  'Computing embedding similarities',
+  'Analyzing 1,816 citations...',
+  'Classifying query gaps vs. wins',
+  'Clustering topics by semantic similarity',
+  'Identifying content opportunities',
+  'Mapping coverage gaps',
+  'Generating topic priority scores',
+  'Analyzing voice patterns from top-cited pages',
+  'Extracting stylistic registers',
+  'Building lexicon recommendations',
+  'Generating persona: Marcus — Technical Evaluator',
+  'Generating persona: Elena — Growth Leader',
+  'Generating persona: Arjun — Developer Builder',
+  'Finalizing audience profiles',
+  'Computing AI Presence Score...',
+  'Pipeline complete — all deliverables generated',
+];
+
+interface AnimatedCounterProps {
+  target: number;
+  duration: number;
+  label: string;
+}
+
+function AnimatedCounter({ target, duration, label }: AnimatedCounterProps) {
+  const [count, setCount] = useState(0);
+  const frameRef = useRef<number>(0);
+  const startRef = useRef<number>(0);
+
+  useEffect(() => {
+    startRef.current = performance.now();
+    const animate = (now: number) => {
+      const elapsed = now - startRef.current;
+      const progress = Math.min(elapsed / (duration * 1000), 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setCount(Math.round(eased * target));
+      if (progress < 1) {
+        frameRef.current = requestAnimationFrame(animate);
+      }
+    };
+    frameRef.current = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(frameRef.current);
+  }, [target, duration]);
+
+  return (
+    <div className="text-center">
+      <p className="font-display text-[28px] font-semibold tracking-[-0.02em] text-text-primary">
+        {count.toLocaleString()}
+      </p>
+      <p className="text-[11px] font-medium uppercase tracking-[0.06em] text-text-tertiary mt-0.5">
+        {label}
+      </p>
+    </div>
+  );
+}
+
 interface ScreenPipelineProps {
-  taskId: string | null;
   onComplete: () => void;
 }
 
-export function ScreenPipeline({ taskId, onComplete }: ScreenPipelineProps) {
-  const { status, events, progressPct, error } = useTaskStream(taskId);
+export function ScreenPipeline({ onComplete }: ScreenPipelineProps) {
+  const [progress, setProgress] = useState(0);
   const [feedItems, setFeedItems] = useState<string[]>([]);
-  const [completedPipelines, setCompletedPipelines] = useState<Set<string>>(new Set());
-  const [activePipelines, setActivePipelines] = useState<Set<string>>(new Set());
+  const [completedPhases, setCompletedPhases] = useState<boolean[]>(Array(6).fill(false));
   const feedRef = useRef<HTMLDivElement>(null);
-  const completedRef = useRef(false);
-  const processedRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const feedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const phaseTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const startTimeRef = useRef(Date.now());
+  const feedIndexRef = useRef(0);
 
-  // Process ALL new SSE events since last render (not just the last one)
+  const cleanup = useCallback(() => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (feedTimerRef.current) clearInterval(feedTimerRef.current);
+    if (phaseTimerRef.current) clearInterval(phaseTimerRef.current);
+  }, []);
+
   useEffect(() => {
-    if (events.length <= processedRef.current) return;
+    startTimeRef.current = Date.now();
 
-    const newEvents = events.slice(processedRef.current);
-    processedRef.current = events.length;
-
-    const newFeedMsgs: string[] = [];
-
-    for (const event of newEvents) {
-      const { type, data } = event;
-      let feedMsg = '';
-
-      if (type === 'onboarding_sub_start') {
-        const pipeline = data.pipeline as string;
-        const label = PIPELINE_LABELS[pipeline] ?? pipeline;
-        feedMsg = `Starting ${label}...`;
-        setActivePipelines((prev) => new Set(prev).add(pipeline));
-      } else if (type === 'onboarding_sub_complete') {
-        const pipeline = data.pipeline as string;
-        const label = PIPELINE_LABELS[pipeline] ?? pipeline;
-        const timeS = data.time_s ? ` (${Math.round(data.time_s as number)}s)` : '';
-        feedMsg = `${label} completed${timeS}`;
-        setCompletedPipelines((prev) => new Set(prev).add(pipeline));
-        setActivePipelines((prev) => {
-          const next = new Set(prev);
-          next.delete(pipeline);
-          return next;
-        });
-      } else if (type === 'onboarding_sub_failed') {
-        const pipeline = data.pipeline as string;
-        const label = PIPELINE_LABELS[pipeline] ?? pipeline;
-        feedMsg = `${label} failed: ${(data.error as string) ?? 'unknown error'}`;
-        setActivePipelines((prev) => {
-          const next = new Set(prev);
-          next.delete(pipeline);
-          return next;
-        });
-      } else if (type === 'onboarding_phase_start') {
-        const phase = data.phase as string;
-        feedMsg = `Phase ${phase.replace('phase_', '').toUpperCase()} started`;
-        const pipelines = PHASE_PIPELINES[phase] ?? [];
-        setActivePipelines((prev) => {
-          const next = new Set(prev);
-          pipelines.forEach((p) => next.add(p));
-          return next;
-        });
-      } else if (type === 'onboarding_phase_complete') {
-        const phase = data.phase as string;
-        feedMsg = `Phase ${phase.replace('phase_', '').toUpperCase()} completed`;
-      } else if (type === 'onboarding_phase_skipped') {
-        const phase = data.phase as string;
-        feedMsg = `Phase ${phase.replace('phase_', '').toUpperCase()} skipped: ${(data.reason as string) ?? ''}`;
-      } else if (type === 'onboarding_sa_progress' && data.message) {
-        feedMsg = data.message as string;
-      } else if (type === 'progress' && data.message) {
-        feedMsg = data.message as string;
-      } else if (type === 'log' && data.message) {
-        feedMsg = data.message as string;
-      } else if (type === 'step_start' && data.step) {
-        feedMsg = `Running ${data.step as string}...`;
-      } else if (type === 'step_complete' && data.step) {
-        feedMsg = `${data.step as string} done`;
-      } else if (type === 'onboarding_start') {
-        feedMsg = 'Onboarding pipeline started';
+    // Progress bar: 0→100 over 60 seconds
+    timerRef.current = setInterval(() => {
+      const elapsed = (Date.now() - startTimeRef.current) / 1000;
+      const pct = Math.min((elapsed / 60) * 100, 100);
+      setProgress(pct);
+      if (pct >= 100) {
+        cleanup();
+        setTimeout(onComplete, 800);
       }
+    }, 200);
 
-      if (feedMsg) {
-        newFeedMsgs.push(feedMsg);
+    // Feed messages: every ~1.8 seconds
+    feedTimerRef.current = setInterval(() => {
+      if (feedIndexRef.current < FEED_MESSAGES.length) {
+        setFeedItems((prev) => [...prev, FEED_MESSAGES[feedIndexRef.current]]);
+        feedIndexRef.current++;
       }
-    }
+    }, 1800);
 
-    if (newFeedMsgs.length > 0) {
-      setFeedItems((prev) => [...prev, ...newFeedMsgs]);
-    }
-  }, [events]);
+    // Phase completion checkmarks
+    phaseTimerRef.current = setInterval(() => {
+      const elapsed = (Date.now() - startTimeRef.current) / 1000;
+      setCompletedPhases((prev) => {
+        const next = [...prev];
+        PHASE_COMPLETE_TIMES.forEach((t, i) => {
+          if (elapsed >= t) next[i] = true;
+        });
+        return next;
+      });
+    }, 500);
+
+    return cleanup;
+  }, [onComplete, cleanup]);
 
   // Auto-scroll feed
   useEffect(() => {
@@ -135,18 +155,7 @@ export function ScreenPipeline({ taskId, onComplete }: ScreenPipelineProps) {
     }
   }, [feedItems]);
 
-  // Transition to complete screen when pipeline finishes
-  useEffect(() => {
-    if (status === 'completed' && !completedRef.current) {
-      completedRef.current = true;
-      setTimeout(onComplete, 1500);
-    }
-  }, [status, onComplete]);
-
-  // Compute progress — use SSE progress_pct or estimate from completed phases
-  const displayProgress = progressPct > 0
-    ? progressPct
-    : Math.round((completedPipelines.size / PHASES.length) * 100);
+  const activePhaseIndex = completedPhases.filter(Boolean).length;
 
   return (
     <div className="max-w-[640px] mx-auto">
@@ -154,34 +163,26 @@ export function ScreenPipeline({ taskId, onComplete }: ScreenPipelineProps) {
         Analyzing your brand
       </h1>
       <p className="text-[14px] text-text-secondary mb-6 leading-[1.6]">
-        Running deep analysis pipeline. This may take several minutes.
+        Running deep analysis pipeline. This takes about a minute.
       </p>
-
-      {/* Error banner */}
-      {status === 'error' && (
-        <div className="mb-4 flex items-start gap-2 bg-error/10 border border-error/30 text-error text-[13px] rounded-md px-3 py-2">
-          <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
-          <span>{error ?? 'An error occurred during analysis'}</span>
-        </div>
-      )}
 
       {/* Progress bar */}
       <div className="mb-6">
         <div className="flex items-center justify-between mb-2">
           <span className="text-[13px] font-medium text-text-secondary">Overall progress</span>
-          <span className="text-[13px] font-mono text-text-tertiary">{Math.round(displayProgress)}%</span>
+          <span className="text-[13px] font-mono text-text-tertiary">{Math.round(progress)}%</span>
         </div>
-        <ProgressBar value={displayProgress} className="h-[8px]" />
+        <ProgressBar value={progress} className="h-[8px]" />
       </div>
 
       {/* Phase chips */}
       <div className="flex flex-wrap gap-2 mb-6">
-        {PHASES.map(({ id, label }) => {
-          const isComplete = completedPipelines.has(id);
-          const isActive = activePipelines.has(id) && !isComplete;
+        {PHASES.map((phase, i) => {
+          const isActive = i === activePhaseIndex;
+          const isComplete = completedPhases[i];
           return (
             <div
-              key={id}
+              key={phase}
               className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-sm border text-[12px] font-medium transition-all duration-300 ${
                 isComplete
                   ? 'border-success bg-success-subtle text-success'
@@ -192,10 +193,26 @@ export function ScreenPipeline({ taskId, onComplete }: ScreenPipelineProps) {
               style={isActive ? { animation: 'phasePulse 2s ease-in-out infinite' } : undefined}
             >
               {isComplete && <Check size={13} strokeWidth={2} />}
-              {label}
+              {phase}
             </div>
           );
         })}
+      </div>
+
+      {/* Stats counters */}
+      <div className="grid grid-cols-4 gap-[1px] bg-border rounded-sm overflow-hidden mb-6">
+        <div className="bg-bg px-3 py-4">
+          <AnimatedCounter target={847} duration={55} label="Pages" />
+        </div>
+        <div className="bg-bg px-3 py-4">
+          <AnimatedCounter target={1816} duration={55} label="Citations" />
+        </div>
+        <div className="bg-bg px-3 py-4">
+          <AnimatedCounter target={99} duration={45} label="Topics" />
+        </div>
+        <div className="bg-bg px-3 py-4">
+          <AnimatedCounter target={9} duration={35} label="Clusters" />
+        </div>
       </div>
 
       {/* Live research feed */}
@@ -209,12 +226,6 @@ export function ScreenPipeline({ taskId, onComplete }: ScreenPipelineProps) {
           ref={feedRef}
           className="h-[220px] overflow-y-auto p-3 space-y-2 bg-bg"
         >
-          {feedItems.length === 0 && (status === 'connecting' || status === 'connected') && (
-            <div className="flex items-center gap-2 text-text-tertiary">
-              <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
-              <span className="text-[12px]">Connecting to pipeline...</span>
-            </div>
-          )}
           {feedItems.map((msg, i) => (
             <motion.div
               key={i}
@@ -229,7 +240,7 @@ export function ScreenPipeline({ taskId, onComplete }: ScreenPipelineProps) {
               <span className="text-[13px] text-text-secondary leading-[1.5]">{msg}</span>
             </motion.div>
           ))}
-          {feedItems.length > 0 && status === 'connected' && (
+          {feedItems.length < FEED_MESSAGES.length && (
             <div className="flex items-center gap-2 text-text-tertiary">
               <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
               <span className="text-[12px]">Processing...</span>

@@ -32,6 +32,7 @@ class SiteAuditStartRequest(BaseModel):
 
     company_name: str
     domain: str
+    workspace_slug: str = ""
     product_slug: Optional[str] = None
     max_pages: int = Field(default=200, ge=1, le=2000)
     max_depth: int = Field(default=4, ge=1, le=10)

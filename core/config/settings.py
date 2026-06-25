@@ -33,10 +33,16 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # OpenRouter (unified LLM routing — centralized cost tracking)
+    openrouter_api_key: str | None = None
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    allow_platform_openrouter_fallback: bool = False
+    credential_fernet_key: str | None = None
+
     # Perplexity
     perplexity_api_key: str | None = None
-    perplexity_deep_research_model: str = "sonar-deep-research"
-    perplexity_search_model: str = "sonar-pro"
+    perplexity_deep_research_model: str = "perplexity/sonar-deep-research"
+    perplexity_search_model: str = "perplexity/sonar-pro"
 
     # OpenAI
     openai_api_key: str | None = None
@@ -55,7 +61,7 @@ class Settings(BaseSettings):
 
     # Google / Gemini – Reddit HIL
     google_api_key_reddit_hil: str | None = None
-    google_gemini_model_reddit_hil: str = "gemini-3-flash-preview"
+    google_gemini_model_reddit_hil: str = "google/gemini-3-flash-preview"
 
     # Pipeline / Agent
     aeo_agent_invoke_timeout_s: int = 900
@@ -65,6 +71,7 @@ class Settings(BaseSettings):
     gap_analysis_max_crawl_depth: int = 4
     gap_analysis_debug: bool = False  # GA_DEBUG=true → microscopic pipeline tracing via structlog
     gap_analysis_pw_fail_threshold: int = 10   # consecutive Playwright timeouts before disabling it
+    gap_analysis_wb_fail_threshold: int = 5    # consecutive Wayback failures before disabling it
     gap_analysis_total_fail_threshold: int = 20  # consecutive all-3-tiers failures before stopping BFS
 
     # Gap Analysis — S3 Concurrency (two-level: global + per-engine)
@@ -91,7 +98,7 @@ class Settings(BaseSettings):
 
     # Gap Analysis – Models
     gap_analysis_query_gen_model: str = "gpt-5.2-2025-12-11"
-    gap_analysis_report_model: str = "gpt-5.2-2025-12-11"
+    gap_analysis_report_model: str = "openai/gpt-5.2-2025-12-11"
     gap_analysis_openai_engine_model: str = "gpt-5.2-2025-12-11"
     gap_analysis_claude_engine_model: str = "claude-sonnet-4-6"
     gap_analysis_gemini_engine_model: str = "gemini-3-flash-preview"
@@ -116,10 +123,10 @@ class Settings(BaseSettings):
     discord_webhook_url: str = ""
 
     # Content Generation Engine – Models
-    content_engine_planner_model: str = "claude-opus-4-6"
+    content_engine_planner_model: str = "anthropic/claude-opus-4-6"
     content_engine_worker_model: str = "claude-sonnet-4-6"
-    content_engine_formatter_model: str = "claude-haiku-4-5-20251001"
-    content_engine_style_judge_model: str = "claude-haiku-4-5-20251001"
+    content_engine_formatter_model: str = "claude-haiku-4-5"
+    content_engine_style_judge_model: str = "claude-haiku-4-5"
     content_engine_factual_judge_model: str = "claude-sonnet-4-6"
     content_engine_fact_enricher_model: str = "sonar-pro"
 
@@ -133,13 +140,13 @@ class Settings(BaseSettings):
         '{"pillar_page": 3, "comparison": 3, "long_blog": 2, "how_to": 2, "short_faq": 1}'
     )
 
-    # --- Content Engine v1.3 — LiteLLM model identifiers ---
-    # Provider-prefixed strings for LiteLLM routing
+    # --- Content Engine v1.3 — OpenRouter model identifiers ---
+    # Provider-prefixed strings for OpenRouter routing
     content_engine_v13_planner_model: str =  "anthropic/claude-sonnet-4-6"
     content_engine_v13_brief_builder_model: str = "anthropic/claude-sonnet-4-6"
     content_engine_v13_worker_model: str = "anthropic/claude-sonnet-4-6"
-    content_engine_v13_formatter_model: str =  "anthropic/claude-haiku-4-5-20251001"
-    content_engine_v13_style_judge_model: str = "anthropic/claude-haiku-4-5-20251001"
+    content_engine_v13_formatter_model: str =  "anthropic/claude-haiku-4-5"
+    content_engine_v13_style_judge_model: str = "anthropic/claude-haiku-4-5"
     content_engine_v13_factual_judge_model: str = "anthropic/claude-sonnet-4-6"
     content_engine_v13_eeat_judge_model: str = "anthropic/claude-sonnet-4-6"
     content_engine_v13_fact_enricher_model: str = "perplexity/sonar-pro"
@@ -156,6 +163,10 @@ class Settings(BaseSettings):
     langsmith_use_hub: bool = False
     langsmith_hub_tag: str = "production"
     gap_analysis_langsmith_project: str = "gap-analysis"
+    audience_persona_langsmith_project: str = "audience-persona"
+    voice_style_guide_langsmith_project: str = "voice-style-guide"
+    topic_discovery_langsmith_project: str = "topic-discovery"
+    onboarding_langsmith_project: str = "onboarding"
 
     # --- Research Knowledge Base ---
     research_kb_project: str = "research-kb"
@@ -163,15 +174,16 @@ class Settings(BaseSettings):
     research_kb_company_overview_model: str = "sonar-deep-research"
     research_kb_customer_reviews_model: str = "sonar-deep-research"
     research_kb_competitor_scanner_model: str = "sonar-deep-research"
+    research_kb_competitor_extractor_model: str = "anthropic/claude-haiku-4-5"
     research_kb_weakness_analyst_model: str = "sonar-deep-research"
     # Agent 5 (Brand Perception) — raw Anthropic SDK, plain model ID
     research_kb_brand_perception_model: str = "claude-sonnet-4-6"
-    # Synthesis agent — init_chat_model(), needs provider:model format
-    research_kb_synthesis_model: str = "anthropic:claude-opus-4-6"
+    # Synthesis agent — ChatOpenAI via OpenRouter, provider/model format
+    research_kb_synthesis_model: str = "anthropic/claude-opus-4-6"
 
     # --- Audience Persona Pipeline ---
     google_api_key_audience_persona: str | None = None
-    audience_persona_suggester_model: str = "gemini-3-flash-preview"
+    audience_persona_suggester_model: str = "google/gemini-3-flash-preview"
     audience_persona_generator_model: str = "sonar-deep-research"
     audience_persona_max_concurrent_generators: int = 3
 
@@ -182,7 +194,7 @@ class Settings(BaseSettings):
 
     # --- Topic Discovery Pipeline ---
     topic_discovery_brainstorm_model: str = "anthropic/claude-sonnet-4-6"
-    topic_discovery_dedup_model: str = "anthropic/claude-haiku-4-5-20251001"
+    topic_discovery_dedup_model: str = "anthropic/claude-haiku-4-5"
     topic_discovery_max_expansion_rounds: int = 4
     topic_discovery_dedup_threshold: float = 0.85
     topic_discovery_max_concurrent_sources: int = 4
@@ -197,12 +209,31 @@ class Settings(BaseSettings):
     topic_discovery_persona_affinity_weights: str = (
         '{"provenance": 0.6, "embedding": 0.4}'
     )
-    topic_discovery_max_subdomains_to_expand: int = 10
+    topic_discovery_max_subdomains_to_expand: int = 20
+    # Pipeline B expansion retry/resilience
+    topic_discovery_expansion_max_retries: int = 2
+    topic_discovery_expansion_retry_base_delay_s: float = 2.0
+    topic_discovery_expansion_db_max_retries: int = 3
+    topic_discovery_expansion_circuit_breaker_threshold: int = 5
+    # Cannibalization detection (Pipeline B)
+    td_cannibalization_threshold: float = 0.80
+    td_cannibalization_medium_risk_threshold: float = 0.70
+    td_cannibalization_high_risk_threshold: float = 0.85
+    td_cannibalization_overlap_window_days: int = 30
+    td_cannibalization_max_matches: int = 5
+    td_cannibalization_delta_assignment_cap: int = 200
+    td_cannibalization_async_recompute_enabled: bool = True
     # Source C: Perplexity deep research for competitive content landscape
-    topic_discovery_source_c_model: str = "sonar-deep-research"
+    topic_discovery_source_c_model: str = "perplexity/sonar-deep-research"
     topic_discovery_source_c_timeout_s: float = 900.0
     # Unified S2 model (hierarchy + scoring + persona affinity)
     topic_discovery_unified_s2_model: str = "anthropic/claude-sonnet-4-6"
+
+    # --- Daily Tracker — Fanout Generation ---
+    daily_tracker_fanout_model: str = "anthropic/claude-sonnet-4-6"
+    daily_tracker_fanout_target_count: int = 15
+    daily_tracker_fanout_temperature: float = 0.3
+    daily_tracker_response_retention_days: int = 30
 
     # --- CPS Model (Citation Signal Predictor) ---
     cps_enabled: bool = True
@@ -219,8 +250,8 @@ class Settings(BaseSettings):
     # --- Database (PostgreSQL) ---
     database_url: str | None = None  # postgresql+asyncpg://localhost:5432/deep_presence
     database_echo: bool = False  # SQL logging
-    database_pool_size: int = 5
-    database_max_overflow: int = 10
+    database_pool_size: int = 15
+    database_max_overflow: int = 20
 
     # --- Redis ---
     redis_url: str | None = None  # redis://localhost:6379/0
@@ -245,6 +276,21 @@ class Settings(BaseSettings):
 
     # --- CMS Integration ---
     cms_fernet_key: str | None = None  # Fernet symmetric encryption key for CMS credentials
+    auto_prompt_max_pages: int = 50  # Max pages to auto-generate prompts for per CMS sync
+    webflow_oauth_client_id: str | None = None
+    webflow_oauth_client_secret: str | None = None
+    webflow_oauth_redirect_uri: str = "http://localhost:8000/api/v1/cms/webflow/callback"
+    webflow_oauth_frontend_settings_url: str = "http://localhost:3000/settings?tab=integrations"
+    webflow_webhook_public_url: str = "http://localhost:8000/api/v1/cms/webflow/webhook"
+
+    # --- Google Analytics (GA4) Integration ---
+    google_oauth_client_id: str | None = None
+    google_oauth_client_secret: str | None = None
+    google_oauth_redirect_uri: str = "https://app.deeppresence.ai/api/v1/analytics/google/callback"
+    ga4_sync_lookback_days: int = 7
+    ai_referral_sources: str = "chatgpt.com:openai,chat.openai.com:openai,perplexity.ai:perplexity,gemini.google.com:google,copilot.microsoft.com:microsoft,claude.ai:anthropic,you.com:you,phind.com:phind"
+    google_oauth_frontend_settings_url: str = "https://app.deeppresence.ai/settings?tab=integrations"
+    ga4_sync_api_key: str = ""  # API key for cron-triggered /sync-all endpoint
 
     # --- Cloudflare R2 (S3-compatible) ---
     r2_account_id: str | None = None

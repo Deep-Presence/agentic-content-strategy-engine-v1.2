@@ -101,6 +101,7 @@ async def _run_worker_chain(
             )
         bdir = _brief_dir(artifact_dir, brief.brief_id)
         display_title = title_short + ("..." if len(brief.title) > 60 else "")
+        workspace_id = getattr(input_data, "workspace_id", "") or ""
 
         try:
             # Step 1: Outline
@@ -109,6 +110,8 @@ async def _run_worker_chain(
                 brief=brief,
                 company_context_md=company_context_md,
                 trace=trace,
+                company_slug=getattr(input_data, "company_slug", "") or "",
+                workspace_id=workspace_id,
             )
             (bdir / "outline.json").write_text(
                 json.dumps(outline.model_dump(mode="json"), indent=2, default=str),
@@ -123,6 +126,8 @@ async def _run_worker_chain(
                 style_guide_md=style_guide_md,
                 company_context_md=company_context_md,
                 trace=trace,
+                company_slug=getattr(input_data, "company_slug", "") or "",
+                workspace_id=workspace_id,
             )
             (bdir / "draft.md").write_text(draft.markdown, encoding="utf-8")
 
@@ -134,6 +139,8 @@ async def _run_worker_chain(
                 company_name=input_data.company_name,
                 domain=input_data.domain,
                 trace=trace,
+                company_slug=getattr(input_data, "company_slug", "") or "",
+                workspace_id=workspace_id,
             )
             (bdir / "enriched.md").write_text(enriched.markdown, encoding="utf-8")
 
@@ -144,6 +151,8 @@ async def _run_worker_chain(
                 style_guide_md=style_guide_md,
                 brief=brief,
                 trace=trace,
+                company_slug=getattr(input_data, "company_slug", "") or "",
+                workspace_id=workspace_id,
             )
             (bdir / "formatted.md").write_text(formatted.markdown, encoding="utf-8")
 
@@ -293,6 +302,7 @@ async def _run_worker_chain_v13(
 
     async with semaphore:
         _slug = getattr(input_data, "company_slug", "") or ""
+        _workspace_id = getattr(input_data, "workspace_id", "") or ""
         title_short = brief.title[:60]
         display_title = title_short + ("..." if len(brief.title) > 60 else "")
 
@@ -314,7 +324,7 @@ async def _run_worker_chain_v13(
                 return str((bdir / filename).relative_to(storage.root)) if storage else ""
 
             # Step 1: Outline
-            await _write_pipeline_state_async(artifact_dir, [brief.brief_id], "outlining", task_id=task_id, redis_client=redis_client, effective_slug=effective_slug)
+            await _write_pipeline_state_async(artifact_dir, [brief.brief_id], "outlining", task_id=task_id, redis_client=redis_client, effective_slug=effective_slug, session_factory=session_factory)
             _emit(event_bus, task_id, "worker_progress", {
                 "brief_id": brief.brief_id, "step": "outlining", "worker_num": worker_num,
             })
@@ -324,6 +334,7 @@ async def _run_worker_chain_v13(
                 company_context_md=company_context_md,
                 trace=span,
                 company_slug=_slug,
+                workspace_id=_workspace_id,
             )
             outline_json = json.dumps(outline.model_dump(mode="json"), indent=2, default=str)
             if storage:
@@ -339,7 +350,7 @@ async def _run_worker_chain_v13(
                 (bdir / "outline.json").write_text(outline_json, encoding="utf-8")
 
             # Step 2: Draft
-            await _write_pipeline_state_async(artifact_dir, [brief.brief_id], "drafting", task_id=task_id, redis_client=redis_client, effective_slug=effective_slug)
+            await _write_pipeline_state_async(artifact_dir, [brief.brief_id], "drafting", task_id=task_id, redis_client=redis_client, effective_slug=effective_slug, session_factory=session_factory)
             _emit(event_bus, task_id, "worker_progress", {
                 "brief_id": brief.brief_id, "step": "drafting", "worker_num": worker_num,
             })
@@ -351,6 +362,7 @@ async def _run_worker_chain_v13(
                 company_context_md=company_context_md,
                 trace=span,
                 company_slug=_slug,
+                workspace_id=_workspace_id,
             )
             if storage:
                 await persist_stage_artifact(
@@ -362,7 +374,7 @@ async def _run_worker_chain_v13(
                 (bdir / "draft.md").write_text(draft.markdown, encoding="utf-8")
 
             # Step 3: Link
-            await _write_pipeline_state_async(artifact_dir, [brief.brief_id], "linking", task_id=task_id, redis_client=redis_client, effective_slug=effective_slug)
+            await _write_pipeline_state_async(artifact_dir, [brief.brief_id], "linking", task_id=task_id, redis_client=redis_client, effective_slug=effective_slug, session_factory=session_factory)
             _emit(event_bus, task_id, "worker_progress", {
                 "brief_id": brief.brief_id, "step": "linking", "worker_num": worker_num,
             })
@@ -375,6 +387,7 @@ async def _run_worker_chain_v13(
                 site_pages=site_pages,
                 trace=span,
                 company_slug=_slug,
+                workspace_id=_workspace_id,
             )
             if storage:
                 await persist_stage_artifact(
@@ -386,7 +399,7 @@ async def _run_worker_chain_v13(
                 (bdir / "linked.md").write_text(linked.markdown, encoding="utf-8")
 
             # Step 4: Fact Check (verify-only, no new content)
-            await _write_pipeline_state_async(artifact_dir, [brief.brief_id], "enriching", task_id=task_id, redis_client=redis_client, effective_slug=effective_slug)
+            await _write_pipeline_state_async(artifact_dir, [brief.brief_id], "enriching", task_id=task_id, redis_client=redis_client, effective_slug=effective_slug, session_factory=session_factory)
             _emit(event_bus, task_id, "worker_progress", {
                 "brief_id": brief.brief_id, "step": "enriching", "worker_num": worker_num,
             })
@@ -404,6 +417,7 @@ async def _run_worker_chain_v13(
                 domain=input_data.domain,
                 trace=span,
                 company_slug=_slug,
+                workspace_id=_workspace_id,
             )
             if storage:
                 await persist_stage_artifact(

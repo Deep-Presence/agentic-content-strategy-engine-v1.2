@@ -5,6 +5,7 @@ import uuid as _uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -70,6 +71,7 @@ class RunCitationModel(UUIDPKMixin, Base):
         ),
         Index("ix_run_citations_run_query", "run_id", "query_id"),
         Index("ix_run_citations_run_engine", "run_id", "engine"),
+        Index("ix_run_citations_run_cluster", "run_id", "cluster_name"),
         Index("ix_run_citations_url_enrichment", "url_enrichment_id"),
     )
 
@@ -94,6 +96,9 @@ class RunCitationModel(UUIDPKMixin, Base):
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
     url: Mapped[str] = mapped_column(Text, nullable=False)
     domain: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_company_citation: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -134,6 +139,13 @@ class QueryGapModel(UUIDPKMixin, TimestampMixin, Base):
     )
     best_company_unit_id: Mapped[str | None] = mapped_column(String, nullable=True)
     best_company_unit_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    best_company_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    best_company_structural_signals: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True
+    )
+    company_cited: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
+    )
     gap: Mapped[float] = mapped_column(Float, nullable=False)
     classification: Mapped[GapClassification] = mapped_column(
         PgEnum(GapClassification, name="gap_classification_enum", create_type=True),
@@ -193,6 +205,9 @@ class QueryExemplarModel(UUIDPKMixin, Base):
     # relationships
     query_gap: Mapped[QueryGapModel] = relationship(
         "QueryGapModel", back_populates="exemplars"
+    )
+    url_enrichment: Mapped["UrlEnrichmentCacheModel | None"] = relationship(
+        "UrlEnrichmentCacheModel", lazy="select",
     )
 
 
@@ -302,3 +317,34 @@ class CentroidResultModel(UUIDPKMixin, Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+# ── Cluster Proximity Stats ────────────────────────────────────────────
+
+
+class ClusterProximityStatsModel(UUIDPKMixin, Base):
+    """Per-cluster (and global) citation/company proximity statistics."""
+
+    __tablename__ = "cluster_proximity_stats"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id", "cluster_name", name="uq_cluster_proximity_run_cluster"
+        ),
+        Index("ix_cluster_proximity_stats_run", "run_id"),
+    )
+
+    run_id: Mapped[_uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("pipeline_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    cluster_name: Mapped[str] = mapped_column(String, nullable=False)
+    cluster_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    citation_mean: Mapped[float] = mapped_column(Float, default=0.0)
+    citation_std: Mapped[float] = mapped_column(Float, default=0.0)
+    citation_min: Mapped[float] = mapped_column(Float, default=0.0)
+    citation_max: Mapped[float] = mapped_column(Float, default=0.0)
+    citation_median: Mapped[float] = mapped_column(Float, default=0.0)
+    company_mean: Mapped[float] = mapped_column(Float, default=0.0)
+    company_median: Mapped[float] = mapped_column(Float, default=0.0)
+    count: Mapped[int] = mapped_column(Integer, default=0)

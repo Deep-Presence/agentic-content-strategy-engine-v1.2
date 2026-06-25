@@ -15,6 +15,7 @@ from api.dependencies import (
     get_event_bus,
     get_site_audit_data_service,
     get_task_store,
+    get_workspace_service,
 )
 from api.schemas.common import PipelineRunResponse, TaskResponse
 from api.schemas.site_audit import (
@@ -26,7 +27,12 @@ from api.schemas.site_audit import (
 )
 from api.tasks.event_bus import EventBusProtocol
 from api.tasks.models import PipelineTask
-from api.routers._helpers import create_task_durable
+from api.routers._helpers import (
+    assert_task_workspace_access,
+    authoritative_company_fields,
+    create_task_durable,
+    resolve_workspace_scope,
+)
 from api.tasks.runner import run_site_audit_task
 from core.audit import log_pipeline_launch
 from core.auth.service import AuthServiceProtocol
@@ -34,6 +40,7 @@ from core.auth.utils.domain import derive_slug
 from core.models.organization import UserProfile
 from core.services.site_audit_data import SiteAuditDataServiceProtocol
 from core.services.task_store import TaskStoreProtocol
+from core.services.workspace_protocol import WorkspaceServiceProtocol
 
 router = APIRouter(prefix="/api/v1/site-audit", tags=["site-audit"])
 
@@ -105,11 +112,12 @@ async def start_site_audit(
     body: SiteAuditStartRequest,
     response: Response,
     request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
     event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> PipelineRunResponse:
     """Start the site audit pipeline for a company domain.
 
@@ -131,16 +139,25 @@ async def start_site_audit(
         HTTPException(403): When the request is for a different tenant.
         HTTPException(409): When a site_audit run is already in progress for this slug.
     """
-    # Tenant isolation: slug derived from company_name must match the token's company_slug
-    user_company_slug: Optional[str] = getattr(request.state, "company_slug", None)
-    slug = _derive_slug(body.company_name)
-    if not user_company_slug or slug != user_company_slug:
-        raise HTTPException(
-            status_code=403,
-            detail="Cannot start pipeline for another company",
+    scope = await resolve_workspace_scope(
+        request,
+        _user,
+        workspace_service,
+        workspace_slug=body.workspace_slug,
+        company_name=body.company_name,
+        product_slug=body.product_slug,
+        min_roles=("owner", "admin", "member"),
+    )
+    if body.workspace_slug.strip():
+        body = body.model_copy(
+            update=authoritative_company_fields(
+                scope,
+                company_name=body.company_name,
+                domain=body.domain,
+            )
         )
-
-    effective_slug = f"{slug}__{body.product_slug}" if body.product_slug else slug
+    slug = scope.workspace_slug
+    effective_slug = scope.effective_slug
 
     # Force-rerun guard: return 200 when a completed audit already exists
     # Filesystem check is sufficient — pipeline writes FS first, DB second
@@ -164,6 +181,7 @@ async def start_site_audit(
             run_id=last_task.task_id if last_task else f"existing-{effective_slug}",
             pipeline="site_audit",
             company_slug=slug,
+            workspace_id=scope.workspace_id,
             product_slug=body.product_slug,
             effective_slug=effective_slug,
             status="already_exists",
@@ -173,7 +191,13 @@ async def start_site_audit(
         )
 
     # Slug lock: create_task raises TaskConflictError (→ 409) if already running
-    task = await create_task_durable(task_store, "site_audit", slug, product_slug=body.product_slug)
+    task = await create_task_durable(
+        task_store,
+        "site_audit",
+        slug,
+        product_slug=body.product_slug,
+        workspace_id=scope.workspace_id,
+    )
 
     handle = asyncio.create_task(
         run_site_audit_task(
@@ -203,6 +227,7 @@ async def start_site_audit(
         run_id=task.task_id,
         pipeline=task.pipeline,
         company_slug=task.company_slug,
+        workspace_id=scope.workspace_id,
         product_slug=task.product_slug,
         effective_slug=task.effective_slug,
         status=task.status.value,
@@ -216,6 +241,7 @@ async def get_site_audit_status(
     request: Request,
     _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> TaskResponse:
     """Poll the status of a running or completed site audit task.
 
@@ -233,9 +259,7 @@ async def get_site_audit_status(
         HTTPException(403): When the task belongs to a different tenant.
     """
     task = task_store.get_task(run_id)
-    user_company_slug: Optional[str] = getattr(request.state, "company_slug", None)
-    if task.company_slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_task_workspace_access(task, _user, workspace_service)
     return TaskResponse(
         run_id=task.task_id,
         pipeline=task.pipeline,

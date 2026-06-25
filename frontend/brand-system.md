@@ -588,6 +588,59 @@ td {
 tr:hover td { background: var(--accent-subtle); }
 ```
 
+### Slide Drawer (50% Viewport)
+
+Used by 5 pages (Citation Intel, Competitive Position, Prompt Tracking, Content Performance, Technical Readiness) for row-detail panels. Import from `@/components/ui`.
+
+```
+- Width: 50vw (customizable via `width` prop)
+- Slides from right via Framer Motion (x: 100% → 0, 250ms, ease [0.32, 0.72, 0, 1])
+- Overlay: bg-black/20 (content stays visible but dimmed)
+- Background: var(--surface)
+- Left border: 1px solid var(--border)
+- Shadow: var(--shadow-float) — the ONE place shadows are allowed on panels
+- Header padding: 20px 24px (px-6 py-5)
+- Content padding: 24px (px-6 py-6), own scroll context
+- Close button: 30px, ghost variant, top-right
+- Escape key closes drawer
+- Body scroll locked while open
+- Drawer title: 16px, font-weight 600
+- Drawer subtitle: 13px, text-secondary
+```
+
+### Date Range Picker
+
+Calendar-based date range selector for all analytics page filter bars. Import from `@/components/ui`. Built with react-day-picker v9 + date-fns v4.
+
+```
+- Trigger: 32px height, border-border, Calendar icon + display text + clear (X) / chevron
+- Active trigger: border-accent, bg-accent-subtle
+- Popover: bg-surface-raised, border-border, shadow-float
+- Left sidebar: presets list (Last 7d, 30d, 90d, This month, This quarter)
+- Right panel: two-month DayPicker calendar side by side
+- Selected range: bg-accent text-on-accent (start/end), bg-accent-subtle (middle)
+- Preset labels: 10px uppercase tracking-[0.06em] text-tertiary header
+- Calendar weekday headers: 10px uppercase tracking-[0.04em] text-tertiary
+- Day cells: 12px, 36x36px hit area
+- Today: font-semibold
+- Close: click outside or Escape
+```
+
+### Brand Logo
+
+Real favicon fetcher for external brand/platform logos. Import from `@/components/ui`. Used everywhere a brand name appears.
+
+```
+- Primary source: Google Favicon API (https://www.google.com/s2/favicons?domain={domain}&sz={size*2})
+- Fallback 1: Clearbit (https://logo.clearbit.com/{domain})
+- Fallback 2: Logo.dev (https://img.logo.dev/{domain})
+- Last resort: text initials in bg-accent-subtle circle (ONLY if all APIs fail)
+- Size: 20px default, renders at 2x for retina
+- Border-radius: var(--radius-sm) (4px)
+- Loading: lazy
+- DO NOT use crossOrigin="anonymous" — causes CORS failures
+```
+
 ---
 
 ## 8. Product UI Patterns

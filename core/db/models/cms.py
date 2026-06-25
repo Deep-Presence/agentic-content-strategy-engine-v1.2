@@ -47,6 +47,11 @@ class CMSConnectionModel(UUIDPKMixin, TimestampMixin, Base):
         ForeignKey("companies.id", ondelete="CASCADE"),
         nullable=False,
     )
+    workspace_id: Mapped[_uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     tenant_id: Mapped[str] = mapped_column(String, nullable=False)
     company_slug: Mapped[str] = mapped_column(String, nullable=False)
 
@@ -78,6 +83,11 @@ class CMSConnectionModel(UUIDPKMixin, TimestampMixin, Base):
     )
     sync_post_count: Mapped[int] = mapped_column(
         Integer, default=0, server_default="0"
+    )
+    provider_config: Mapped[dict | None] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment="Provider-specific non-secret config (collections, field maps, OAuth refs).",
     )
 
 
@@ -245,4 +255,12 @@ class CMSSyncedPostModel(UUIDPKMixin, TimestampMixin, Base):
         DateTime(timezone=True),
         default=_utcnow,
         server_default=func.now(),
+    )
+
+    # ── Content Inventory link ────────────────────────────────────
+    content_inventory_id: Mapped[_uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("content_inventory.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="Link to the canonical content inventory record for this CMS post.",
     )

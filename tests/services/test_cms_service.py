@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -10,7 +11,7 @@ import pytest
 from cryptography.fernet import Fernet
 
 from core.cms.exceptions import CMSError
-from core.cms.models import CMSCategory, CMSConnectionStatus, CMSPost, CMSPostStatus
+from core.cms.models import CMSCategory, CMSConnectionStatus, CMSPost, CMSPostStatus, CMSPublishMetadata
 from core.db.enums import CMSProvider
 from core.services.cms_service import CMSService
 
@@ -55,13 +56,14 @@ def _mock_connection(
     provider: str = "wordpress",
     site_url: str = "https://blog.example.com",
     encrypted_credentials: str = "",
+    provider_config: dict | None = None,
     fernet_key: str = _TEST_FERNET_KEY,
 ) -> MagicMock:
     """Build a mock CMSConnectionModel."""
     if not encrypted_credentials:
         import json
 
-        payload = json.dumps({"username": "admin", "api_key": "secret"})
+        payload = json.dumps({"username": "admin", "api_key": "secret", "auth_type": "application_password"})
         encrypted_credentials = Fernet(fernet_key.encode()).encrypt(
             payload.encode()
         ).decode()
@@ -71,6 +73,7 @@ def _mock_connection(
     conn.provider = CMSProvider(provider)
     conn.site_url = site_url
     conn.encrypted_credentials = encrypted_credentials
+    conn.provider_config = provider_config
     conn.company_slug = "test-co"
     return conn
 
@@ -138,6 +141,188 @@ class TestConnect:
 
         assert result["connected"] is False
         conn_repo.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_connect_webflow_persists_provider_config(self) -> None:
+        conn_repo, _, _ = _make_mock_repos()
+        conn_repo.get_by_company_slug.return_value = None
+        conn_repo.create.return_value = MagicMock()
+
+        service = _make_service(conn_repo=conn_repo)
+        provider_config = {
+            "site_id": "site-1",
+            "collections": [
+                {
+                    "collection_id": "coll-1",
+                    "enabled": True,
+                    "field_mapping": {"body_field": "post-body"},
+                }
+            ],
+        }
+
+        mock_status = CMSConnectionStatus(connected=True, site_name="Webflow Site")
+        mock_adapter = AsyncMock()
+        mock_adapter.validate_connection.return_value = mock_status
+        mock_adapter.export_provider_config.return_value = {
+            **provider_config,
+            "site_id": "site-resolved",
+        }
+
+        with patch("core.services.cms_service.create_cms_adapter", return_value=mock_adapter):
+            result = await service.connect(
+                company_id=uuid.uuid4(),
+                company_slug="test-co",
+                tenant_id="tenant-1",
+                provider="webflow",
+                site_url="https://marketing.example.com",
+                username="",
+                api_key="wf-token",
+                provider_config=provider_config,
+            )
+
+        assert result["connected"] is True
+        create_kwargs = conn_repo.create.call_args.kwargs
+        assert create_kwargs["provider"] == CMSProvider.webflow
+        assert create_kwargs["provider_config"]["site_id"] == "site-resolved"
+
+
+class TestReconstructAdapter:
+    def test_reconstruct_passes_provider_config_to_adapter(self) -> None:
+        service = _make_service()
+        provider_config = {"site_id": "abc", "collections": []}
+        conn = _mock_connection(
+            provider="webflow",
+            provider_config=provider_config,
+        )
+        import json
+
+        payload = json.dumps(
+            {
+                "username": "",
+                "api_key": "wf-token",
+                "auth_type": "site_token",
+                "access_token": "wf-token",
+            }
+        )
+        conn.encrypted_credentials = Fernet(_TEST_FERNET_KEY.encode()).encrypt(
+            payload.encode()
+        ).decode()
+
+        with patch("core.services.cms_service.create_cms_adapter") as mock_factory:
+            mock_factory.return_value = AsyncMock()
+            service._reconstruct_adapter(conn)
+            config = mock_factory.call_args.args[0]
+            assert config.provider_config == provider_config
+            assert config.api_key == "wf-token"
+            assert config.extra["auth_type"] == "site_token"
+
+
+class TestWebflowConfigure:
+    @pytest.mark.asyncio
+    async def test_list_webflow_collections(self) -> None:
+        conn_repo, _, _ = _make_mock_repos()
+        service = _make_service(conn_repo=conn_repo)
+        conn = _mock_connection(provider="webflow")
+
+        mock_adapter = AsyncMock()
+        mock_adapter.list_collections_for_site.return_value = [
+            {
+                "id": "coll-1",
+                "slug": "blog-posts",
+                "displayName": "Blog Posts",
+                "singularName": "Blog Post",
+            }
+        ]
+
+        with patch.object(service, "_require_webflow_adapter", return_value=mock_adapter):
+            result = await service.list_webflow_collections(conn)
+
+        assert len(result) == 1
+        assert result[0]["collection_id"] == "coll-1"
+        assert result[0]["display_name"] == "Blog Posts"
+
+    @pytest.mark.asyncio
+    async def test_get_webflow_collection_fields(self) -> None:
+        service = _make_service()
+        conn = _mock_connection(provider="webflow")
+
+        mock_adapter = AsyncMock()
+        mock_adapter.get_collection_schema.return_value = {
+            "fields": [
+                {"slug": "name", "displayName": "Name", "type": "PlainText"},
+                {"slug": "post-body", "displayName": "Body", "type": "RichText"},
+            ]
+        }
+
+        with patch.object(service, "_require_webflow_adapter", return_value=mock_adapter):
+            result = await service.get_webflow_collection_fields(conn, "coll-1")
+
+        assert result["collection_id"] == "coll-1"
+        assert len(result["fields"]) == 2
+        assert result["suggested_mapping"]["body_field"] == "post-body"
+
+    @pytest.mark.asyncio
+    async def test_configure_webflow_persists_provider_config(self) -> None:
+        conn_repo, _, _ = _make_mock_repos()
+        service = _make_service(conn_repo=conn_repo)
+        conn = _mock_connection(
+            provider="webflow",
+            provider_config={"site_id": "site-1"},
+        )
+
+        mock_adapter = AsyncMock()
+        mock_adapter.get_collection_schema.return_value = {"fields": []}
+
+        configure_payload = {
+            "collections": [
+                {
+                    "collection_id": "coll-1",
+                    "collection_slug": "blog",
+                    "display_name": "Blog",
+                    "enabled": True,
+                    "is_default_publish_target": True,
+                    "field_mapping": {
+                        "title_field": "name",
+                        "slug_field": "slug",
+                        "body_field": "post-body",
+                    },
+                }
+            ],
+        }
+
+        with patch.object(service, "_require_webflow_adapter", return_value=mock_adapter):
+            result = await service.configure_webflow(
+                "test-co",
+                "tenant-1",
+                conn,
+                configure_payload=configure_payload,
+            )
+
+        assert result["configured"] is True
+        assert result["provider_config"]["site_id"] == "site-1"
+        assert conn.provider_config["collections"][0]["collection_id"] == "coll-1"
+        conn_repo._session.flush.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_configure_webflow_requires_body_field(self) -> None:
+        service = _make_service()
+        conn = _mock_connection(provider="webflow", provider_config={"site_id": "site-1"})
+
+        with pytest.raises(ValueError, match="body_field"):
+            await service.configure_webflow(
+                "test-co",
+                "tenant-1",
+                conn,
+                configure_payload={
+                    "collections": [
+                        {
+                            "collection_id": "coll-1",
+                            "enabled": True,
+                            "field_mapping": {"title_field": "name"},
+                        }
+                    ],
+                },
+            )
 
 
 # ── Disconnect Tests ──────────────────────────────────────────────────
@@ -238,6 +423,138 @@ class TestPublish:
                 connection=conn,
                 effective_slug="test-co",
             )
+
+    @pytest.mark.asyncio
+    async def test_publish_brief_uses_publish_metadata_and_registers_inventory(self) -> None:
+        md_content = "# Test Article\n\nSome content here."
+        storage = _make_mock_storage(md_content)
+        conn_repo, pub_repo, _ = _make_mock_repos()
+        pub_repo.create.return_value = MagicMock()
+        content_repo = AsyncMock()
+        content_repo.get_by_slug_and_brief_id.return_value = MagicMock(id=uuid.uuid4())
+        inventory_service = AsyncMock()
+
+        service = CMSService(
+            connection_repo=conn_repo,
+            publish_repo=pub_repo,
+            synced_post_repo=AsyncMock(),
+            storage=storage,
+            fernet_key=_TEST_FERNET_KEY,
+            content_repo=content_repo,
+            inventory_service=inventory_service,
+        )
+        conn = _mock_connection()
+        conn.company_id = uuid.uuid4()
+
+        published = CMSPost(
+            cms_id="123",
+            title="Test Article",
+            slug="no-code-web-development-enterprise-overview",
+            url="https://blog.example.com/no-code-web-development-enterprise-overview/",
+            word_count=50,
+        )
+        with patch(
+            "core.services.cms_service.create_cms_adapter"
+        ) as mock_factory:
+            mock_adapter = AsyncMock()
+            mock_adapter.publish_post.return_value = published
+            mock_factory.return_value = mock_adapter
+
+            await service.publish_brief(
+                company_slug="test-co",
+                brief_id="brief-001",
+                connection=conn,
+                effective_slug="test-co",
+                target_status="publish",
+                publish_metadata=CMSPublishMetadata(
+                    slug="no-code-web-development-enterprise-overview",
+                    meta_title="No-Code Web Development in the Enterprise | Deep Presence",
+                    meta_description="A plain-English guide to no-code for enterprise teams.",
+                    canonical_url="https://blog.example.com/no-code-web-development-enterprise-overview/",
+                    publish_date="2026-04-11",
+                    author="42",
+                    tags=["no-code", "enterprise"],
+                ),
+            )
+
+        post_create = mock_adapter.publish_post.await_args.args[0]
+        assert post_create.slug == "no-code-web-development-enterprise-overview"
+        assert post_create.seo_title == "No-Code Web Development in the Enterprise | Deep Presence"
+        assert post_create.seo_description == "A plain-English guide to no-code for enterprise teams."
+        assert post_create.canonical_url == "https://blog.example.com/no-code-web-development-enterprise-overview/"
+        assert post_create.tags == ["no-code", "enterprise"]
+        assert post_create.author == "42"
+        assert post_create.published_at is not None
+        inventory_kwargs = inventory_service.register_published_content.await_args.kwargs
+        assert inventory_kwargs["content_html"]
+        assert inventory_kwargs["published_at"] is not None
+        assert inventory_kwargs["meta_description"] == "A plain-English guide to no-code for enterprise teams."
+        assert inventory_kwargs["seo_title"] == "No-Code Web Development in the Enterprise | Deep Presence"
+        assert inventory_kwargs["seo_description"] == "A plain-English guide to no-code for enterprise teams."
+        assert inventory_kwargs["tags"] == ["no-code", "enterprise"]
+
+    @pytest.mark.asyncio
+    async def test_publish_brief_enriches_inventory_and_generates_prompts(self) -> None:
+        md_content = "# Test Article\n\nSome content here."
+        storage = _make_mock_storage(md_content)
+        conn_repo, pub_repo, _ = _make_mock_repos()
+        pub_repo.create.return_value = MagicMock()
+        content_repo = AsyncMock()
+        content_repo.get_by_slug_and_brief_id.return_value = MagicMock(id=uuid.uuid4())
+        inventory_service = AsyncMock()
+        inventory_model = MagicMock(id=uuid.uuid4())
+        inventory_service.register_published_content.return_value = inventory_model
+        company_repo = AsyncMock()
+        company_repo.get_by_slug.return_value = SimpleNamespace(name="Deep Presence")
+        prompt_orchestrator = AsyncMock()
+
+        service = CMSService(
+            connection_repo=conn_repo,
+            publish_repo=pub_repo,
+            synced_post_repo=AsyncMock(),
+            storage=storage,
+            fernet_key=_TEST_FERNET_KEY,
+            content_repo=content_repo,
+            inventory_service=inventory_service,
+            company_repo=company_repo,
+            content_to_prompt_orchestrator=prompt_orchestrator,
+        )
+        conn = _mock_connection()
+        conn.company_id = uuid.uuid4()
+        expected_published_at = datetime(2026, 4, 11, tzinfo=timezone.utc)
+
+        published = CMSPost(
+            cms_id="123",
+            title="Test Article",
+            slug="test-article",
+            url="https://blog.example.com/test-article/",
+            word_count=50,
+            published_at=expected_published_at,
+        )
+        with patch(
+            "core.services.cms_service.create_cms_adapter"
+        ) as mock_factory:
+            mock_adapter = AsyncMock()
+            mock_adapter.publish_post.return_value = published
+            mock_factory.return_value = mock_adapter
+
+            await service.publish_brief(
+                company_slug="test-co",
+                brief_id="brief-001",
+                connection=conn,
+                effective_slug="test-co",
+                target_status="publish",
+            )
+
+        assert content_repo.update.await_args.kwargs["published_at"] == expected_published_at
+        prompt_orchestrator.run_for_pages.assert_awaited_once_with(
+            company_id="test-co",
+            company_uuid=conn.company_id,
+            page_ids=[inventory_model.id],
+            brand_name="Deep Presence",
+            k=6,
+            auto_approve=True,
+        )
 
 
 # ── Refresh Tests ─────────────────────────────────────────────────────
@@ -384,6 +701,8 @@ class TestSync:
         assert result["categories"] == 1
         assert result["truncated"] is False
         assert synced_repo.upsert_from_cms.call_count == 2
+        # new_page_ids is present (empty when no inventory service injected)
+        assert "new_page_ids" in result
 
     @pytest.mark.asyncio
     async def test_sync_truncated_result(self) -> None:

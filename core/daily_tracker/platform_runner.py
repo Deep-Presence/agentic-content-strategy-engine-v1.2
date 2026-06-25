@@ -27,6 +27,8 @@ Implements ``PlatformRunnerServiceProtocol`` from ``core.daily_tracker.protocols
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import inspect
 import logging
 import time
 from datetime import datetime, timezone
@@ -58,6 +60,8 @@ _ENGINE_REGISTRY: dict[str, type[SearchEngine]] = {
     "gemini": GeminiEngine,
     "perplexity": PerplexityEngine,
 }
+_BYOK_SUPPORTED_ENGINES = frozenset({"perplexity"})
+_BYOK_DISABLED_NATIVE_ENGINES = frozenset({"openai", "claude", "gemini"})
 
 
 def _build_engine_registry() -> dict[str, SearchEngine]:
@@ -67,6 +71,34 @@ def _build_engine_registry() -> dict[str, SearchEngine]:
         Dict mapping engine name to engine instance.
     """
     return {name: cls() for name, cls in _ENGINE_REGISTRY.items()}
+
+
+async def _close_client_if_needed(client: object) -> None:
+    close = getattr(client, "close", None)
+    if close is None:
+        return
+    result = close()
+    if inspect.isawaitable(result):
+        await result
+
+
+def _byok_enabled_engine_names(names: list[str]) -> list[str]:
+    enabled: list[str] = []
+    disabled: list[str] = []
+    for name in names:
+        key = name.strip().lower()
+        if key in _BYOK_DISABLED_NATIVE_ENGINES:
+            disabled.append(key)
+            continue
+        if key in _BYOK_SUPPORTED_ENGINES:
+            enabled.append(key)
+    if disabled:
+        logger.warning(
+            "Skipping native Daily Tracker engines in BYOK-only mode: %s. "
+            "Only OpenRouter-routed Perplexity is enabled in BYOK v1.",
+            ", ".join(sorted(set(disabled))),
+        )
+    return enabled
 
 
 class PlatformRunnerService:
@@ -92,6 +124,9 @@ class PlatformRunnerService:
         prompts: list[TrackedPrompt],
         engines: list[str] | None = None,
         concurrency: int = 6,
+        workspace_id: str = "",
+        workspace_slug: str = "",
+        company_slug: str = "",
     ) -> DailyRunResult:
         """Execute all prompts across specified engines concurrently.
 
@@ -108,6 +143,8 @@ class PlatformRunnerService:
         started_at = datetime.now(timezone.utc)
 
         engine_names = engines or list(self._registry.keys())
+        if workspace_id:
+            engine_names = _byok_enabled_engine_names(engine_names)
         selected = {
             name: self._registry[name]
             for name in engine_names
@@ -136,17 +173,32 @@ class PlatformRunnerService:
             )
 
         semaphore = asyncio.Semaphore(concurrency)
-        tasks: list[asyncio.Task[PlatformResponse]] = []
+        async with contextlib.AsyncExitStack() as stack:
+            clients, search_kwargs = await self._prepare_byok_clients(
+                selected,
+                stack=stack,
+                workspace_id=workspace_id,
+                workspace_slug=workspace_slug,
+                company_slug=company_slug,
+            )
+            tasks: list[asyncio.Task[PlatformResponse]] = []
 
-        for prompt in prompts:
-            for engine_name, engine in selected.items():
-                tasks.append(
-                    asyncio.create_task(
-                        self._run_one(prompt, engine, engine_name, semaphore)
+            for prompt in prompts:
+                for engine_name, engine in selected.items():
+                    tasks.append(
+                        asyncio.create_task(
+                            self._run_one(
+                                prompt,
+                                engine,
+                                engine_name,
+                                semaphore,
+                                client=clients.get(engine_name),
+                                search_kwargs=search_kwargs.get(engine_name),
+                            )
+                        )
                     )
-                )
 
-        responses = await asyncio.gather(*tasks)
+            responses = await asyncio.gather(*tasks)
 
         # Why: gather with default return_exceptions=False raises on first error.
         # _run_one catches all exceptions internally, so this is safe.
@@ -170,12 +222,59 @@ class PlatformRunnerService:
         """
         return sorted(self._registry.keys())
 
+    async def _prepare_byok_clients(
+        self,
+        selected: dict[str, SearchEngine],
+        *,
+        stack: contextlib.AsyncExitStack,
+        workspace_id: str = "",
+        workspace_slug: str = "",
+        company_slug: str = "",
+    ) -> tuple[dict[str, object], dict[str, dict[str, object]]]:
+        if not workspace_id or "perplexity" not in selected:
+            return {}, {}
+
+        from core.model_config.runtime import (
+            actual_provider,
+            resolve_model_config_for_agent,
+        )
+        from core.shared_tools.openrouter_client import build_async_client_for_key
+
+        resolved = await resolve_model_config_for_agent(
+            workspace_id=workspace_id,
+            workspace_slug=workspace_slug or company_slug,
+            agent_key="daily_tracker.platform.perplexity",
+        )
+        client = build_async_client_for_key(
+            resolved.api_key,
+            base_url=resolved.base_url,
+            timeout_s=resolved.timeout_s,
+        )
+        stack.push_async_callback(_close_client_if_needed, client)
+        selected["perplexity"].model = resolved.model
+        return {
+            "perplexity": client,
+        }, {
+            "perplexity": {
+                "workspace_id": workspace_id,
+                "workspace_slug": workspace_slug or company_slug,
+                "company_slug": company_slug,
+                "agent_key": "daily_tracker.platform.perplexity",
+                "credential_id": resolved.credential_id,
+                "model_config_id": resolved.model_config_id,
+                "actual_provider": actual_provider(resolved.model),
+            }
+        }
+
     async def _run_one(
         self,
         prompt: TrackedPrompt,
         engine: SearchEngine,
         engine_name: str,
         semaphore: asyncio.Semaphore,
+        trace_span: Any = None,
+        client: Any = None,
+        search_kwargs: dict[str, object] | None = None,
     ) -> PlatformResponse:
         """Run a single prompt on a single engine with semaphore control.
 
@@ -198,8 +297,33 @@ class PlatformRunnerService:
                 result = await engine.search(
                     query_text=prompt.text,
                     query_id=prompt.id,
+                    client=client,
+                    **(search_kwargs or {}),
                 )
                 elapsed_ms = (time.monotonic() - start_ms) * 1000
+
+                # LangSmith tracing — log per-prompt engine call
+                if trace_span and (result.prompt_tokens or result.completion_tokens):
+                    from core.shared_tools.tracing import log_generation
+
+                    log_generation(
+                        trace_span,
+                        f"dt-{engine_name}/{prompt.id}",
+                        getattr(engine, "model", "") or "",
+                        (prompt.text or "")[:2000],
+                        (result.response_text or "")[:2000],
+                        metadata={
+                            "pipeline": "daily_tracker",
+                            "pipeline_step": f"platform_runner_{engine_name}",
+                            "provider": engine_name,
+                            "model": getattr(engine, "model", "") or "",
+                        },
+                        usage={
+                            "prompt_tokens": result.prompt_tokens,
+                            "completion_tokens": result.completion_tokens,
+                            "total_tokens": result.prompt_tokens + result.completion_tokens,
+                        },
+                    )
 
                 return PlatformResponse(
                     prompt_id=prompt.id,

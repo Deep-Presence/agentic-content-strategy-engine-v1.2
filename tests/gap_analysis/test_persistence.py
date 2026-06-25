@@ -15,6 +15,7 @@ objects as real ORM tables.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -437,12 +438,16 @@ async def test_persist_s3_handles_exception():
 @pytest.mark.asyncio
 async def test_persist_s4_stores_enrichments_and_signals():
     factory = _make_session_factory()
+    published_at = datetime(2025, 1, 15, 10, 0, tzinfo=timezone.utc)
+    modified_at = datetime(2025, 3, 2, 12, 30, tzinfo=timezone.utc)
     enriched = [
         EnrichedCitation(
             url="https://example.com/page",
             domain="example.com",
             title="Page Title",
             paragraphs=["para 1", "para 2"],
+            published_at=published_at,
+            modified_at=modified_at,
             structural_signals=StructuralSignals(
                 word_count=500, paragraph_count=10, header_count=3,
                 has_headers=True, has_lists=True,
@@ -458,6 +463,9 @@ async def test_persist_s4_stores_enrichments_and_signals():
 
         mock_repo.bulk_upsert_url_enrichments.assert_awaited_once()
         mock_repo.bulk_insert_structural_signals.assert_awaited_once()
+        enrichment_row = mock_repo.bulk_upsert_url_enrichments.await_args.args[0][0]
+        assert enrichment_row["published_at"] == published_at
+        assert enrichment_row["modified_at"] == modified_at
         factory._session.commit.assert_awaited_once()
 
 

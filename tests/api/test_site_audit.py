@@ -496,7 +496,7 @@ class TestListAudits:
     ) -> None:
         """Client authenticated as test-co cannot read audits for other-corp."""
         resp = client.get("/api/v1/site-audit/companies/other-corp/audits")
-        assert resp.status_code == 403
+        assert resp.status_code == 404
 
     def test_requires_auth_401(
         self, public_client: TestClient
@@ -559,7 +559,7 @@ class TestGetAuditDetail:
         resp = client.get(
             f"/api/v1/site-audit/companies/other-corp/audits/{audit_id}"
         )
-        assert resp.status_code == 403
+        assert resp.status_code == 404
 
     def test_requires_auth_401(
         self, public_client: TestClient, artifacts_root: Path
@@ -666,7 +666,7 @@ class TestGetFindings:
         resp = client.get(
             f"/api/v1/site-audit/companies/other-corp/audits/{audit_id}/findings"
         )
-        assert resp.status_code == 403
+        assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -728,7 +728,7 @@ class TestGetPageResults:
         resp = client.get(
             f"/api/v1/site-audit/companies/other-corp/audits/{audit_id}/pages"
         )
-        assert resp.status_code == 403
+        assert resp.status_code == 404
 
     def test_empty_page_results(
         self, client: TestClient, artifacts_root: Path

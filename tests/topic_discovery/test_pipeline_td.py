@@ -15,8 +15,9 @@ Pipeline B (expansion) tests are in test_expansion_pipeline_td.py.
 """
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -34,6 +35,7 @@ from core.models.topic_discovery import (
     TDSource,
     TopicAssignment,
     TopicDiscoveryInput,
+    TopicDiscoveryManifest,
     TopicDiscoveryOutput,
     TopicDiscoveryStatus,
 )
@@ -211,13 +213,13 @@ def _pipeline_patches(
     @contextmanager
     def _ctx():
         with (
-            patch(f"{_P}.configure_litellm_callbacks"),
+            patch(f"{_P}.configure_openrouter"),
             patch(f"{_P}.create_session", return_value="s"),
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),
             patch(f"{_P}.flush"),
             patch(f"{_P}.load_persona_profiles", return_value=["## Persona 1\nCFO persona."]),
-            patch(f"{_P}._load_persona_entries", return_value=[("p1", "CFO")]),
+            patch(f"{_P}._load_persona_entries", return_value=[("p1", "CFO", "")]),
             patch(f"{_P}.run_source_a_company_brainstorm", return_value=sa),
             patch(f"{_P}.run_source_b_persona_brainstorm", return_value=sb),
             patch(f"{_P}.run_source_c_deep_research", return_value=sc),
@@ -271,7 +273,7 @@ class TestPreflightErrors:
     @pytest.mark.asyncio
     async def test_missing_company_context(self, td_input, tmp_path):
         with (
-            patch(f"{_P}.configure_litellm_callbacks"),
+            patch(f"{_P}.configure_openrouter"),
             patch(f"{_P}.create_session", return_value="s"),
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),
@@ -284,7 +286,7 @@ class TestPreflightErrors:
     @pytest.mark.asyncio
     async def test_missing_personas(self, td_input, artifacts_dir):
         with (
-            patch(f"{_P}.configure_litellm_callbacks"),
+            patch(f"{_P}.configure_openrouter"),
             patch(f"{_P}.create_session", return_value="s"),
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),
@@ -322,31 +324,99 @@ class TestHappyPath:
         assert output.status == TopicDiscoveryStatus.discovery_complete
 
     @pytest.mark.asyncio
-    async def test_pipeline_writes_manifest(self, td_input, artifacts_dir):
-        with _pipeline_patches():
+    async def test_pipeline_passes_workspace_context_to_td_agents(self, td_input, artifacts_dir):
+        td_input.workspace_id = "ws-td"
+        sa = _make_source(TDSource.source_a)
+        sb = _make_source(TDSource.source_b)
+        sc = _make_source(TDSource.source_c, 2)
+        sd = _make_source(TDSource.source_d, 2)
+        tax = _make_taxonomy()
+        cov = _make_coverage()
+
+        with (
+            patch(f"{_P}.configure_openrouter"),
+            patch(f"{_P}.create_session", return_value="s"),
+            patch(f"{_P}.create_trace", return_value=MagicMock()),
+            patch(f"{_P}.end_span"),
+            patch(f"{_P}.flush"),
+            patch(f"{_P}.load_persona_profiles", return_value=["## Persona 1\nCFO persona."]),
+            patch(f"{_P}._load_persona_entries", return_value=[("p1", "CFO", "")]),
+            patch(f"{_P}.run_source_a_company_brainstorm", return_value=sa) as mock_a,
+            patch(f"{_P}.run_source_b_persona_brainstorm", return_value=sb) as mock_b,
+            patch(f"{_P}.run_source_c_deep_research", return_value=sc) as mock_c,
+            patch(f"{_P}.run_source_d_adversarial", return_value=sd) as mock_d,
+            patch(f"{_P}.deduplicate_subdomains_with_clusters", return_value=_make_dedup_result(sa.candidates)) as mock_dedup,
+            patch(f"{_P}.compute_all_coverage_metrics", return_value=cov),
+            patch(f"{_P}.run_unified_hierarchy_and_scoring", return_value=tax) as mock_unified,
+        ):
             from core.topic_discovery.pipeline import run_topic_discovery_pipeline
             await run_topic_discovery_pipeline(td_input, artifacts_root=artifacts_dir)
 
-        manifest_path = artifacts_dir / "topic_discovery" / "test-co" / "_manifest.json"
-        assert manifest_path.exists()
+        for mock_agent in (mock_a, mock_b, mock_c, mock_d, mock_unified):
+            assert mock_agent.call_args.kwargs["workspace_id"] == "ws-td"
+            assert mock_agent.call_args.kwargs["workspace_slug"] == "test-co"
+        assert mock_dedup.call_args.kwargs["workspace_id"] == "ws-td"
+        assert mock_dedup.call_args.kwargs["workspace_slug"] == "test-co"
 
-        from core.topic_discovery.storage import TopicDiscoveryStorage
-        storage = TopicDiscoveryStorage(artifacts_dir, "test-co")
-        manifest = storage.read_manifest()
+    @pytest.mark.asyncio
+    async def test_pipeline_writes_manifest(self, td_input, artifacts_dir):
+        """Pipeline A writes manifest to DB via db_write_manifest (no filesystem)."""
+        mock_sf = AsyncMock()
+        mock_discovery_id = uuid.uuid4()
+
+        with _pipeline_patches(), \
+             patch("core.topic_discovery.persistence.persist_td_discovery", new_callable=AsyncMock, return_value=mock_discovery_id), \
+             patch(f"{_P}.db_write_manifest", new_callable=AsyncMock) as mock_write_manifest, \
+             patch(f"{_P}.db_read_manifest", new_callable=AsyncMock, return_value=TopicDiscoveryManifest(slug="test-co")), \
+             patch(f"{_P}.db_write_source_results", new_callable=AsyncMock), \
+             patch(f"{_P}.db_write_taxonomy", new_callable=AsyncMock, return_value=(uuid.uuid4(), 1)), \
+             patch(f"{_P}.db_write_coverage", new_callable=AsyncMock), \
+             patch(f"{_P}.db_write_scoring", new_callable=AsyncMock, return_value=1), \
+             patch(f"{_P}.db_write_persona_affinity", new_callable=AsyncMock, return_value=1), \
+             patch("core.research.persistence.persist_pipeline_run_complete", new_callable=AsyncMock):
+            from core.topic_discovery.pipeline import run_topic_discovery_pipeline
+            await run_topic_discovery_pipeline(
+                td_input, artifacts_root=artifacts_dir,
+                session_factory=mock_sf,
+            )
+
+        mock_write_manifest.assert_called_once()
+        _, _, manifest = mock_write_manifest.call_args[0]
         assert manifest.company_name == "Test Co"
         assert manifest.status == TopicDiscoveryStatus.discovery_complete
 
     @pytest.mark.asyncio
-    async def test_pipeline_writes_taxonomy_to_storage(self, td_input, artifacts_dir):
-        with _pipeline_patches():
-            from core.topic_discovery.pipeline import run_topic_discovery_pipeline
-            await run_topic_discovery_pipeline(td_input, artifacts_root=artifacts_dir)
+    async def test_pipeline_writes_taxonomy_to_db(self, td_input, artifacts_dir):
+        """Pipeline A writes taxonomy to DB via db_write_taxonomy (no filesystem)."""
+        mock_sf = AsyncMock()
+        mock_discovery_id = uuid.uuid4()
+        taxonomy_writes = []
 
-        from core.topic_discovery.storage import TopicDiscoveryStorage
-        storage = TopicDiscoveryStorage(artifacts_dir, "test-co")
-        tax = storage.get_latest_taxonomy()
-        assert tax is not None
-        assert tax.status == TopicDiscoveryStatus.approved
+        async def _capture_taxonomy_write(*args, **kwargs):
+            taxonomy_writes.append(args)
+            return (uuid.uuid4(), 1)
+
+        with _pipeline_patches(), \
+             patch("core.topic_discovery.persistence.persist_td_discovery", new_callable=AsyncMock, return_value=mock_discovery_id), \
+             patch(f"{_P}.db_write_manifest", new_callable=AsyncMock), \
+             patch(f"{_P}.db_read_manifest", new_callable=AsyncMock, return_value=TopicDiscoveryManifest(slug="test-co")), \
+             patch(f"{_P}.db_write_source_results", new_callable=AsyncMock), \
+             patch(f"{_P}.db_write_taxonomy", side_effect=_capture_taxonomy_write) as mock_wt, \
+             patch(f"{_P}.db_write_coverage", new_callable=AsyncMock), \
+             patch(f"{_P}.db_write_scoring", new_callable=AsyncMock, return_value=1), \
+             patch(f"{_P}.db_write_persona_affinity", new_callable=AsyncMock, return_value=1), \
+             patch("core.research.persistence.persist_pipeline_run_complete", new_callable=AsyncMock):
+            from core.topic_discovery.pipeline import run_topic_discovery_pipeline
+            await run_topic_discovery_pipeline(
+                td_input, artifacts_root=artifacts_dir,
+                session_factory=mock_sf,
+            )
+
+        # db_write_taxonomy should have been called at least once
+        assert mock_wt.call_count >= 1
+        # The last call writes the final approved taxonomy
+        last_taxonomy = taxonomy_writes[-1][2]  # (session_factory, discovery_id, taxonomy, ...)
+        assert last_taxonomy.status == TopicDiscoveryStatus.approved
 
     @pytest.mark.asyncio
     async def test_pipeline_writes_no_matrix(self, td_input, artifacts_dir):
@@ -357,10 +427,6 @@ class TestHappyPath:
 
         assert output.matrix is None
         assert output.matrix_version == 0
-
-        from core.topic_discovery.storage import TopicDiscoveryStorage
-        storage = TopicDiscoveryStorage(artifacts_dir, "test-co")
-        assert storage.get_latest_matrix() is None
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -382,7 +448,7 @@ class TestPartialSourceFailure:
         # Re-do with side_effect for source_b
         sa = _make_source(TDSource.source_a)
         with (
-            patch(f"{_P}.configure_litellm_callbacks"),
+            patch(f"{_P}.configure_openrouter"),
             patch(f"{_P}.create_session", return_value="s"),
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),
@@ -405,7 +471,7 @@ class TestPartialSourceFailure:
     async def test_all_sources_zero_candidates_raises(self, td_input, artifacts_dir):
         empty = SourceResult(source=TDSource.source_a)
         with (
-            patch(f"{_P}.configure_litellm_callbacks"),
+            patch(f"{_P}.configure_openrouter"),
             patch(f"{_P}.create_session", return_value="s"),
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),
@@ -507,7 +573,6 @@ class TestProductSlug:
 
         assert output.effective_slug == "test-co__cards"
         assert output.status == TopicDiscoveryStatus.discovery_complete
-        assert (tmp_path / "topic_discovery" / "test-co__cards" / "_manifest.json").exists()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -604,13 +669,13 @@ class TestTaxonomyRetryFeedback:
         ]
 
         with (
-            patch(f"{_P}.configure_litellm_callbacks"),
+            patch(f"{_P}.configure_openrouter"),
             patch(f"{_P}.create_session", return_value="s"),
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),
             patch(f"{_P}.flush"),
             patch(f"{_P}.load_persona_profiles", return_value=["persona md"]),
-            patch(f"{_P}._load_persona_entries", return_value=[("p1", "CFO")]),
+            patch(f"{_P}._load_persona_entries", return_value=[("p1", "CFO", "")]),
             patch(f"{_P}.run_source_a_company_brainstorm", return_value=sa) as mock_a,
             patch(f"{_P}.run_source_b_persona_brainstorm", return_value=sb) as mock_b,
             patch(f"{_P}.run_source_c_deep_research", return_value=sc),
@@ -676,13 +741,13 @@ class TestTaxonomyRetryExhaustion:
         ]
 
         with (
-            patch(f"{_P}.configure_litellm_callbacks"),
+            patch(f"{_P}.configure_openrouter"),
             patch(f"{_P}.create_session", return_value="s"),
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),
             patch(f"{_P}.flush"),
             patch(f"{_P}.load_persona_profiles", return_value=["persona md"]),
-            patch(f"{_P}._load_persona_entries", return_value=[("p1", "CFO")]),
+            patch(f"{_P}._load_persona_entries", return_value=[("p1", "CFO", "")]),
             patch(f"{_P}.run_source_a_company_brainstorm", return_value=sa) as mock_a,
             patch(f"{_P}.run_source_b_persona_brainstorm", return_value=_make_source(TDSource.source_b)),
             patch(f"{_P}.run_source_c_deep_research", return_value=_make_source(TDSource.source_c, 2)),
@@ -705,7 +770,7 @@ class TestTaxonomyRetryExhaustion:
     @pytest.mark.asyncio
     async def test_exhausted_retries_approves_taxonomy(self, artifacts_dir):
         """H3: When retries are exhausted, the taxonomy must still be approved
-        and written to storage (not left in draft status)."""
+        and written to DB (not left in draft status)."""
         td_input = TopicDiscoveryInput(
             company_name="Test Co",
             domain="test.com",
@@ -724,13 +789,13 @@ class TestTaxonomyRetryExhaustion:
         ]
 
         with (
-            patch(f"{_P}.configure_litellm_callbacks"),
+            patch(f"{_P}.configure_openrouter"),
             patch(f"{_P}.create_session", return_value="s"),
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),
             patch(f"{_P}.flush"),
             patch(f"{_P}.load_persona_profiles", return_value=["persona md"]),
-            patch(f"{_P}._load_persona_entries", return_value=[("p1", "CFO")]),
+            patch(f"{_P}._load_persona_entries", return_value=[("p1", "CFO", "")]),
             patch(f"{_P}.run_source_a_company_brainstorm", return_value=sa),
             patch(f"{_P}.run_source_b_persona_brainstorm", return_value=_make_source(TDSource.source_b)),
             patch(f"{_P}.run_source_c_deep_research", return_value=_make_source(TDSource.source_c, 2)),
@@ -749,13 +814,9 @@ class TestTaxonomyRetryExhaustion:
 
         # Pipeline A ends with discovery_complete
         assert output.status == TopicDiscoveryStatus.discovery_complete
-
-        # Taxonomy in storage must be approved (HITL-1 auto-approves on exhaustion)
-        from core.topic_discovery.storage import TopicDiscoveryStorage
-        storage = TopicDiscoveryStorage(artifacts_dir, "test-co")
-        stored_tax = storage.get_latest_taxonomy()
-        assert stored_tax is not None
-        assert stored_tax.status == TopicDiscoveryStatus.approved
+        # The output taxonomy should have approved status (HITL-1 auto-approves on exhaustion)
+        assert output.taxonomy is not None
+        assert output.taxonomy.status == TopicDiscoveryStatus.approved
 
 
 # ═══════════════════════════════════════════════════════════════════════

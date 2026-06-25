@@ -59,6 +59,7 @@ class PersonaBrief(BaseModel):
     brief_id: str = ""
     persona_name: str = ""
     tagline: str = ""
+    career_role: str = ""
     description: str = ""
     rationale: List[str] = Field(default_factory=list)
     source: Literal["agent", "manual", "hybrid"] = "agent"
@@ -83,6 +84,7 @@ class PersonaProfileEntry(BaseModel):
     persona_id: str = ""
     persona_name: str = ""
     tagline: str = ""
+    career_role: str = ""
     kind: Literal["icp", "secondary"] = "secondary"
     current_version: int = 0
     last_updated: Optional[datetime] = None
@@ -137,6 +139,8 @@ class AudiencePersonaInput(BaseModel):
     company_name: str
     domain: Optional[str] = None
     company_slug: Optional[str] = None
+    workspace_id: str = ""
+    workspace_slug: str = ""
     product_slug: Optional[str] = None
     product_name: Optional[str] = None
     max_personas: int = Field(default=5, ge=3, le=7)

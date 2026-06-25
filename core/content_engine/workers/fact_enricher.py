@@ -10,7 +10,7 @@ import re
 from typing import Dict, List, Optional
 
 from core.config.settings import settings
-from core.content_engine.llm_client import llm_call
+from core.content_engine.llm_client import llm_call, llm_call_for_agent
 from core.content_engine.prompts.enricher_prompts import (
     ENRICHER_SYSTEM_PROMPT,
     build_enricher_user_prompt,
@@ -30,6 +30,7 @@ async def enrich_with_facts(
     *,
     trace: Optional[object] = None,
     company_slug: str = "",
+    workspace_id: str = "",
 ) -> EnrichedDraft:
     """Enrich a draft with verified facts using Perplexity sonar-pro.
 
@@ -69,7 +70,7 @@ async def enrich_with_facts(
     )
 
     api_key = settings.perplexity_api_key
-    if not api_key:
+    if not workspace_id and not api_key:
         logger.warning("PERPLEXITY_API_KEY not set — skipping fact enrichment")
         end_span(span, output="Skipped: no API key")
         return EnrichedDraft(
@@ -81,23 +82,38 @@ async def enrich_with_facts(
         )
 
     try:
-        response = await llm_call(
-            model=model,
-            system=ENRICHER_SYSTEM_PROMPT,
-            user=user_prompt,
-            max_tokens=8192,
-            metadata={
-                "agent": "fact_enricher",
-                "brief_id": brief.brief_id,
-                "pipeline": "content_engine",
-                "pipeline_step": "fact_enricher",
-                "provider": extract_provider(model),
-                "model": model,
-                "company_slug": company_slug,
-            },
-            max_retries=2,
-            base_delay=3.0,
-        )
+        metadata = {
+            "agent": "fact_enricher",
+            "agent_key": "content.worker.fact_enricher",
+            "brief_id": brief.brief_id,
+            "pipeline": "content_engine",
+            "pipeline_step": "fact_enricher",
+            "provider": extract_provider(model),
+            "model": model,
+            "company_slug": company_slug,
+        }
+        if workspace_id:
+            response = await llm_call_for_agent(
+                workspace_id=workspace_id,
+                workspace_slug=company_slug,
+                agent_key="content.worker.fact_enricher",
+                system=ENRICHER_SYSTEM_PROMPT,
+                user=user_prompt,
+                max_tokens=8192,
+                metadata=metadata,
+                max_retries=2,
+                base_delay=3.0,
+            )
+        else:
+            response = await llm_call(
+                model=model,
+                system=ENRICHER_SYSTEM_PROMPT,
+                user=user_prompt,
+                max_tokens=8192,
+                metadata=metadata,
+                max_retries=2,
+                base_delay=3.0,
+            )
 
         enriched_text = response.content
 

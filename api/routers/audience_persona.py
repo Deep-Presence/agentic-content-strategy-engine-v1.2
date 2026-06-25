@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from api.auth.dependencies import require_auth, require_role
-from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_persona_data_service, get_storage_backend, get_task_store
+from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_persona_data_service, get_storage_backend, get_task_store, get_workspace_service
 from api.schemas.audience_persona import (
     ApprovalResponseAP,
     AudiencePersonaStartRequest,
@@ -25,7 +25,13 @@ from api.schemas.audience_persona import (
 from api.schemas.common import PipelineRunResponse, TaskResponse
 from api.tasks.event_bus import EventBusProtocol
 from api.tasks.models import PipelineTask, TaskStatus
-from api.routers._helpers import create_task_durable
+from api.routers._helpers import (
+    assert_slug_workspace_access,
+    assert_task_workspace_access,
+    authoritative_company_fields,
+    create_task_durable,
+    resolve_workspace_scope,
+)
 from api.tasks.runner import run_audience_persona_pipeline_task, run_single_persona_generator_task
 from core.auth.service import AuthServiceProtocol
 from core.auth.utils.domain import derive_slug
@@ -34,6 +40,7 @@ from core.models.organization import UserProfile
 from core.research.audience_persona.storage import PersonaStorage
 from core.audit import log_hitl_decision, log_pipeline_launch
 from core.services.task_store import ApprovalWindowError, TaskStoreProtocol
+from core.services.workspace_protocol import WorkspaceServiceProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -132,21 +139,32 @@ async def start_audience_persona(
     body: AudiencePersonaStartRequest,
     response: Response,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
     event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> PipelineRunResponse:
-    # Tenant isolation
-    user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
-    slug = _derive_slug_local(body.company_name)
-    if not user_company_slug or slug != user_company_slug:
-        raise HTTPException(
-            status_code=403,
-            detail="Cannot start pipeline for another company",
+    scope = await resolve_workspace_scope(
+        http_request,
+        _user,
+        workspace_service,
+        workspace_slug=body.workspace_slug,
+        company_name=body.company_name,
+        product_slug=body.product_slug,
+        min_roles=("owner", "admin", "member"),
+    )
+    if body.workspace_slug.strip():
+        body = body.model_copy(
+            update=authoritative_company_fields(
+                scope,
+                company_name=body.company_name,
+                domain=body.domain,
+            )
         )
-    effective_slug = f"{slug}__{body.product_slug}" if body.product_slug else slug
+    slug = scope.workspace_slug
+    effective_slug = scope.effective_slug
 
     # Guard: check if approved personas already exist
     _storage_backend = getattr(http_request.app.state, "storage_backend", None)
@@ -169,6 +187,7 @@ async def start_audience_persona(
                 run_id=f"existing-{effective_slug}",
                 pipeline="audience_persona",
                 company_slug=slug,
+                workspace_id=scope.workspace_id,
                 product_slug=body.product_slug,
                 effective_slug=effective_slug,
                 status="already_exists",
@@ -177,7 +196,13 @@ async def start_audience_persona(
                 message=message or "",
             )
 
-    task = await create_task_durable(task_store, "audience_persona", slug, product_slug=body.product_slug)
+    task = await create_task_durable(
+        task_store,
+        "audience_persona",
+        slug,
+        product_slug=body.product_slug,
+        workspace_id=scope.workspace_id,
+    )
 
     handle = asyncio.create_task(
         run_audience_persona_pipeline_task(
@@ -207,6 +232,7 @@ async def start_audience_persona(
         run_id=task.task_id,
         pipeline="audience_persona",
         company_slug=task.company_slug,
+        workspace_id=scope.workspace_id,
         product_slug=task.product_slug,
         effective_slug=task.effective_slug,
         status=task.status.value,
@@ -218,16 +244,15 @@ async def start_audience_persona(
 
 
 @router.get("/{run_id}/status")
-def get_audience_persona_status(
+async def get_audience_persona_status(
     run_id: str,
     request: Request,
     _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> TaskResponse:
     task = task_store.get_task(run_id)
-    user_company_slug = getattr(request.state, "company_slug", None)
-    if task.company_slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_task_workspace_access(task, _user, workspace_service)
     return TaskResponse(
         run_id=task.task_id,
         pipeline=task.pipeline,
@@ -251,13 +276,18 @@ async def approve_briefs(
     run_id: str,
     body: PersonaBriefApprovalRequest,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> ApprovalResponseAP:
     task = task_store.get_task(run_id)
-    user_company_slug = getattr(http_request.state, "company_slug", None)
-    if task.company_slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_task_workspace_access(
+        task,
+        _user,
+        workspace_service,
+        min_roles=("owner", "admin", "member"),
+    )
+    task_company_slug = task.company_slug
 
     _validate_approval_window(task, "persona_brief_review")
 
@@ -284,7 +314,7 @@ async def approve_briefs(
             pipeline="audience_persona",
             stage="persona_brief_review",
             decision="rejected",
-            company_slug=user_company_slug,
+            company_slug=task_company_slug,
             detail={"reason": str(exc)},
         )
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -295,7 +325,7 @@ async def approve_briefs(
         pipeline="audience_persona",
         stage="persona_brief_review",
         decision=body.batch_decision,
-        company_slug=user_company_slug,
+        company_slug=task_company_slug,
         detail={"brief_count": len(body.brief_reviews), "added_count": len(body.added_briefs)},
     )
 
@@ -314,13 +344,18 @@ async def approve_profiles(
     run_id: str,
     body: PersonaProfileApprovalRequest,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> ApprovalResponseAP:
     task = task_store.get_task(run_id)
-    user_company_slug = getattr(http_request.state, "company_slug", None)
-    if task.company_slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_task_workspace_access(
+        task,
+        _user,
+        workspace_service,
+        min_roles=("owner", "admin", "member"),
+    )
+    task_company_slug = task.company_slug
 
     _validate_approval_window(task, "persona_profile_review")
 
@@ -345,7 +380,7 @@ async def approve_profiles(
             pipeline="audience_persona",
             stage="persona_profile_review",
             decision="rejected",
-            company_slug=user_company_slug,
+            company_slug=task_company_slug,
             detail={"reason": str(exc)},
         )
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -356,7 +391,7 @@ async def approve_profiles(
         pipeline="audience_persona",
         stage="persona_profile_review",
         decision="profile_review",
-        company_slug=user_company_slug,
+        company_slug=task_company_slug,
         detail={"profile_count": len(body.profile_reviews)},
     )
 
@@ -375,15 +410,19 @@ async def add_persona(
     slug: str,
     body: ManualPersonaBriefRequest,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
     event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
     backend: Any = Depends(get_storage_backend),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> Dict[str, Any]:
-    user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
-    if not user_company_slug or slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
+    workspace, _membership = await assert_slug_workspace_access(
+        slug,
+        _user,
+        workspace_service,
+        min_roles=("owner", "admin", "member"),
+    )
 
     if not _SAFE_SLUG_RE.match(slug):
         raise HTTPException(status_code=400, detail="Invalid slug format")
@@ -410,7 +449,12 @@ async def add_persona(
     storage.write_brief(persona_id, brief)
 
     # Managed task lifecycle
-    task = await create_task_durable(task_store, "audience_persona", slug)
+    task = await create_task_durable(
+        task_store,
+        "audience_persona",
+        slug,
+        workspace_id=str(workspace.id),
+    )
 
     handle = asyncio.create_task(
         run_single_persona_generator_task(
@@ -439,13 +483,17 @@ async def standalone_approve_persona(
     persona_id: str,
     body: StandaloneApproveRequest,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     artifacts_root: Path = Depends(get_artifacts_root),
     backend: Any = Depends(get_storage_backend),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> Dict[str, str]:
-    user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
-    if not user_company_slug or slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_slug_workspace_access(
+        slug,
+        _user,
+        workspace_service,
+        min_roles=("owner", "admin", "member"),
+    )
 
     storage = PersonaStorage(artifacts_root, slug, backend=backend)
     manifest = storage.read_manifest()
@@ -484,10 +532,9 @@ async def list_personas(
     request: Request,
     _user: UserProfile = Depends(require_auth),
     persona_svc=Depends(get_persona_data_service),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> PersonaListResponse:
-    user_company_slug: Optional[str] = getattr(request.state, "company_slug", None)
-    if not user_company_slug or slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_slug_workspace_access(slug, _user, workspace_service)
 
     personas = await persona_svc.list_personas(slug)
     items = [PersonaListItem.model_validate(p) for p in personas]

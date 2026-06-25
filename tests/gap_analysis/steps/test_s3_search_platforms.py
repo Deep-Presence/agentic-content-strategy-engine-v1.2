@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from core.model_config.schemas import ResolvedModelConfig
 from core.models.gap_analysis import GeneratedQuery, PlatformResult
 
 
@@ -195,6 +196,102 @@ class TestPerEngineConcurrency:
         assert len(bad_results) == 3
         assert all("ERROR" in (r.response_text or "") for r in bad_results)
 
+    @pytest.mark.asyncio
+    async def test_byok_mode_filters_native_engines(self):
+        """Workspace-backed S3 runs only select BYOK-safe Perplexity search."""
+        from core.gap_analysis.steps.s3_search_platforms import search_platforms
+
+        with patch(
+            "core.gap_analysis.steps.s3_search_platforms._select_engines",
+            return_value=[],
+        ) as mock_select:
+            results = await search_platforms(
+                _make_queries(1),
+                ["perplexity", "openai", "claude", "gemini"],
+                workspace_id="ws-123",
+                workspace_slug="ramp",
+                company_slug="ramp",
+            )
+
+        assert results == []
+        mock_select.assert_called_once_with(["perplexity"])
+
+    @pytest.mark.asyncio
+    async def test_perplexity_batch_uses_workspace_openrouter_client(self):
+        """BYOK Perplexity search resolves agent config and never uses the singleton client."""
+        from core.gap_analysis.engines.perplexity import PerplexityEngine
+        from core.gap_analysis.steps.s3_search_platforms import _run_engine_batch
+
+        resolved = ResolvedModelConfig(
+            workspace_id="ws-123",
+            workspace_slug="ramp",
+            agent_key="gap.search.perplexity",
+            model="perplexity/sonar-pro",
+            base_url="https://openrouter.example/api/v1",
+            api_key="sk-or-workspace",
+            credential_id="cred-1",
+            model_config_id="cfg-1",
+        )
+
+        msg = MagicMock()
+        msg.content = "workspace search result"
+        choice = MagicMock(message=msg)
+        completion = MagicMock(
+            choices=[choice],
+            citations=["https://example.com"],
+            model_extra={},
+            usage=MagicMock(prompt_tokens=12, completion_tokens=8),
+        )
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=completion)
+        mock_client.close = MagicMock(return_value=None)
+
+        engine = PerplexityEngine(model="perplexity/legacy")
+
+        with (
+            patch(
+                "core.model_config.runtime.resolve_model_config_for_agent",
+                new_callable=AsyncMock,
+                return_value=resolved,
+            ) as mock_resolve,
+            patch(
+                "core.shared_tools.openrouter_client.build_async_client_for_key",
+                return_value=mock_client,
+            ) as mock_build,
+            patch("core.shared_tools.openrouter_client.get_async_client") as mock_singleton,
+            patch("core.shared_tools.cost_tracker.track_llm_cost") as mock_track,
+            patch("core.gap_analysis.steps.s3_search_platforms.settings") as mock_settings,
+        ):
+            mock_settings.gap_analysis_s3_circuit_breaker_threshold = 100
+            mock_settings.gap_analysis_s3_max_retries = 0
+            mock_settings.gap_analysis_s3_retry_base_delay_s = 0.01
+            results = await _run_engine_batch(
+                engine,
+                _make_queries(1),
+                1,
+                asyncio.Semaphore(1),
+                workspace_id="ws-123",
+                workspace_slug="ramp",
+                company_slug="ramp",
+            )
+
+        mock_singleton.assert_not_called()
+        mock_resolve.assert_awaited_once()
+        assert mock_resolve.await_args.kwargs["agent_key"] == "gap.search.perplexity"
+        mock_build.assert_called_once_with(
+            "sk-or-workspace",
+            base_url="https://openrouter.example/api/v1",
+            timeout_s=None,
+        )
+        assert engine.model == "perplexity/sonar-pro"
+        assert results[0].engine == "perplexity"
+        assert results[0].response_text == "workspace search result"
+        kw = mock_track.call_args.kwargs
+        assert kw["workspace_id"] == "ws-123"
+        assert kw["agent_key"] == "gap.search.perplexity"
+        assert kw["credential_id"] == "cred-1"
+        assert kw["model_config_id"] == "cfg-1"
+
 
 class TestBatchLevelErrorIsolation:
     """Verify batch-level failures (client init, import errors) don't crash other engines."""
@@ -232,7 +329,7 @@ class TestBatchLevelErrorIsolation:
 
             original_run = _run_engine_batch
 
-            async def _selective_batch(engine, queries, limit, global_sem):
+            async def _selective_batch(engine, queries, limit, global_sem, **kwargs):
                 if engine.engine_name == "broken":
                     raise RuntimeError("Import error: no module named 'perplexity'")
                 return await original_run(engine, queries, limit, global_sem)
@@ -256,7 +353,19 @@ class TestBatchLevelErrorIsolation:
         mock_sdk_client.__aenter__ = AsyncMock(return_value=mock_sdk_client)
         mock_sdk_client.__aexit__ = AsyncMock(return_value=False)
 
-        engine = _make_mock_engine("openai")
+        from core.gap_analysis.engines.openai_engine import OpenAIEngine
+
+        engine = OpenAIEngine(model="openai-test")
+        engine.search = AsyncMock(
+            return_value=PlatformResult(
+                engine="openai",
+                model="openai-test",
+                query_id="q_1",
+                query_text="test query 1",
+                response_text="ok",
+                citations=[],
+            )
+        )
 
         with patch(
             "core.gap_analysis.steps.s3_search_platforms.settings"

@@ -1,11 +1,17 @@
 # Pending Backlog
 
-> **Last synced:** 2026-03-26 (merge feat/front-back → feat/redis-integration)
-> **Total open items:** 30
+> **Last synced:** 2026-04-07 (cannibalization-detection)
+> **Total open items:** 32
 
 ## Critical (Fix Before Production)
 
-(All critical items resolved — none remaining.)
+### PB-95: Tenant isolation gap on per-prompt daily tracker endpoints
+- **Source:** Codex review of prompt-tracking integration plan
+- **Date added:** 2026-04-04
+- **Description:** `GET /prompts/{id}/analytics`, `GET /prompts/{id}/answers`, and `GET /prompts/{id}/fanouts` look up by UUID only — no `company_id` JOIN. A user who obtains another tenant's prompt UUID can read their analytics/answers. Low probability (UUIDs are v4, unguessable) but high impact (data leak across tenants).
+- **Fix:** Add `company_id` filter to repo queries (`get_responses_for_prompt`, per-prompt analytics path, `list_by_parent`). Thread `company_id` from auth middleware through router → repo.
+- **Files affected:** `core/db/repositories/daily_tracker_repo.py`, `api/routers/daily_tracker.py`
+- **Blocked by:** nothing
 
 ## High Priority
 
@@ -52,7 +58,23 @@
 - **Files affected:** `api/routers/auth.py`
 - **Blocked by:** nothing
 
+### PB-97: TD-mode Brief Builder must thematically preserve original topic title
+- **Source:** Content Studio integration testing — 2026-04-08
+- **Date added:** 2026-04-08
+- **Description:** In topic_discovery entry mode, gap analysis exemplars heavily influence the Brief Builder, which can generate a title and sections that drift from the original topic. E.g., topic "Webflow Partner Program for Animation-Focused Agencies" becomes "Platform Evaluation Checklist for Animation Heavy Agencies". Current fix: title override post-hoc (pipeline_v13.py:1546). Proper fix: pass `title_hint` constraint into Brief Builder prompt so generated sections/angles stay thematically aligned with the user's original topic while still incorporating gap analysis insights.
+- **Fix:** Add `title_hint` field to TopicSelection, populate from TopicAssignment.topic_text in TD mode, modify Brief Builder prompt to respect it as a hard constraint on title + thematic anchor for sections. Gap analysis should *enrich* the topic, not replace it.
+- **Files affected:** `core/models/content_generation_v13.py` (TopicSelection.title_hint), `core/content_engine/brief_builder.py` (prompt), `core/content_engine/pipeline_v13.py` (pass-through)
+- **Blocked by:** nothing
+
 ## Medium Priority
+
+### PB-96: Migrate remaining pipelines to json_repair for LLM JSON parsing
+- **Source:** Cannibalization detection sprint — json_repair Tier 1 integration (2026-04-07)
+- **Date added:** 2026-04-07
+- **Description:** Content engine now uses `json_repair` library for robust LLM JSON parsing (safe_parse + 3 evaluator judges). Five other modules still use hand-rolled regex-based JSON repair: topic discovery (`_parse_json_response` + `_repair_truncated_json` in `agents.py`), gap analysis (`s2_generate_queries.py`, `s8_generate_report.py`), research agents (`voice_style_guide/agents.py`, `audience_persona/agents.py`), and daily tracker (`content_to_prompt.py`, `query_fanout.py`). Each has its own `_strip_code_fences` / bracket extraction / truncation repair — duplicated logic that `json_repair.loads()` handles out of the box.
+- **Fix:** Replace each module's custom JSON repair with `json_repair.loads()`, keeping `_extract_json_block()` for markdown fence stripping. ~8 files, low risk per file.
+- **Files affected:** `core/topic_discovery/agents.py`, `core/gap_analysis/steps/s2_generate_queries.py`, `core/gap_analysis/steps/s8_generate_report.py`, `core/research/voice_style_guide/agents.py`, `core/research/audience_persona/agents.py`, `core/daily_tracker/content_to_prompt.py`, `core/daily_tracker/query_fanout.py`
+- **Blocked by:** nothing
 
 ### PB-89: Stale pipeline_state.json entries on HITL-2 reject / zero-blueprint / exception paths
 - **Source:** Codex backend review, Kanban-Pipeline Sync sprint, 2026-03-20
@@ -82,17 +104,15 @@
 - **Root cause:** v1.3 dispatcher writes `linked.md` and `fact_checked.md` but the GET `/briefs/{id}/{stage}` endpoint only recognizes legacy stage names (outline, draft, enriched, formatted, eval_history, final).
 - **Fix:** Add `linked` and `fact_checked` to `_VALID_STAGES`/`_STAGE_FILES`.
 
-### PB-93: Systematic audit — DbService ↔ filesystem state disconnect
+### PB-93: Systematic audit — DbService ↔ filesystem state disconnect [PARTIALLY RESOLVED]
 - **Source:** Kanban-Pipeline Sync sprint, 2026-03-20
 - **Date added:** 2026-03-20
-- **Files affected:** `core/services/db_content_data.py` (fixed for `get_briefs`), potentially other DbService methods
-- **Root cause:** The "filesystem-first, DB-additive" architecture means pipelines write real-time state to JSON artifacts, but DbService implementations query Postgres, which is only updated at coarser granularity.
-- **Fixed so far:** `DbContentDataService.get_briefs()` now overlays `pipeline_state.json`.
+- **Resolved for TD (2026-04-05):** Topic Discovery pipeline fully migrated to DB-only via `core/topic_discovery/db_ops.py`. No JSON filesystem reads/writes in TD pipeline hot paths. `DbTopicDiscoveryDataService` JSON fallback removed. UUID mismatch permanently fixed.
+- **Resolved for CE state (2026-04-05):** `pipeline_state.json` writes now conditional on Redis — only written when Redis is unavailable.
 - **Remaining work:**
-  1. Audit ALL other DbService methods for similar disconnects
-  2. Audit `DbTaskStore` for any filesystem-state dependencies
-  3. When migrating to Redis-backed TaskStore/state, replace `pipeline_state.json` with Redis pub/sub
-  4. Consider writing pipeline status updates to both JSON AND DB simultaneously as an interim fix
+  1. Content Engine v1.3 metadata (`blueprints.json`, `planner_selections.json`, `run_metadata_v13.json`) still filesystem-first — partially mitigated by `pipeline_runs.config` JSONB but not primary path
+  2. `DbContentDataService` still reads stage artifacts from StorageBackend (by design — markdown content stays in blob storage)
+  3. Gap Analysis pipeline still uses filesystem-first pattern (not yet migrated)
 
 ### PB-86: Pre-existing test failure — test_persistence.py mock doesn't support await
 - **Source:** Discovered during Kanban-Pipeline Sync sprint, 2026-03-20
@@ -234,6 +254,20 @@
 ### PB-75: [SA-DI] Session/service DI lifecycle cleanup
 - **Date added:** 2026-03-10
 - **Files affected:** `api/dependencies.py`
+
+### PB-94: Proper artifact version listing endpoints (replace client-side filename parsing)
+- **Source:** Frontend-backend artifacts integration, 2026-04-04
+- **Date added:** 2026-04-04
+- **Description:** Currently, version history in the Brand Hub is derived client-side by parsing filenames from `GET /api/v1/artifacts/{type}/{slug}` (which returns all files including manifests, JSON, etc.). Add dedicated endpoints that use `StorageBackend.list_dir()` to discover versions and return structured metadata (version number, date, word count). Endpoints needed: `GET /api/v1/knowledge-base/{slug}/{doc_type}/versions`, `GET /api/v1/voice-style-guide/{slug}/guide/versions`, `GET /api/v1/audience-persona/{slug}/{persona_id}/versions`. Each should return `{ versions: [{ version: int, last_updated: str|null, word_count: int }] }`.
+- **Files affected:** `core/research/knowledge_base/storage.py`, `core/research/voice_style_guide/storage.py`, `core/research/audience_persona/storage.py`, `core/services/kb_data.py`, `core/services/vsg_data.py`, `core/services/persona_data.py`, `api/routers/knowledge_base.py`, `api/routers/voice_style_guide.py`, `api/routers/audience_persona.py`
+- **Blocked by:** nothing
+
+### PB-96: CPS model should score final articles (post-content), not just topics
+- **Source:** Content Studio frontend-backend integration audit, 2026-04-05
+- **Date added:** 2026-04-05
+- **Description:** The CPS (Citation Signal Predictor) model currently scores topics/queries using gap analysis features (structural, citability, authority signals from exemplars). Per-engine scores reflect topic citation potential, NOT article quality. The model should be enhanced to digest the final article content along with the query to produce post-content citation predictions. Currently frontend shows CPS per-engine scores with a "predicted citation potential" label as a workaround.
+- **Files affected:** `core/cps_model/scorer.py`, `core/cps_model/features.py`, `core/content_engine/pipeline_v13.py` (Stage 4.5)
+- **Blocked by:** nothing
 
 ## Low Priority / Nice to Have
 

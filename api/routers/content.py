@@ -2,12 +2,10 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
-
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from api.auth.dependencies import require_auth, require_role
-from api.dependencies import get_auth_service, get_event_bus, get_task_store
+from api.auth.dependencies import require_auth
+from api.dependencies import get_auth_service, get_event_bus, get_task_store, get_workspace_service
 from core.auth.service import AuthServiceProtocol
 from api.schemas.common import (
     ContentApprovalRequest,
@@ -18,11 +16,12 @@ from api.schemas.common import (
 )
 from api.tasks.event_bus import EventBusProtocol
 from api.tasks.models import TaskStatus
-from api.routers._helpers import create_task_durable
-from api.tasks.runner import _derive_slug, _resolve_scope_async, run_content_pipeline_task
+from api.routers._helpers import assert_task_workspace_access, create_task_durable, resolve_workspace_scope
+from api.tasks.runner import _resolve_scope_async, run_content_pipeline_task
 from core.services.task_store import ApprovalWindowError, TaskStoreProtocol
 from core.models.content_generation import ContentGenerationInput
 from core.models.organization import UserProfile
+from core.services.workspace_protocol import WorkspaceServiceProtocol
 
 router = APIRouter(prefix="/api/v1/content", tags=["content"])
 
@@ -31,19 +30,22 @@ router = APIRouter(prefix="/api/v1/content", tags=["content"])
 async def start_content(
     body: ContentStartRequest,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
     event_bus: EventBusProtocol = Depends(get_event_bus),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> PipelineRunResponse:
-    # Tenant isolation: slug must match authenticated user's company
-    user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
-    company_slug = _derive_slug(body.company_name)
-    if not user_company_slug or company_slug != user_company_slug:
-        raise HTTPException(
-            status_code=403,
-            detail="Cannot start pipeline for another company",
-        )
+    workspace_scope = await resolve_workspace_scope(
+        http_request,
+        _user,
+        workspace_service,
+        workspace_slug=body.workspace_slug,
+        company_name=body.company_name,
+        product_slug=body.product_slug,
+        min_roles=("owner", "admin", "member"),
+    )
+    company_slug = workspace_scope.workspace_slug
     product_slug = body.product_slug
     scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
 
@@ -63,7 +65,13 @@ async def start_content(
         product_name=scope.product_name,
         product_description=scope.product_description,
     )
-    task = await create_task_durable(task_store, "content", company_slug, product_slug=product_slug)
+    task = await create_task_durable(
+        task_store,
+        "content",
+        company_slug,
+        product_slug=product_slug,
+        workspace_id=workspace_scope.workspace_id,
+    )
 
     handle = asyncio.create_task(
         run_content_pipeline_task(
@@ -79,6 +87,7 @@ async def start_content(
         run_id=task.task_id,
         pipeline="content",
         company_slug=task.company_slug,
+        workspace_id=task.workspace_id,
         product_slug=task.product_slug,
         effective_slug=task.effective_slug,
         status=task.status.value,
@@ -87,21 +96,20 @@ async def start_content(
 
 
 @router.get("/{run_id}/status")
-def get_content_status(
+async def get_content_status(
     run_id: str,
     request: Request,
     _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> TaskResponse:
     task = task_store.get_task(run_id)
-    # Task ownership check
-    user_company_slug = getattr(request.state, "company_slug", None)
-    if task.company_slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_task_workspace_access(task, _user, workspace_service)
     return TaskResponse(
         run_id=task.task_id,
         pipeline=task.pipeline,
         company_slug=task.company_slug,
+        workspace_id=task.workspace_id,
         status=task.status.value,
         current_step=task.current_step,
         progress_pct=task.progress_pct,
@@ -118,14 +126,17 @@ async def approve_content(
     run_id: str,
     body: ContentApprovalRequest,
     http_request: Request,
-    _user: UserProfile = Depends(require_role("member", "superuser")),
+    _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
+    workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
 ) -> ContentApprovalResponse:
     task = task_store.get_task(run_id)
-    # Task ownership check
-    user_company_slug = getattr(http_request.state, "company_slug", None)
-    if task.company_slug != user_company_slug:
-        raise HTTPException(status_code=403, detail="Access denied")
+    await assert_task_workspace_access(
+        task,
+        _user,
+        workspace_service,
+        min_roles=("owner", "admin", "member"),
+    )
     if task.status != TaskStatus.PENDING_APPROVAL:
         raise HTTPException(
             status_code=409,

@@ -27,7 +27,7 @@ class TestExtractProvider:
             ("google/gemini-3-flash-preview", "google"),
             # Bare model names (no prefix)
             ("claude-sonnet-4-6", "anthropic"),
-            ("claude-haiku-4-5-20251001", "anthropic"),
+            ("claude-haiku-4-5", "anthropic"),
             ("sonar-deep-research", "perplexity"),
             ("sonar-pro", "perplexity"),
             ("gpt-5.2-2025-12-11", "openai"),

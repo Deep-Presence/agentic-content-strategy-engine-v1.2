@@ -13,6 +13,7 @@ import pytest
 from langgraph.checkpoint.memory import MemorySaver
 
 from core.content_engine.graph_v13 import (
+    ApprovalPauseRequested,
     _brief_approval_gate,
     _brief_present,
     _brief_route,
@@ -726,3 +727,45 @@ class TestRunHitlCheckpoint:
         nonce1 = pending_calls[0][1]["approval_payload"]["checkpoint_nonce"]
         nonce2 = pending_calls[1][1]["approval_payload"]["checkpoint_nonce"]
         assert nonce1 != nonce2  # Each interrupt gets unique nonce
+
+    @pytest.mark.asyncio
+    async def test_external_resume_raises_pause_request_with_continuation(self):
+        mock_graph = MagicMock()
+        interrupt_obj = MagicMock()
+        interrupt_obj.value = {
+            "status": "pending_brief_approval",
+            "stage": "brief_approval",
+            "brief_id": "WE-177",
+        }
+        mock_graph.invoke.return_value = {"__interrupt__": [interrupt_obj]}
+
+        task_store = MagicMock()
+        event_bus = MagicMock()
+
+        with pytest.raises(ApprovalPauseRequested) as exc_info:
+            await run_hitl_checkpoint(
+                graph=mock_graph,
+                initial_state={"blueprint": {"brief_id": "WE-177"}},
+                thread_id="td-brief-thread",
+                task_store=task_store,
+                event_bus=event_bus,
+                task_id="task-brief-1",
+                stage_name="brief_approval",
+                external_resume=True,
+                continuation_payload={
+                    "resume_stage": "brief_approval",
+                    "topic_assignment_id": "ta-123",
+                    "brief_id": "WE-177",
+                    "thread_id": "td-brief-thread",
+                },
+            )
+
+        payload = exc_info.value.approval_payload
+        assert payload["stage"] == "brief_approval"
+        assert payload["continuation"]["resume_stage"] == "brief_approval"
+        task_store.wait_for_approval.assert_not_called()
+        pending_calls = [
+            c for c in task_store.update_task.call_args_list
+            if c[1].get("status") == "pending_approval"
+        ]
+        assert len(pending_calls) == 1

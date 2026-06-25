@@ -77,9 +77,10 @@ class TestPromptSourceEnum:
         assert PromptSource.MANUAL.value == "manual"
         assert PromptSource.GAP_ANALYSIS.value == "gap_analysis"
         assert PromptSource.IMPORTED.value == "imported"
+        assert PromptSource.FANOUT.value == "fanout"
 
     def test_member_count(self) -> None:
-        assert len(PromptSource) == 3
+        assert len(PromptSource) == 4
 
 
 class TestPromptStatusEnum:

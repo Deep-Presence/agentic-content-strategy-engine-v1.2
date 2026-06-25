@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from api.app import _init_task_store
+from api.app import _init_task_store, _recover_td_entry_scheduler
 
 
 @pytest.fixture
@@ -93,3 +93,39 @@ class TestInitTaskStore:
 
             with pytest.raises(Exception):
                 await _init_task_store(app_stub)
+
+
+class TestRecoverTdEntryScheduler:
+    @pytest.mark.asyncio
+    async def test_dispatches_companies_with_recoverable_topic_runs(self, app_stub: MagicMock):
+        app_stub.state.task_store = MagicMock()
+        app_stub.state.task_store.list_tasks.return_value = [
+            MagicMock(task_id="task-1"),
+            MagicMock(task_id="task-2"),
+        ]
+        app_stub.state.db_session_factory = MagicMock()
+        app_stub.state.event_bus = MagicMock()
+
+        with patch(
+            "core.services.content_engine_topic_runs.ContentEngineTopicRunService",
+        ) as service_cls, patch(
+            "api.tasks.runner.dispatch_queued_td_content_runs",
+            new_callable=AsyncMock,
+            return_value=[],
+        ) as dispatch_mock:
+            service = MagicMock()
+            service.reconcile_startup_scheduler = AsyncMock(
+                return_value=MagicMock(
+                    companies_to_dispatch=["test-co", "other-co"],
+                    queued_ready_count=2,
+                    requeued_count=1,
+                    waiting_human_restored_count=1,
+                    stale_task_ids_cleared_count=1,
+                )
+            )
+            service_cls.return_value = service
+
+            await _recover_td_entry_scheduler(app_stub)
+
+        service.reconcile_startup_scheduler.assert_awaited_once()
+        assert dispatch_mock.await_count == 2

@@ -458,6 +458,46 @@ class TestAuthorDiscovery:
         mock_litellm.acompletion.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_workspace_context_uses_byok_agent_wrapper(
+        self, vsg_input: VoiceStyleGuideInput, company_context_md: str, persona_mds: list[str],
+    ) -> None:
+        from core.models.content_generation_v13 import LLMResponse
+
+        byok_input = vsg_input.model_copy(
+            update={"workspace_id": "ws-123", "workspace_slug": "ramp"}
+        )
+        response = LLMResponse(
+            content=VALID_AUTHORS_JSON,
+            model="anthropic/claude-sonnet-4-6",
+            input_tokens=13,
+            output_tokens=9,
+            total_tokens=22,
+        )
+
+        with (
+            patch(
+                "core.content_engine.llm_client.llm_call_for_agent",
+                new_callable=AsyncMock,
+                return_value=response,
+            ) as mock_call,
+            patch("core.research.voice_style_guide.agents.litellm") as mock_litellm,
+        ):
+            briefs, elapsed = await asyncio.wait_for(
+                _import_and_run_discovery(byok_input, company_context_md, persona_mds),
+                timeout=10,
+            )
+
+        assert len(briefs) == 3
+        assert elapsed > 0
+        mock_litellm.acompletion.assert_not_called()
+        mock_call.assert_awaited_once()
+        kwargs = mock_call.await_args.kwargs
+        assert kwargs["workspace_id"] == "ws-123"
+        assert kwargs["workspace_slug"] == "ramp"
+        assert kwargs["agent_key"] == "research.vsg.author_discovery"
+        assert kwargs["metadata"]["pipeline_step"] == "author_discovery"
+
+    @pytest.mark.asyncio
     async def test_retry_on_malformed_json(
         self, vsg_input: VoiceStyleGuideInput, company_context_md: str, persona_mds: list[str],
     ) -> None:
@@ -517,7 +557,7 @@ class TestAuthorResearch:
 
         with patch(
             "core.research.voice_style_guide.agents.perplexity_client.research",
-            return_value=mock_md,
+            return_value=(mock_md, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}),
         ):
             result = await asyncio.wait_for(
                 _import_and_run_research(author_brief, vsg_input, company_context_md, "Persona summaries"),
@@ -530,6 +570,54 @@ class TestAuthorResearch:
         assert result.word_count > 0
         assert result.error is None
         assert result.execution_time_s > 0
+
+    @pytest.mark.asyncio
+    async def test_workspace_context_routes_author_research_through_byok_config(
+        self, author_brief: AuthorBrief, vsg_input: VoiceStyleGuideInput, company_context_md: str,
+    ) -> None:
+        byok_input = vsg_input.model_copy(
+            update={"workspace_id": "ws-123", "workspace_slug": "ramp"}
+        )
+        resolved = MagicMock(
+            model="perplexity/sonar-deep-research",
+            api_key="sk-workspace",
+            base_url="https://openrouter.workspace/api/v1",
+            credential_id="cred-123",
+            model_config_id="cfg-123",
+        )
+        mock_md = "# Morgan Housel Style Analysis"
+
+        with (
+            patch(
+                "core.research.voice_style_guide.agents.resolve_model_config_for_agent",
+                new_callable=AsyncMock,
+                return_value=resolved,
+            ) as mock_resolve,
+            patch(
+                "core.research.voice_style_guide.agents.perplexity_client.research",
+                return_value=(mock_md, {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}),
+            ) as mock_research,
+        ):
+            result = await asyncio.wait_for(
+                _import_and_run_research(author_brief, byok_input, company_context_md, "Persona summaries"),
+                timeout=10,
+            )
+
+        assert result.error is None
+        mock_resolve.assert_awaited_once_with(
+            workspace_id="ws-123",
+            workspace_slug="ramp",
+            agent_key="research.vsg.author_research",
+        )
+        kwargs = mock_research.call_args.kwargs
+        assert kwargs["model"] == "perplexity/sonar-deep-research"
+        assert kwargs["api_key"] == "sk-workspace"
+        assert kwargs["base_url"] == "https://openrouter.workspace/api/v1"
+        assert kwargs["workspace_id"] == "ws-123"
+        assert kwargs["agent_key"] == "research.vsg.author_research"
+        assert kwargs["credential_id"] == "cred-123"
+        assert kwargs["model_config_id"] == "cfg-123"
+        assert kwargs["workspace_billed"] is True
 
     @pytest.mark.asyncio
     async def test_timeout_returns_error(
@@ -590,8 +678,9 @@ class TestVoiceSynthesis:
             "ann-handley": "# Ann Handley analysis...",
         }
 
-        with patch("core.research.voice_style_guide.agents.litellm") as mock_litellm:
-            mock_litellm.acompletion = AsyncMock(return_value=mock_response)
+        mock_or_client = MagicMock()
+        mock_or_client.chat.completions.create = AsyncMock(return_value=mock_response)
+        with patch("core.shared_tools.openrouter_client.get_async_client", return_value=mock_or_client):
             guide_md, elapsed = await asyncio.wait_for(
                 _import_and_run_synthesis(author_mds, company_context_md, persona_mds, vsg_input),
                 timeout=10,
@@ -599,18 +688,50 @@ class TestVoiceSynthesis:
 
         assert "Voice Style Guide" in guide_md
         assert elapsed > 0
-        mock_litellm.acompletion.assert_called_once()
+        mock_or_client.chat.completions.create.assert_called_once()
 
         # Verify max_tokens=8192 was passed
-        call_kwargs = mock_litellm.acompletion.call_args
+        call_kwargs = mock_or_client.chat.completions.create.call_args
         assert call_kwargs.kwargs.get("max_tokens") == 8192
+
+    @pytest.mark.asyncio
+    async def test_workspace_context_uses_byok_llm_wrapper(
+        self, vsg_input: VoiceStyleGuideInput, company_context_md: str, persona_mds: list[str],
+    ) -> None:
+        byok_input = vsg_input.model_copy(
+            update={"workspace_id": "ws-123", "workspace_slug": "ramp"}
+        )
+        response = MagicMock(
+            content="# Voice Style Guide\n\nClear and direct.",
+            model="anthropic/claude-sonnet-4-5",
+        )
+        author_mds = {"morgan-housel": "# Morgan Housel analysis..."}
+
+        with (
+            patch("core.content_engine.llm_client.llm_call_for_agent", new_callable=AsyncMock, return_value=response) as mock_call,
+            patch("core.shared_tools.openrouter_client.get_async_client") as mock_platform,
+        ):
+            guide_md, elapsed = await asyncio.wait_for(
+                _import_and_run_synthesis(author_mds, company_context_md, persona_mds, byok_input),
+                timeout=10,
+            )
+
+        assert "Voice Style Guide" in guide_md
+        assert elapsed > 0
+        mock_platform.assert_not_called()
+        mock_call.assert_awaited_once()
+        assert mock_call.call_args.kwargs["workspace_id"] == "ws-123"
+        assert mock_call.call_args.kwargs["workspace_slug"] == "ramp"
+        assert mock_call.call_args.kwargs["agent_key"] == "research.vsg.synthesis"
+        assert mock_call.call_args.kwargs["metadata"]["pipeline_step"] == "voice_synthesis"
 
     @pytest.mark.asyncio
     async def test_timeout_returns_empty(
         self, vsg_input: VoiceStyleGuideInput, company_context_md: str, persona_mds: list[str],
     ) -> None:
-        with patch("core.research.voice_style_guide.agents.litellm") as mock_litellm:
-            mock_litellm.acompletion = AsyncMock(side_effect=asyncio.TimeoutError())
+        mock_or_client = MagicMock()
+        mock_or_client.chat.completions.create = AsyncMock(side_effect=asyncio.TimeoutError())
+        with patch("core.shared_tools.openrouter_client.get_async_client", return_value=mock_or_client):
             guide_md, elapsed = await asyncio.wait_for(
                 _import_and_run_synthesis({}, company_context_md, persona_mds, vsg_input),
                 timeout=10,
@@ -623,8 +744,9 @@ class TestVoiceSynthesis:
     async def test_api_error_returns_empty(
         self, vsg_input: VoiceStyleGuideInput, company_context_md: str, persona_mds: list[str],
     ) -> None:
-        with patch("core.research.voice_style_guide.agents.litellm") as mock_litellm:
-            mock_litellm.acompletion = AsyncMock(side_effect=RuntimeError("Model not found"))
+        mock_or_client = MagicMock()
+        mock_or_client.chat.completions.create = AsyncMock(side_effect=RuntimeError("Model not found"))
+        with patch("core.shared_tools.openrouter_client.get_async_client", return_value=mock_or_client):
             guide_md, elapsed = await asyncio.wait_for(
                 _import_and_run_synthesis({}, company_context_md, persona_mds, vsg_input),
                 timeout=10,

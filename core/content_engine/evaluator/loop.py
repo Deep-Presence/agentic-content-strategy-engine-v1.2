@@ -128,6 +128,7 @@ async def _run_all_evaluations(
     trace: Optional[object] = None,
     use_eeat: bool = False,
     company_slug: str = "",
+    workspace_id: str = "",
 ) -> list[DimensionResult]:
     """Run evaluation dimensions in parallel.
 
@@ -141,15 +142,15 @@ async def _run_all_evaluations(
     # Run async evaluations in parallel
     tasks = [
         ("semantic", evaluate_semantic(content, brief, trace=trace)),
-        ("style", evaluate_style(content, style_guide_md, trace=trace, company_slug=company_slug)),
-        ("factual", evaluate_factual(content, brief, company_name, domain, trace=trace, company_slug=company_slug)),
+        ("style", evaluate_style(content, style_guide_md, trace=trace, company_slug=company_slug, workspace_id=workspace_id)),
+        ("factual", evaluate_factual(content, brief, company_name, domain, trace=trace, company_slug=company_slug, workspace_id=workspace_id)),
     ]
 
     if use_eeat:
         from core.content_engine.evaluator.eeat_judge import evaluate_eeat
 
         tasks.append(
-            ("eeat", evaluate_eeat(content, brief, company_context_md, trace=trace, company_slug=company_slug))
+            ("eeat", evaluate_eeat(content, brief, company_context_md, trace=trace, company_slug=company_slug, workspace_id=workspace_id))
         )
 
     task_results = await asyncio.gather(
@@ -212,6 +213,7 @@ async def _run_targeted_revision(
     *,
     trace: Optional[object] = None,
     company_slug: str = "",
+    workspace_id: str = "",
 ) -> FormattedContent:
     """Run a targeted revision based on which dimensions failed (v1.3).
 
@@ -247,6 +249,7 @@ async def _run_targeted_revision(
             company_context_md=company_context_md,
             trace=trace,
             company_slug=company_slug,
+            workspace_id=workspace_id,
         )
     else:
         from core.models.content_generation import ContentDraft
@@ -266,6 +269,7 @@ async def _run_targeted_revision(
             domain=domain,
             trace=trace,
             company_slug=company_slug,
+            workspace_id=workspace_id,
         )
         final_md = checked.markdown
     else:
@@ -299,6 +303,7 @@ async def evaluate_and_optimize(
     task_id: Optional[str] = None,
     redis_client: Any = None,
     effective_slug: Optional[str] = None,
+    session_factory: Any = None,
 ) -> Tuple[FormattedContent, RevisionHistory, FeedbackRoute]:
     """Run the evaluation-optimization loop for a single content piece.
 
@@ -359,6 +364,7 @@ async def evaluate_and_optimize(
         )
 
     _slug = getattr(input_data, "company_slug", "") or ""
+    _workspace_id = getattr(input_data, "workspace_id", "") or ""
     history = RevisionHistory(brief_id=brief.brief_id)
     current_content = content
     prev_score: Optional[float] = None  # Track for early-stop
@@ -384,6 +390,7 @@ async def evaluate_and_optimize(
             trace=trace,
             use_eeat=use_eeat,
             company_slug=_slug,
+            workspace_id=_workspace_id,
         )
 
         # Compute overall score and pass/fail
@@ -466,7 +473,15 @@ async def evaluate_and_optimize(
         failed_dims = [d.dimension for d in dimensions if not d.passed]
 
         # Mark brief as "revising" for Kanban sync
-        await _write_pipeline_state_async(artifact_dir, [brief.brief_id], "revising", task_id=task_id, redis_client=redis_client, effective_slug=effective_slug)
+        await _write_pipeline_state_async(
+            artifact_dir,
+            [brief.brief_id],
+            "revising",
+            task_id=task_id,
+            redis_client=redis_client,
+            effective_slug=effective_slug,
+            session_factory=session_factory,
+        )
         _emit(event_bus, task_id, "worker_progress", {
             "brief_id": brief.brief_id, "step": "revising", "cycle": cycle + 1,
         })
@@ -499,6 +514,7 @@ async def evaluate_and_optimize(
                     domain=input_data.domain,
                     trace=trace,
                     company_slug=_slug,
+                    workspace_id=_workspace_id,
                 )
             else:
                 # v1.0: Full revision chain (drafter → enricher → formatter)
@@ -510,6 +526,7 @@ async def evaluate_and_optimize(
                     company_context_md=company_context_md,
                     trace=trace,
                     company_slug=_slug,
+                    workspace_id=_workspace_id,
                 )
 
                 enriched = await enrich_with_facts(
@@ -519,6 +536,7 @@ async def evaluate_and_optimize(
                     domain=input_data.domain,
                     trace=trace,
                     company_slug=_slug,
+                    workspace_id=_workspace_id,
                 )
 
                 current_content = await format_content(
@@ -527,6 +545,7 @@ async def evaluate_and_optimize(
                     brief=brief,
                     trace=trace,
                     company_slug=_slug,
+                    workspace_id=_workspace_id,
                 )
 
             end_span(revision_span, output={
