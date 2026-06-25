@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button, Input } from '@/components/ui';
 
 const INDUSTRIES = [
@@ -9,14 +9,21 @@ const INDUSTRIES = [
 ];
 
 interface ScreenInputProps {
+  initialCompanyName: string;
+  initialWebsiteUrl: string;
   onNext: (data: { companyName: string; websiteUrl: string; industry: string; audience: string }) => void;
 }
 
-export function ScreenInput({ onNext }: ScreenInputProps) {
-  const [companyName, setCompanyName] = useState('Lovable');
-  const [websiteUrl, setWebsiteUrl] = useState('');
+export function ScreenInput({ initialCompanyName, initialWebsiteUrl, onNext }: ScreenInputProps) {
+  const [companyName, setCompanyName] = useState(initialCompanyName);
+  const [websiteUrl, setWebsiteUrl] = useState(initialWebsiteUrl);
   const [industry, setIndustry] = useState('');
   const [audience, setAudience] = useState('');
+
+  useEffect(() => {
+    setCompanyName(initialCompanyName);
+    setWebsiteUrl(initialWebsiteUrl);
+  }, [initialCompanyName, initialWebsiteUrl]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,19 +49,21 @@ export function ScreenInput({ onNext }: ScreenInputProps) {
             onChange={(e) => setCompanyName(e.target.value)}
             className="w-full h-[36px] text-[14px] px-3"
             required
+            disabled={Boolean(initialCompanyName)}
           />
         </div>
         <div>
           <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-            Website URL
+            Website Domain
           </label>
           <Input
-            type="url"
-            placeholder="https://lovable.dev"
+            type="text"
+            placeholder="acme.com"
             value={websiteUrl}
             onChange={(e) => setWebsiteUrl(e.target.value)}
             className="w-full h-[36px] text-[14px] px-3"
             required
+            disabled={Boolean(initialWebsiteUrl)}
           />
         </div>
         <div>
@@ -81,13 +90,12 @@ export function ScreenInput({ onNext }: ScreenInputProps) {
             placeholder="Describe your primary audience (e.g., 'SaaS founders and indie developers building web apps')"
             value={audience}
             onChange={(e) => setAudience(e.target.value)}
-            required
             rows={3}
             className="w-full px-3 py-2.5 rounded-sm border border-border bg-surface font-body text-[14px] text-text-primary outline-none transition-[border-color] duration-[120ms] ease-out hover:border-border-strong focus:border-accent focus:border-2 focus:bg-surface-raised focus:shadow-[0_0_0_3px_var(--accent-subtle)] placeholder:text-text-tertiary resize-none leading-[1.6]"
           />
         </div>
         <Button variant="primary" className="w-full mt-2 h-[36px] text-[14px]" type="submit">
-          Begin Analysis &rarr;
+          Continue
         </Button>
       </form>
     </div>

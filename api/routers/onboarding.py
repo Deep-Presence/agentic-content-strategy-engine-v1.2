@@ -13,7 +13,14 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from api.auth.dependencies import require_auth, require_role
-from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_task_store, get_workspace_service
+from api.dependencies import (
+    get_artifacts_root,
+    get_auth_service,
+    get_event_bus,
+    get_model_config_service,
+    get_task_store,
+    get_workspace_service,
+)
 from api.schemas.common import PipelineRunResponse, TaskResponse
 from api.schemas.onboarding import OnboardingStartRequest
 from api.tasks.event_bus import EventBusProtocol
@@ -22,8 +29,11 @@ from api.routers._helpers import (
     create_task_durable,
     resolve_workspace_scope,
 )
+from api.routers._model_config_preflight import preflight_model_config_or_409
 from api.tasks.runner import run_onboarding_task
 from core.audit import log_pipeline_launch
+from core.model_config.agent_catalog import required_agent_keys_for_onboarding
+from core.model_config.service import ModelConfigService
 from core.services.task_store import TaskStoreProtocol
 from core.services.workspace_protocol import WorkspaceServiceProtocol
 
@@ -43,6 +53,7 @@ async def start_onboarding(
     artifacts_root: Path = Depends(get_artifacts_root),
     auth_service=Depends(get_auth_service),
     workspace_service: WorkspaceServiceProtocol = Depends(get_workspace_service),
+    model_config_service: ModelConfigService = Depends(get_model_config_service),
 ) -> PipelineRunResponse:
     """Launch the onboarding pipeline orchestrator.
 
@@ -71,6 +82,13 @@ async def start_onboarding(
             await auth_service.update_company(company_slug, industry=body.industry)
         except Exception:
             logger.warning("Failed to persist industry for %s", company_slug)
+
+    await preflight_model_config_or_409(
+        model_config_service,
+        scope.workspace_id,
+        required_agent_keys_for_onboarding(),
+        message="Configure an active OpenRouter key before launching onboarding.",
+    )
 
     task = await create_task_durable(
         task_store,

@@ -12,13 +12,13 @@ import {
   testOpenRouterKey,
   updateAgentModelConfig,
   upsertOpenRouterKey,
-} from '../_lib/api';
+} from '@/lib/model-config';
 import type {
   AgentCatalogItemAPI,
   AgentModelConfigAPI,
   CredentialStatusAPI,
   WorkspaceModelConfigAPI,
-} from '../_lib/types';
+} from '@/lib/model-config';
 
 interface AgentDraft {
   model: string;

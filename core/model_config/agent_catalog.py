@@ -154,3 +154,20 @@ def required_agents_for_pipeline(pipeline: str) -> list[AgentDefinition]:
         for definition in all_agent_definitions()
         if definition.pipeline == pipeline and definition.required
     ]
+
+
+def required_agent_keys_for_onboarding() -> list[str]:
+    """Return BYOK agent keys required by the onboarding meta-pipeline."""
+    keys: list[str] = ["shared.embeddings.default"]
+    for pipeline in (
+        "research_kb",
+        "research_ap",
+        "research_vsg",
+        "gap",
+        "topic_discovery",
+    ):
+        keys.extend(
+            definition.agent_key
+            for definition in required_agents_for_pipeline(pipeline)
+        )
+    return list(dict.fromkeys(keys))

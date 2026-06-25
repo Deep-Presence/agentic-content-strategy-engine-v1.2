@@ -138,6 +138,8 @@ class TestOnboardingInput:
         inp = OnboardingInput(company_name="Test Co")
         assert inp.company_name == "Test Co"
         assert inp.domain == ""
+        assert inp.workspace_id == ""
+        assert inp.workspace_slug == ""
         assert inp.industry is None
         assert inp.seed_personas == []
         assert inp.max_pages == 200

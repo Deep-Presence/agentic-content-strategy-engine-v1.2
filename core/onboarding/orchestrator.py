@@ -43,6 +43,7 @@ async def _create_child_pipeline_run(
     company_id: Optional[Any],
     effective_slug: str,
     pipeline_type_str: str,
+    workspace_id: str = "",
 ) -> Optional[_uuid.UUID]:
     """Create a pipeline_runs record for a sub-pipeline within onboarding.
 
@@ -60,6 +61,7 @@ async def _create_child_pipeline_run(
             run = PipelineRunModel(
                 id=child_run_id,
                 company_id=company_id,
+                workspace_id=_uuid.UUID(workspace_id) if workspace_id else None,
                 effective_slug=effective_slug,
                 pipeline_type=PipelineType(pipeline_type_str),
                 parent_run_id=parent_run_id,
@@ -216,6 +218,8 @@ def _build_kb_input(
         company_name=input_data.company_name,
         domain=input_data.domain or None,
         company_slug=slug,
+        workspace_id=input_data.workspace_id,
+        workspace_slug=input_data.workspace_slug,
         seed_urls=input_data.seed_urls,
         language=input_data.language,
         region=input_data.region,
@@ -236,6 +240,8 @@ def _build_ap_input(
         company_name=input_data.company_name,
         domain=input_data.domain or None,
         company_slug=slug,
+        workspace_id=input_data.workspace_id,
+        workspace_slug=input_data.workspace_slug,
         max_personas=input_data.max_personas,
         language=input_data.language,
         region=input_data.region,
@@ -257,6 +263,8 @@ def _build_vsg_input(
         company_name=input_data.company_name,
         domain=input_data.domain or None,
         company_slug=slug,
+        workspace_id=input_data.workspace_id,
+        workspace_slug=input_data.workspace_slug,
         max_authors=input_data.max_authors,
         language=input_data.language,
         region=input_data.region,
@@ -277,6 +285,8 @@ def _build_ga_input(
         company_name=input_data.company_name,
         domain=input_data.domain or None,
         company_slug=slug,
+        workspace_id=input_data.workspace_id,
+        workspace_slug=input_data.workspace_slug,
         seed_urls=[str(u) for u in input_data.seed_urls],
         max_queries=input_data.max_queries,
         platforms=input_data.platforms,
@@ -298,6 +308,7 @@ def _build_td_input(
         company_name=input_data.company_name,
         domain=input_data.domain or None,
         company_slug=slug,
+        workspace_id=input_data.workspace_id,
         seed_urls=input_data.seed_urls,
         language=input_data.language,
         region=input_data.region,
@@ -341,6 +352,7 @@ async def _run_site_audit_stage(
 
     child_run_id = await _create_child_pipeline_run(
         session_factory, parent_run_id, company_id, slug, "site_audit",
+        workspace_id=input_data.workspace_id,
     )
 
     start = time.time()
@@ -410,6 +422,7 @@ async def _run_kb_stage(
 
     child_run_id = await _create_child_pipeline_run(
         session_factory, parent_run_id, company_id, slug, "knowledge_base",
+        workspace_id=input_data.workspace_id,
     )
 
     start = time.time()
@@ -464,6 +477,7 @@ async def _run_ap_stage(
 
     child_run_id = await _create_child_pipeline_run(
         session_factory, parent_run_id, company_id, slug, "audience_persona",
+        workspace_id=input_data.workspace_id,
     )
 
     start = time.time()
@@ -520,6 +534,7 @@ async def _run_vsg_stage(
 
     child_run_id = await _create_child_pipeline_run(
         session_factory, parent_run_id, company_id, slug, "voice_style_guide",
+        workspace_id=input_data.workspace_id,
     )
 
     start = time.time()
@@ -570,6 +585,7 @@ async def _run_ga_stage(
 
     child_run_id = await _create_child_pipeline_run(
         session_factory, parent_run_id, company_id, slug, "gap_analysis",
+        workspace_id=input_data.workspace_id,
     )
 
     start = time.time()
@@ -619,6 +635,7 @@ async def _run_td_stage(
 
     child_run_id = await _create_child_pipeline_run(
         session_factory, parent_run_id, company_id, slug, "topic_discovery",
+        workspace_id=input_data.workspace_id,
     )
 
     start = time.time()

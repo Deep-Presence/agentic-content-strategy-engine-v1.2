@@ -15,6 +15,7 @@ Covers:
 from __future__ import annotations
 
 import asyncio
+import uuid
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -36,6 +37,7 @@ from core.onboarding.orchestrator import (
     _build_sa_input,
     _build_td_input,
     _build_vsg_input,
+    _create_child_pipeline_run,
     _resolve_slugs,
     run_onboarding_pipeline,
 )
@@ -142,6 +144,8 @@ class TestInputBuilders:
             "seed_urls": ["https://test.com/blog"],
             "language": "en",
             "region": "US",
+            "workspace_id": "11111111-1111-4111-8111-111111111111",
+            "workspace_slug": "test-co",
         }
         defaults.update(overrides)
         return OnboardingInput(**defaults)
@@ -165,6 +169,8 @@ class TestInputBuilders:
         assert kb.additional_constraints == "Industry: SaaS"
         assert kb.language == "en"
         assert kb.region == "US"
+        assert kb.workspace_id == "11111111-1111-4111-8111-111111111111"
+        assert kb.workspace_slug == "test-co"
 
     def test_build_ap_input_with_seeds(self) -> None:
         inp = self._base_input(max_personas=4)
@@ -174,6 +180,8 @@ class TestInputBuilders:
         assert ap.auto_approve_checkpoints == [1, 2]
         assert ap.seed_personas == ["VP Engineering", "CTO"]
         assert ap.additional_constraints == "Industry: SaaS"
+        assert ap.workspace_id == "11111111-1111-4111-8111-111111111111"
+        assert ap.workspace_slug == "test-co"
 
     def test_build_ap_input_no_seeds(self) -> None:
         inp = self._base_input(seed_personas=[])
@@ -187,6 +195,8 @@ class TestInputBuilders:
         assert vsg.company_name == "Test Co"
         assert vsg.max_authors == 2
         assert vsg.auto_approve_checkpoints == [1]
+        assert vsg.workspace_id == "11111111-1111-4111-8111-111111111111"
+        assert vsg.workspace_slug == "test-co"
 
     def test_build_ga_input(self) -> None:
         inp = self._base_input(max_queries=50, platforms=["perplexity", "openai"])
@@ -195,6 +205,8 @@ class TestInputBuilders:
         assert ga.max_queries == 50
         assert ga.platforms == ["perplexity", "openai"]
         assert ga.additional_constraints == "Industry: SaaS"
+        assert ga.workspace_id == "11111111-1111-4111-8111-111111111111"
+        assert ga.workspace_slug == "test-co"
 
     def test_build_td_input(self) -> None:
         inp = self._base_input()
@@ -203,6 +215,40 @@ class TestInputBuilders:
         assert td.seed_urls == ["https://test.com/blog"]
         assert td.auto_approve_checkpoints == [1]
         assert td.additional_constraints == "Industry: SaaS"
+        assert td.workspace_id == "11111111-1111-4111-8111-111111111111"
+
+
+@pytest.mark.asyncio
+async def test_create_child_pipeline_run_records_workspace_id() -> None:
+    class CaptureSession:
+        def __init__(self) -> None:
+            self.added: list[Any] = []
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def add(self, item: Any) -> None:
+            self.added.append(item)
+
+        async def commit(self) -> None:
+            return None
+
+    session = CaptureSession()
+    workspace_id = uuid.UUID("11111111-1111-4111-8111-111111111111")
+    child_run_id = await _create_child_pipeline_run(
+        lambda: session,
+        parent_run_id=uuid.uuid4(),
+        company_id=uuid.uuid4(),
+        effective_slug="test-co",
+        pipeline_type_str="knowledge_base",
+        workspace_id=str(workspace_id),
+    )
+
+    assert child_run_id is not None
+    assert session.added[0].workspace_id == workspace_id
 
 
 # ═══════════════════════════════════════════════════════════════════════════

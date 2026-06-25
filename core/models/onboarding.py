@@ -96,6 +96,8 @@ class OnboardingInput(BaseModel):
     domain: str = ""
     company_slug: Optional[str] = None
     company_id: Optional[str] = None
+    workspace_id: str = ""
+    workspace_slug: str = ""
     industry: Optional[str] = None
 
     # Persona seeds from the onboarding form

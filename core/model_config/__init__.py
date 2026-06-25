@@ -5,6 +5,7 @@ from core.model_config.agent_catalog import (
     AgentDefinition,
     all_agent_definitions,
     get_agent_definition,
+    required_agent_keys_for_onboarding,
     required_agents_for_pipeline,
 )
 from core.model_config.resolver import ModelConfigResolver
@@ -20,5 +21,6 @@ __all__ = [
     "all_agent_definitions",
     "get_agent_definition",
     "resolve_model_config_for_agent",
+    "required_agent_keys_for_onboarding",
     "required_agents_for_pipeline",
 ]

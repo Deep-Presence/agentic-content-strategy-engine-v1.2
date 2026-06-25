@@ -120,8 +120,15 @@ async function doFetch(path: string, options: RequestOptions = {}): Promise<Resp
     let code: string | undefined;
     try {
       const errorBody = await res.json();
-      detail = errorBody.detail ?? detail;
-      code = errorBody.code;
+      const rawDetail = errorBody.detail;
+      if (typeof rawDetail === 'string') {
+        detail = rawDetail;
+      } else if (rawDetail && typeof rawDetail === 'object') {
+        const nested = rawDetail as Record<string, unknown>;
+        detail = typeof nested.message === 'string' ? nested.message : detail;
+        code = typeof nested.code === 'string' ? nested.code : undefined;
+      }
+      code = code ?? errorBody.code;
     } catch {
       // non-JSON error body
     }

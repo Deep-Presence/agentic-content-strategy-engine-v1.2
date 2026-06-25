@@ -2,13 +2,16 @@
 
 import { motion } from 'framer-motion';
 import { useRouter } from 'next/navigation';
+import { Check } from 'lucide-react';
 import { Button, LocusLogo } from '@/components/ui';
 
-const METRICS = [
-  { label: 'AI Presence Score', value: '38.7/100' },
-  { label: 'Queries Tracked', value: '99' },
-  { label: 'Citations Analyzed', value: '1,816' },
-  { label: 'Content Clusters', value: '9' },
+const DELIVERABLES = [
+  'Site audit',
+  'Knowledge base',
+  'Audience personas',
+  'Voice style guide',
+  'Gap analysis',
+  'Topic discovery',
 ];
 
 export function ScreenComplete() {
@@ -31,10 +34,10 @@ export function ScreenComplete() {
         transition={{ delay: 0.3, duration: 0.4 }}
       >
         <h1 className="font-display text-[24px] font-semibold tracking-[-0.02em] text-text-primary mb-2">
-          Analysis complete
+          Onboarding complete
         </h1>
         <p className="text-[14px] text-text-secondary mb-8 leading-[1.6]">
-          Your brand intelligence is ready. Here&apos;s a snapshot.
+          Your initial brand intelligence is ready.
         </p>
       </motion.div>
 
@@ -42,16 +45,14 @@ export function ScreenComplete() {
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.5, duration: 0.4 }}
-        className="grid grid-cols-2 gap-3 mb-8"
+        className="grid grid-cols-2 gap-2 mb-8 text-left"
       >
-        {METRICS.map((m) => (
-          <div key={m.label} className="bg-surface border border-border rounded-md p-4">
-            <p className="text-[11px] font-medium uppercase tracking-[0.06em] text-text-tertiary mb-1">
-              {m.label}
-            </p>
-            <p className="font-display text-[28px] font-semibold tracking-[-0.02em] text-text-primary">
-              {m.value}
-            </p>
+        {DELIVERABLES.map((item) => (
+          <div key={item} className="flex items-center gap-2 bg-surface border border-border rounded-md p-3">
+            <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-success-subtle text-success">
+              <Check size={12} strokeWidth={2} />
+            </span>
+            <p className="text-[13px] font-medium text-text-primary">{item}</p>
           </div>
         ))}
       </motion.div>

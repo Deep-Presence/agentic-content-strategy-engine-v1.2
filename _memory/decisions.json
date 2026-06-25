@@ -1,5 +1,26 @@
 [
   {
+    "id": "D-BYOK-ONBOARDING-SEQUENCING",
+    "timestamp": "2026-06-25",
+    "task": "BYOK onboarding sequencing and enforcement",
+    "decision": "Onboarding must reuse the workspace model-config system instead of introducing a separate key/model configuration path. First-login onboarding now collects company inputs, requires an active OpenRouter BYOK credential plus onboarding-required agent preflight before launching, then starts the real durable onboarding task and streams/polls actual task progress. Backend onboarding start also fail-closes with the shared model-config preflight and the runner/orchestrator threads workspace_id into child pipeline inputs and pipeline_runs.",
+    "rationale": "BYOK is a platform-level runtime contract. Reusing the existing workspace-scoped credential/catalog/config APIs keeps Settings as the post-onboarding edit surface, prevents UI bypasses from starting LLM-backed onboarding without a key, and preserves workspace_id so sub-pipelines resolve models against the correct workspace.",
+    "files_affected": [
+      "api/routers/onboarding.py",
+      "api/tasks/runner.py",
+      "core/model_config/agent_catalog.py",
+      "core/models/onboarding.py",
+      "core/onboarding/orchestrator.py",
+      "frontend/src/app/onboarding/page.tsx",
+      "frontend/src/app/onboarding/_components/ScreenModelConfig.tsx",
+      "frontend/src/app/onboarding/_components/ScreenPipeline.tsx",
+      "frontend/src/components/auth/AuthGuard.tsx",
+      "frontend/src/lib/model-config.ts"
+    ],
+    "validation": "uv run --extra dev pytest tests/api/test_onboarding.py tests/onboarding/test_models.py tests/onboarding/test_orchestrator.py tests/onboarding/test_sse_progress.py tests/api/test_runner_workspace_scope.py -q; cd frontend && npx tsc --noEmit; cd frontend && npm run build",
+    "status": "COMPLETE"
+  },
+  {
     "id": "D-BYOK-ONLY-MODEL-CONFIG-SPEC",
     "timestamp": "2026-06-22",
     "task": "BYOK-only LLM platform with per-agent workspace model configuration",

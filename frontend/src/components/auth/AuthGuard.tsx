@@ -9,13 +9,16 @@
  *   isInitialized && auth   → render children
  */
 
-import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
+import { fetchWorkspaceModelConfig } from '@/lib/model-config';
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isInitialized } = useAuth();
+  const { activeWorkspaceSlug, isAuthenticated, isInitialized } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
+  const [isCheckingModelConfig, setIsCheckingModelConfig] = useState(false);
 
   useEffect(() => {
     if (isInitialized && !isAuthenticated) {
@@ -23,7 +26,37 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     }
   }, [isInitialized, isAuthenticated, router]);
 
-  if (!isInitialized) {
+  useEffect(() => {
+    if (!isInitialized || !isAuthenticated || !activeWorkspaceSlug) return;
+    if (pathname === '/onboarding' || pathname.startsWith('/settings')) return;
+
+    let cancelled = false;
+    setIsCheckingModelConfig(true);
+
+    fetchWorkspaceModelConfig(activeWorkspaceSlug)
+      .then((view) => {
+        if (cancelled) return;
+        const credential = view.credential;
+        const active =
+          credential.configured &&
+          (credential.status === 'active' || credential.status === 'valid');
+        if (!active) {
+          router.replace('/onboarding');
+        }
+      })
+      .catch(() => {
+        // Do not block the app on transient model-config read errors.
+      })
+      .finally(() => {
+        if (!cancelled) setIsCheckingModelConfig(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspaceSlug, isAuthenticated, isInitialized, pathname, router]);
+
+  if (!isInitialized || isCheckingModelConfig) {
     return (
       <div className="flex h-screen items-center justify-center bg-bg">
         <div className="flex flex-col items-center gap-3">

@@ -2638,6 +2638,8 @@ async def run_onboarding_task(
                 company_name=company_name,
                 domain=company_domain,
                 company_slug=company_slug,
+                workspace_id=workspace_id or "",
+                workspace_slug=company_slug,
                 industry=getattr(request, "industry", None),
                 seed_personas=getattr(request, "seed_personas", []),
                 seed_urls=[str(u) for u in getattr(request, "seed_urls", [])],
